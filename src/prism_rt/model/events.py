@@ -70,6 +70,11 @@ class WorkerResultPayload:
 
 
 @dataclass(frozen=True)
+class VideoFramePayload:
+    frame_id: str
+
+
+@dataclass(frozen=True)
 class TimerFiredPayload:
     timer_id: str
     timer_kind: str
@@ -91,6 +96,7 @@ PAYLOAD_TYPES: dict[str, type] = {
     "interruption": InterruptionPayload,
     "tool_result": ToolResultPayload,
     "worker_result": WorkerResultPayload,
+    "video_frame": VideoFramePayload,
     "timer_fired": TimerFiredPayload,
     "watchdog": WatchdogPayload,
 }
@@ -100,6 +106,7 @@ EVENT_CLASS_BY_PAYLOAD_TYPE: dict[str, EventClass] = {
     "manifest": EventClass.SETUP,
     "interruption": EventClass.INTERRUPTION,
     "text_chunk": EventClass.USER_CONTENT,
+    "video_frame": EventClass.USER_CONTENT,
     "end_of_turn": EventClass.END_OF_TURN,
     "tool_result": EventClass.TOOL_RESULT,
     "worker_result": EventClass.WORKER_RESULT,

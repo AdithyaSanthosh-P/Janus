@@ -33,6 +33,7 @@ from prism_rt.model.types import (
     ActionType,
     CallStatus,
     ClaimGrade,
+    ConflictStatus,
     EffectStatus,
     FactStatus,
     GoalStatus,
@@ -116,10 +117,21 @@ class FastResponder:
             rule="responder.clarify",
         )
         friendly = target.rsplit(".", 1)[-1]
+        text = CLARIFY_TEMPLATE.format(target=friendly)
+        # V3: a slot blocked by an open perception conflict gets a more
+        # specific question naming both candidate values, rather than the
+        # generic "what should X be" (§9.4 "Claim acceptance" example:
+        # "The camera shows a Tab S9. Is that the device you mean?").
+        if store.config.vision_enabled and target.startswith(f"slot.{goal_id}."):
+            conflict = store.evidence.get_conflict(goal_id, friendly)
+            if conflict is not None and conflict.status == ConflictStatus.OPEN:
+                user_val = next((c["value"] for c in conflict.candidates if c["source"] == "user"), None)
+                perception_val = next((c["value"] for c in conflict.candidates if c["source"] == "perception"), None)
+                text = f"The camera shows {perception_val}. Did you mean {user_val}, or {perception_val}?"
         return [
             IntendedAction(
                 action_type=ActionType.CLARIFY,
-                body=SpeakBody(text=CLARIFY_TEMPLATE.format(target=friendly), kind="clarify"),
+                body=SpeakBody(text=text, kind="clarify"),
                 read_set=EMPTY_READ_SET,
                 rule_id="responder.clarify",
             )

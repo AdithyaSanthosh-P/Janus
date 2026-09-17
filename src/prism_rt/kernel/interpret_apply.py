@@ -17,6 +17,7 @@ structural change, not currently executing) still replans.
 
 from __future__ import annotations
 
+from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.model.types import (
     BindingKind,
     CallStatus,
@@ -30,6 +31,8 @@ from prism_rt.model.types import (
     TurnInterpretation,
 )
 from prism_rt.store.session import StoreTxn
+
+_PERCEPTION = PerceptionScheduler()
 
 _SLOT_UPDATE_ACTS = (
     InterpretAct.SLOT_UPDATE,
@@ -113,7 +116,35 @@ def _apply_slot_deltas(txn: StoreTxn, goal_id: str, slot_deltas, now_us: int, st
             provenance = Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us)
             if txn.facts.set(key, delta.value, FactStatus.COMMITTED, provenance, rule="interpret_apply.slot_set"):
                 changed = True
+        # V3: a fresh user statement about a slot name resolves whatever
+        # perception conflict was open on it (§9.1's "answer binding" —
+        # "any delta on the target sets status answered").
+        if delta.scope != "session" and txn.store.config.vision_enabled:
+            txn.evidence.void_conflict(goal_id, delta.name)
     return changed
+
+
+def _apply_visual_reference(
+    txn: StoreTxn, interp: TurnInterpretation, goal_id: str, now_us: int, step_no: int
+) -> None:
+    """V3: an accepted interpretation whose `visual_reference` is set
+    creates or retargets that goal's question (`docs/prompt 2.txt` §10.4
+    "Demand" trigger — the only trigger this project implements; see
+    `kernel/perception.py`'s module docstring). `anchor_ts_us` uses the
+    turn's close time as a simplified stand-in for "timestamp of the chunk
+    carrying the visual reference" (not tracked per-chunk)."""
+    if not txn.store.config.vision_enabled or interp.visual_reference == "none":
+        return
+    turn = txn.store.turn_log.get(interp.turn_id)
+    anchor_ts_us = turn.closed_ts_us if turn is not None and turn.closed_ts_us is not None else now_us
+    _PERCEPTION.create_or_retarget_question(
+        txn,
+        goal_id,
+        interp.visual_candidates,
+        interp.visual_reference,
+        anchor_ts_us=anchor_ts_us,
+        created_by="demand",
+    )
 
 
 def _abandon_goal(txn: StoreTxn, goal_id: str, now_us: int, step_no: int, *, event_id: str) -> None:
@@ -212,6 +243,7 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.commit_intent",
             )
+        _apply_visual_reference(txn, interp, gid, now_us, step_no)
         return gid
 
     if interp.act in _SLOT_UPDATE_ACTS:
@@ -259,6 +291,7 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 pass
             else:
                 txn.store.goals.update(gid, task_state=TaskState.PLANNING)
+        _apply_visual_reference(txn, interp, gid, now_us, step_no)
         return gid
 
     # BACKCHANNEL / SMALLTALK / UNCLEAR: nothing further to do.

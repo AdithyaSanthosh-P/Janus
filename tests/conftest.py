@@ -74,6 +74,10 @@ def interruption_event() -> dict:
     return {"type": "interruption", "payload": {}}
 
 
+def frame_event(frame_id: str) -> dict:
+    return {"type": "video_frame", "payload": {"frame_id": frame_id}}
+
+
 def drain(harness, max_us: int, *, step_us: int = 10_000, stop_on_final: bool = True) -> list:
     """Advance the harness in small steps up to max_us, collecting every
     emitted Action along the way. Stops early once a FINAL is emitted (the

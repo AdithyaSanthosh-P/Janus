@@ -13,13 +13,16 @@ from __future__ import annotations
 from prism_rt.model.types import (
     Binding,
     BindingKind,
+    Confidence,
     InterpretAct,
+    PerceptionClaim,
     Plan,
     PlanStep,
     SlotDelta,
     SlotOp,
     StepKind,
     TurnInterpretation,
+    VisualCandidate,
 )
 
 
@@ -34,6 +37,10 @@ def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnI
         )
         for delta in raw.get("slot_deltas") or ()
     )
+    visual_candidates = tuple(
+        VisualCandidate(name=c["name"], description=c.get("description", ""))
+        for c in raw.get("visual_candidates") or ()
+    )
     return TurnInterpretation(
         turn_id=turn_id,
         input_digest=input_digest,
@@ -43,6 +50,8 @@ def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnI
         commit_intent=bool(raw.get("commit_intent", False)),
         resume_goal_id=raw.get("resume_goal_id"),
         ack_phrase=raw.get("ack_phrase"),
+        visual_reference=raw.get("visual_reference") or "none",
+        visual_candidates=visual_candidates,
     )
 
 
@@ -86,3 +95,10 @@ def parse_compose(raw: dict) -> tuple[str, tuple[str, ...]]:
     text = str(raw.get("text", "")).strip()
     claims = tuple(raw.get("claims") or ())
     return text, claims
+
+
+def parse_perception(raw: dict) -> tuple[PerceptionClaim, ...]:
+    return tuple(
+        PerceptionClaim(name=c["name"], value=c.get("value"), confidence=Confidence(c["confidence"]))
+        for c in raw.get("claims") or ()
+    )

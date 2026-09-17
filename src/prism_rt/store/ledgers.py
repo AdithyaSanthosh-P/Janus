@@ -12,6 +12,8 @@ from prism_rt.model.types import (
     CallRecord,
     CallStatus,
     ChunkRecord,
+    Conflict,
+    ConflictStatus,
     EffectRecord,
     EffectStatus,
     GoalRecord,
@@ -19,7 +21,10 @@ from prism_rt.model.types import (
     JobKind,
     JobRecord,
     JobStatus,
+    Observation,
     Plan,
+    Question,
+    QuestionStatus,
     Turn,
 )
 from prism_rt.store.facts import MutationGuard
@@ -289,3 +294,86 @@ class TimerWheel:
 
     def due(self, now_us: int) -> list[str]:
         return [tid for tid, due_us in self._due.items() if due_us <= now_us]
+
+
+class EvidenceStore:
+    """V3: observations (stored frames), questions (what perception is
+    trying to answer), and conflicts (user statement vs. perception claim).
+    `docs/prompt 2.txt` §10, `docs/theme05_implementation_blueprint.md`
+    §2.10. Simplified per `model/types.py`'s V3 section docstring: one
+    active question tracked per goal, one open conflict tracked per
+    (goal, name)."""
+
+    def __init__(self, guard: MutationGuard) -> None:
+        self._guard = guard
+        self._observations: list[Observation] = []
+        self._questions: dict[str, Question] = {}
+        self._question_order: list[str] = []
+        self._current_question_by_goal: dict[str, str] = {}
+        self._conflicts: dict[tuple[str, str], Conflict] = {}
+
+    # --- observations -------------------------------------------------
+
+    def add_observation(self, obs: Observation) -> None:
+        self._guard.check()
+        self._observations.append(obs)
+
+    def observations(self) -> list[Observation]:
+        return list(self._observations)
+
+    # --- questions ------------------------------------------------------
+
+    def create_question(self, question: Question) -> None:
+        self._guard.check()
+        self._questions[question.question_id] = question
+        self._question_order.append(question.question_id)
+        self._current_question_by_goal[question.goal_id] = question.question_id
+
+    def get_question(self, question_id: str) -> Question | None:
+        return self._questions.get(question_id)
+
+    def update_question(self, question_id: str, **changes) -> Question:
+        self._guard.check()
+        updated = dataclasses.replace(self._questions[question_id], **changes)
+        self._questions[question_id] = updated
+        return updated
+
+    def all_questions(self) -> list[Question]:
+        return [self._questions[qid] for qid in self._question_order]
+
+    def latest_active_question(self, goal_id: str) -> Question | None:
+        """The goal's current question, if it hasn't been voided —
+        simplification: one tracked question per goal (see class docstring)."""
+        qid = self._current_question_by_goal.get(goal_id)
+        if qid is None:
+            return None
+        question = self._questions.get(qid)
+        if question is None or question.status == QuestionStatus.VOID:
+            return None
+        return question
+
+    def question_by_pending_job(self, job_id: str) -> Question | None:
+        for qid in self._question_order:
+            q = self._questions[qid]
+            if q.pending_job_id == job_id:
+                return q
+        return None
+
+    # --- conflicts --------------------------------------------------------
+
+    def create_conflict(self, conflict: Conflict) -> None:
+        self._guard.check()
+        self._conflicts[(conflict.goal_id, conflict.name)] = conflict
+
+    def get_conflict(self, goal_id: str, name: str) -> Conflict | None:
+        return self._conflicts.get((goal_id, name))
+
+    def conflict_open(self, goal_id: str, name: str) -> bool:
+        conflict = self._conflicts.get((goal_id, name))
+        return conflict is not None and conflict.status == ConflictStatus.OPEN
+
+    def void_conflict(self, goal_id: str, name: str) -> None:
+        self._guard.check()
+        conflict = self._conflicts.get((goal_id, name))
+        if conflict is not None and conflict.status == ConflictStatus.OPEN:
+            self._conflicts[(goal_id, name)] = dataclasses.replace(conflict, status=ConflictStatus.VOID)

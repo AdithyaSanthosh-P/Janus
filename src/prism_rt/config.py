@@ -37,8 +37,14 @@ class Config:
     claim_grades_enabled: bool = True
     rebinder_enabled: bool = True
 
-    # V3 Multimodal feature flags
+    # V3 Multimodal feature flags. vision_enabled is the master gate: every
+    # perception code path (kernel/perception.py, the video_frame ->
+    # Observation reducer excepted, since storing evidence is always safe —
+    # see its own docstring) is a no-op while this is False, so V0-V2 tests
+    # (which never set it) are structurally unaffected by this version.
     vision_enabled: bool = False  # V3: True
+    evidence_align_window_ms: int = 1000  # AT_UTTERANCE: how far past anchor_ts to wait for a frame
+    evidence_lease_ms: int = 4000  # CURRENT_STATE claim staleness timeout (simplified: flat timeout, not frame-count based)
     asr_enabled: bool = False  # not implemented
 
     # Observability

@@ -11,7 +11,8 @@ import dataclasses
 
 from prism_rt.kernel.detector import QuickDetector
 from prism_rt.kernel.interpret_apply import active_goal_id, apply_interpretation
-from prism_rt.kernel.proposals import parse_compose, parse_interpretation, parse_plan
+from prism_rt.kernel.perception import PerceptionScheduler
+from prism_rt.kernel.proposals import parse_compose, parse_interpretation, parse_perception, parse_plan
 from prism_rt.kernel.results import ResultRouter
 from prism_rt.kernel.turns import TurnManager
 from prism_rt.model.events import (
@@ -20,6 +21,7 @@ from prism_rt.model.events import (
     ManifestPayload,
     TextChunkPayload,
     ToolResultPayload,
+    VideoFramePayload,
     WorkerResultPayload,
 )
 from prism_rt.model.types import (
@@ -28,6 +30,7 @@ from prism_rt.model.types import (
     GoalStatus,
     JobKind,
     JobStatus,
+    Observation,
     Provenance,
     StepKind,
     TaskState,
@@ -38,6 +41,7 @@ from prism_rt.store.session import StoreTxn
 _RESULT_ROUTER = ResultRouter()
 _TURN_MANAGER = TurnManager()
 _QUICK_DETECTOR = QuickDetector()
+_PERCEPTION = PerceptionScheduler()
 
 
 def _apply_manifest(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
@@ -164,6 +168,20 @@ def _apply_end_of_turn(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) 
     )
 
 
+def _apply_video_frame(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
+    """V3: a frame is always stored as an Observation, never analyzed on
+    arrival (§10.4) — relevance is decided later, only by an open question
+    (`kernel/perception.py`). Storing unconditionally (not gated on
+    `vision_enabled`) matches §10.3 ("Evidence is always stored") and costs
+    V0-V2 nothing since they never send this event."""
+    payload: VideoFramePayload = env.payload
+    obs_id = txn.store.ids.next("obs")
+    seq = len(txn.store.evidence.observations()) + 1
+    txn.evidence.add_observation(
+        Observation(obs_id=obs_id, frame_id=payload.frame_id, capture_ts_us=now_us, arrival_step=step_no, modality_seq=seq)
+    )
+
+
 def _apply_interruption(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
     payload: InterruptionPayload = env.payload
     del payload  # reason isn't consulted in V1
@@ -231,11 +249,19 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
             rule="reducers.compose_result",
         )
 
+    elif kind == JobKind.VISION:
+        try:
+            claims = parse_perception(proposal)
+        except (KeyError, ValueError):
+            return
+        _PERCEPTION.on_perception_result(txn, job, claims, now_us, step_no, event_id=env.event_id)
+
 
 _HANDLERS = {
     "manifest": _apply_manifest,
     "tool_result": _apply_tool_result,
     "text_chunk": _apply_text_chunk,
+    "video_frame": _apply_video_frame,
     "end_of_turn": _apply_end_of_turn,
     "interruption": _apply_interruption,
     "worker_result": _apply_worker_result,

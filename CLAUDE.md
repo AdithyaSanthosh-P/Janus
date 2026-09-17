@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-This project is called **Janus** (`pyproject.toml` distribution name `janus`; the Python package import path is `prism_rt` — a naming mismatch left in place deliberately, not a leftover to "fix"). It's a hackathon entry for the Samsung PRISM GenAI Hackathon, Theme 05 (deadline 25 Sep 2026). V0 and V1 are implemented, tested, and frozen (git tags `v0-skeleton`, `v1-text-agent`/`release/v1`); V2 is next. Every future session should treat `currentStatus.md` as the live handoff record and update it after meaningful work (it says so explicitly — follow that rule).
+This project is called **Janus** (`pyproject.toml` distribution name `janus`; the Python package import path is `prism_rt` — a naming mismatch left in place deliberately, not a leftover to "fix"). It's a hackathon entry for the Samsung PRISM GenAI Hackathon, Theme 05 (deadline 25 Sep 2026). V0, V1, V2, and V3 are implemented, tested, and frozen (git tags `v0-skeleton`, `v1-text-agent`/`release/v1`, `v2-robust-recovery`/`release/v2`, `v3-multimodal`/`release/v3`); V4 (hardening/Docker/timing sweeps) is next. Every future session should treat `currentStatus.md` as the live handoff record and update it after meaningful work (it says so explicitly — follow that rule).
 
 **Read `currentStatus.md` first, every session.** It names the read order for the other docs, the current implementation state, and the next task. Do not re-derive that from scratch — it is kept up to date for exactly this purpose.
 
@@ -47,8 +47,9 @@ Build in strict stages; each version must be independently runnable/submittable 
 
 - **V0** — deterministic kernel skeleton, no LLM, plans injected by test scripts. Freeze as git tag `v0-skeleton`.
 - **V1** — interruptible text agent with real LLM workers (Interpreter/Planner/Composer via `ModelGateway`). Tag `v1-text-agent`, branch `release/v1`. This is the submission-capable MVP.
-- **V2** — robustness innovations (transitive invalidation, settle barrier, absence read sets, claim grades, rebinder), each behind a `Config` feature flag defaulting OFF until enabled. Tag `v2-robust-recovery`.
-- **V3** — multimodal (vision, evidence store); **V4** — hardening/adversarial timing sweeps + Docker.
+- **V2** — robustness innovations (transitive invalidation, settle barrier, absence read sets, claim grades, rebinder), each behind a `Config` feature flag defaulting OFF until enabled. Tag `v2-robust-recovery`, branch `release/v2`.
+- **V3** — multimodal grounding (`kernel/perception.py` PerceptionScheduler, `store/ledgers.py` EvidenceStore, `workers/vision.py`, `video_frame` events, perception claims/conflicts/leases), entirely behind `Config.vision_enabled` (default OFF). Tag `v3-multimodal`, branch `release/v3`.
+- **V4** — hardening/adversarial timing sweeps + Docker.
 
 Rules: never break a frozen version's interfaces (guard new behavior behind `Config` flags); the highest frozen version/tag is always the emergency-submission fallback; final submission needs git tag `PRISM_GENAI_HACKATHON_Y2026` on the judged commit. Stop conditions (when to halt a version and fall back) are in `docs/sonnet_implementation_plan.md` §13.
 
@@ -58,9 +59,10 @@ Python project (`pyproject.toml`, deps: pydantic, PyYAML, pytest, pytest-asyncio
 
 ```bash
 source .venv/bin/activate                     # venv already has all deps installed
-python -m pytest tests/ -v                    # full suite (23 tests: 8 V0 + 15 V1)
-python -m pytest tests/test_v1.py -v           # single version's scenario tests
-PYTHONPATH=src:. python demo/run_v1_demo.py    # interactive demo with real spoken output
+python -m pytest tests/ -v                    # full suite (42 tests: 8 V0 + 15 V1 + 13 V2 + 6 V3)
+python -m pytest tests/test_v3.py -v           # single version's scenario tests
+PYTHONPATH=src:. python demo/run_v1_demo.py    # interactive demo with real spoken output (scripted)
+PYTHONPATH=src:. python demo/run_v1_live_demo.py  # same demo against the real Gemini API (GEMINI_API_KEY in .env)
 docker build .                                 # V4 scope — no Dockerfile yet
 ```
 

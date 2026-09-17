@@ -33,6 +33,14 @@ INTERPRET_SCHEMA = {
         "commit_intent": {"type": "boolean"},
         "resume_goal_id": {"type": ["string", "null"]},
         "ack_phrase": {"type": ["string", "null"]},
+        "visual_reference": {"type": "string", "enum": ["none", "at_utterance", "current_state"]},
+        "visual_candidates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "description": {"type": "string"}},
+            },
+        },
     },
 }
 

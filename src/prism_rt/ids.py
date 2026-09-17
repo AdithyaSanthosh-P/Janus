@@ -19,6 +19,9 @@ _PREFIXES = {
     "action": "a",
     "utt": "u",
     "timer": "tm",
+    "obs": "o",
+    "question": "q",
+    "conflict": "cf",
 }
 
 

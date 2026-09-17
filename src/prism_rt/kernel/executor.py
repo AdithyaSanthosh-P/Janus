@@ -98,6 +98,17 @@ class PlanExecutor:
 
             bind_result, missing_key = self._bind(step, gid, store)
             if bind_result is None:
+                # V3: a missing `claim.*` binding means perception hasn't
+                # answered yet (still analyzing, or mid lease-renewal after
+                # `kernel/perception.py.expire_leases` retracted a stale
+                # claim) — that resolves itself once the VISION job
+                # completes; asking the user about it would be a spurious
+                # interruption. (Scope trim: the full spec also clarifies
+                # when a WRITE step needs a MEDIUM-confidence claim, which
+                # this doesn't distinguish — no test scenario needs that
+                # nuance; see kernel/perception.py's module docstring.)
+                if missing_key is not None and missing_key.startswith("claim."):
+                    continue
                 self._ask_for(store, gid, missing_key, now_us, step_no)
                 continue
 
@@ -146,6 +157,23 @@ class PlanExecutor:
                 key = (binding.fact_key or "").replace("$G", goal_id)
                 if not key:
                     return None, f"slot.{goal_id}.{param}"
+                if "$Q" in key:
+                    # V3: substitute the goal's current perception question
+                    # id, same substitution style as $G. No question yet ->
+                    # blocked exactly like a missing fact (waits, no ask —
+                    # see propose_ready_calls' claim.* skip above).
+                    question = store.evidence.latest_active_question(goal_id)
+                    if question is None:
+                        return None, key
+                    key = key.replace("$Q", question.question_id)
+                if store.config.vision_enabled and key.startswith(f"slot.{goal_id}."):
+                    # V3: an open perception conflict on this slot name
+                    # blocks the step even though the user's own value is
+                    # still on record (§9.1: rank 1/2 vs rank 3, different
+                    # -> "Open conflict; blocks steps using the slot").
+                    name = key[len(f"slot.{goal_id}."):]
+                    if store.evidence.conflict_open(goal_id, name):
+                        return None, key
                 fact = store.facts.get(key)
                 if fact is None or fact.status in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS):
                     return None, key

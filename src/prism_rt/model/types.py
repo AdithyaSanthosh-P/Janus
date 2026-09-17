@@ -151,7 +151,33 @@ class JobKind(str, Enum):
     INTERPRET = "interpret"
     PLAN = "plan"
     COMPOSE = "compose"
-    # V3: VISION = "vision", ASR = "asr", FRAME = "frame"
+    VISION = "vision"
+    # V3 (not implemented): ASR = "asr"
+
+
+class Confidence(str, Enum):
+    """Ordinal, not calibrated probability — VisionAnalyzer's verbalized
+    band, mapped (`docs/prompt 2.txt` §10.5)."""
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class QuestionMode(str, Enum):
+    AT_UTTERANCE = "at_utterance"
+    CURRENT_STATE = "current_state"
+
+
+class QuestionStatus(str, Enum):
+    OPEN = "open"
+    ANSWERED = "answered"
+    VOID = "void"
+
+
+class ConflictStatus(str, Enum):
+    OPEN = "open"
+    VOID = "void"
 
 
 # ---------------------------------------------------------------------------
@@ -299,9 +325,19 @@ class SlotDelta:
 
 
 @dataclass(frozen=True)
+class VisualCandidate:
+    """A named target the Interpreter wants a video frame analyzed for
+    (V3, `docs/prompt 2.txt` §10.4 "Demand" trigger)."""
+
+    name: str
+    description: str = ""
+
+
+@dataclass(frozen=True)
 class TurnInterpretation:
-    """Interpreter worker output (`docs/prompt 2.txt` §4.6, V1 subset —
-    visual_reference/ambiguities are V3 multimodal concerns, dropped here)."""
+    """Interpreter worker output (`docs/prompt 2.txt` §4.6). `ambiguities`
+    (multiple candidate interpretations) remains out of scope; V3 adds
+    visual_reference/visual_candidates only."""
 
     turn_id: str
     input_digest: str
@@ -311,6 +347,8 @@ class TurnInterpretation:
     commit_intent: bool = False
     resume_goal_id: str | None = None
     ack_phrase: str | None = None
+    visual_reference: str = "none"  # V3: "none" | "at_utterance" | "current_state"
+    visual_candidates: tuple[VisualCandidate, ...] = ()
 
 
 class BindingKind(str, Enum):
@@ -405,3 +443,62 @@ class JobRecord:
     read_set: ReadSet
     status: JobStatus = JobStatus.RUNNING
     dispatched_step: int = 0
+
+
+# ---------------------------------------------------------------------------
+# V3: multimodal evidence (`docs/prompt 2.txt` §10, `docs/theme05_
+# implementation_blueprint.md` §2.10/§9). Simplified per
+# `docs/sonnet_implementation_plan.md`'s V3 "SIMPLIFIED" scope: leases are a
+# flat timeout (no frame-count tracking), perception scheduling dispatches
+# the first available aligned frame (no coalescing/watch-mode re-analysis),
+# and only one open question is tracked per goal (a new demand retargets it
+# rather than the full multi-question bookkeeping the blueprint describes).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Observation:
+    """A stored video frame — analyzed only on demand (§10.4), never on
+    arrival. `frame_id` is the harness-given reference; no blob is held
+    here (see `workers/vision.py`'s module docstring for why)."""
+
+    obs_id: str
+    frame_id: str
+    capture_ts_us: int
+    arrival_step: int
+    modality_seq: int  # 1-based
+
+
+@dataclass(frozen=True)
+class PerceptionClaim:
+    name: str
+    value: Any
+    confidence: Confidence
+
+
+@dataclass(frozen=True)
+class QuestionTarget:
+    name: str
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class Question:
+    question_id: str
+    goal_id: str
+    targets: tuple[QuestionTarget, ...]
+    mode: QuestionMode
+    anchor_ts_us: int
+    created_by: str  # "demand" | "renewal" (cue/plan sources not implemented — see kernel/perception.py)
+    status: QuestionStatus = QuestionStatus.OPEN
+    pending_job_id: str | None = None  # VISION job currently analyzing a frame for this question
+    pending_obs_id: str | None = None  # which observation that job is analyzing
+
+
+@dataclass(frozen=True)
+class Conflict:
+    conflict_id: str
+    goal_id: str
+    name: str  # slot/target name, not a fact key
+    candidates: tuple[dict, ...]  # [{"value", "source": "user"|"perception", "confidence", "ref"}, ...]
+    status: ConflictStatus = ConflictStatus.OPEN

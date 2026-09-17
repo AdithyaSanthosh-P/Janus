@@ -28,6 +28,7 @@ from prism_rt.kernel.emission import EmissionGate, EmitReport
 from prism_rt.kernel.executor import PlanExecutor
 from prism_rt.kernel.invalidation import InvalidationEngine, InvalidationReport
 from prism_rt.kernel.ordering import order_batch
+from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.kernel.reducers import apply as apply_reducer
 from prism_rt.kernel.responder import FastResponder
 from prism_rt.kernel.task import TaskStateMachine
@@ -73,6 +74,7 @@ class Kernel:
         self._invalidation_engine = InvalidationEngine()
         self._commit_gate = CommitGate()
         self._task_state_machine = TaskStateMachine()
+        self._perception_scheduler = PerceptionScheduler()
         self._plan_executor = PlanExecutor()
         self._fast_responder = FastResponder()
         self._step_no = 0
@@ -110,15 +112,23 @@ class Kernel:
             if inject is not None:
                 inject(txn, now_us, step_no)
 
+            # V3: lease expiry is clock-driven, not event-driven — it must
+            # run every step (a no-op when config.vision_enabled is False)
+            # so a stale CURRENT_STATE claim retracts and cascades through
+            # the ordinary INVALIDATE phase below, same step, same as any
+            # other fact change (P3).
+            self._perception_scheduler.expire_leases(txn, now_us, step_no)
+
             # Phase 3: INVALIDATE
             changed_keys = txn.changed_keys()
             invalidation = self._invalidation_engine.invalidate(changed_keys, self.store, txn=txn)
 
             # Phase 4: DECIDE — fixed order: cancellation, TaskStateMachine,
-            # PlanExecutor, CommitGate, FastResponder.
+            # PerceptionScheduler, PlanExecutor, CommitGate, FastResponder.
             intended = []
             intended.extend(self._invalidation_engine.cancellation_actions(invalidation, self.store))
-            dispatch_requests = self._task_state_machine.decide(self.store, now_us, step_no)
+            dispatch_requests = list(self._task_state_machine.decide(self.store, now_us, step_no))
+            dispatch_requests.extend(self._perception_scheduler.decide(self.store, now_us, step_no))
             self._plan_executor.propose_ready_calls(self.store, now_us, step_no)
             admitted_actions, admitted_call_ids = self._commit_gate.scan_and_admit(self.store, now_us)
             intended.extend(admitted_actions)

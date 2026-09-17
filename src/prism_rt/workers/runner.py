@@ -17,7 +17,7 @@ from typing import Protocol
 
 from prism_rt.model.events import WorkerResultPayload
 from prism_rt.model.types import JobKind
-from prism_rt.workers import composer, interpreter, planner
+from prism_rt.workers import composer, interpreter, planner, vision
 from prism_rt.workers.gateway import ModelGateway
 
 
@@ -28,6 +28,8 @@ def _run_job(gateway: ModelGateway, kind: JobKind, view: dict) -> dict:
         return planner.run_plan(gateway, view)
     if kind == JobKind.COMPOSE:
         return composer.run_compose(gateway, view)
+    if kind == JobKind.VISION:
+        return vision.run_vision(gateway, view)
     raise ValueError(f"unknown job kind: {kind}")
 
 
