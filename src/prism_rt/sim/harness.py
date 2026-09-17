@@ -53,11 +53,15 @@ class MockToolRegistry:
         self._cancelled.add(call_id)
 
     def due_results(self, now_us: int) -> list[tuple[str, str, object, dict | None]]:
-        due = [(cid, *rest) for cid, rest in self._scheduled.items() if rest[0] <= now_us]
+        due = [
+            (cid, due_ts, status, response, error)
+            for cid, (due_ts, status, response, error) in self._scheduled.items()
+            if due_ts <= now_us
+        ]
         due.sort(key=lambda item: (item[1], item[0]))  # deterministic: due_ts, then call_id
         for cid, *_ in due:
             del self._scheduled[cid]
-        return due
+        return [(cid, status, response, error) for cid, _due_ts, status, response, error in due]
 
 
 @dataclass
