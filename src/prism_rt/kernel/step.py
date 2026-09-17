@@ -111,7 +111,7 @@ class Kernel:
 
             # Phase 3: INVALIDATE
             changed_keys = txn.changed_keys()
-            invalidation = self._invalidation_engine.invalidate(changed_keys, self.store)
+            invalidation = self._invalidation_engine.invalidate(changed_keys, self.store, txn=txn)
 
             # Phase 4: DECIDE — fixed order: cancellation, TaskStateMachine,
             # PlanExecutor, CommitGate, FastResponder.

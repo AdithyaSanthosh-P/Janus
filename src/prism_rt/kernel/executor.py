@@ -54,15 +54,22 @@ class PlanExecutor:
         for step in plan.steps:
             latest = store.call_ledger.latest_by_step(gid, step.step_key)
 
-            if latest is not None and latest.status in (
-                CallStatus.PROPOSED,
-                CallStatus.IN_FLIGHT,
-                CallStatus.CONSUMED,
-            ):
-                continue  # already in progress or done
+            if latest is not None and latest.status in (CallStatus.PROPOSED, CallStatus.IN_FLIGHT):
+                continue  # already in progress
 
             attempt = 1
-            if latest is not None and latest.status == CallStatus.FAILED:
+            if latest is not None and latest.status == CallStatus.CONSUMED:
+                # §3.5: a step carries over across plan revisions only while
+                # its resolved arguments are unchanged — i.e. its read set
+                # is still valid. If a slot it read has since changed, this
+                # is stale, not done: fall through and re-execute with the
+                # new value (D4). Without this check a corrected step never
+                # re-runs, and everything downstream silently binds to data
+                # from before the correction.
+                if store.facts.is_valid(latest.read_set).is_valid:
+                    continue  # still correct — carry over, nothing to do
+                attempt = latest.attempt + 1
+            elif latest is not None and latest.status == CallStatus.FAILED:
                 max_retries = store.config.max_write_retries if step.kind == StepKind.WRITE else store.config.max_read_retries
                 if latest.attempt > max_retries:
                     self._fail_goal(store, gid, step, now_us, step_no)
@@ -101,8 +108,15 @@ class PlanExecutor:
         return created
 
     def _step_done(self, store, goal_id: str, step_key: str) -> bool:
+        """"Done" means consumed *and still valid* — a dependency whose
+        consumed result has since gone stale (its read set no longer
+        valid) must block downstream steps from binding to it, the same
+        way §3.5's carry-over rule keeps it from counting as done for its
+        own re-execution above."""
         latest = store.call_ledger.latest_by_step(goal_id, step_key)
-        return latest is not None and latest.status == CallStatus.CONSUMED
+        if latest is None or latest.status != CallStatus.CONSUMED:
+            return False
+        return store.facts.is_valid(latest.read_set).is_valid
 
     def _bind(self, step, goal_id: str, store) -> tuple[BindResult | None, str | None]:
         args: dict = {}
@@ -132,6 +146,29 @@ class PlanExecutor:
                 upstream = store.call_ledger.latest_by_step(goal_id, binding.step_key)
                 if upstream is None or upstream.status != CallStatus.CONSUMED:
                     return None, f"result.<{binding.step_key}>"
+
+                # V2: if the upstream step mapped this exact path to a
+                # derived fact, bind to *that* instead of re-deriving from
+                # the raw result — the derived fact carries a
+                # derivation_read_set, so a later slot change transitively
+                # retracts it and cancels this (downstream) call in the same
+                # step, instead of silently reading a now-stale value
+                # (`kernel/invalidation.py`). Falls back to the V1 path
+                # (read result.<call_id> directly) whenever there's no
+                # matching output_map entry, so plans that don't use
+                # output_map keep working exactly as before.
+                if store.config.transitive_invalidation and binding.path:
+                    upstream_step = self._find_step(store, goal_id, binding.step_key)
+                    derived_name = upstream_step.output_map.get(binding.path) if upstream_step else None
+                    if derived_name:
+                        derived_key = derived_name.replace("$G", goal_id)
+                        fact = store.facts.get(derived_key)
+                        if fact is None or fact.status == FactStatus.RETRACTED:
+                            return None, derived_key
+                        args[param] = fact.value
+                        read_keys.append(derived_key)
+                        continue
+
                 result_key = f"result.{upstream.call_id}"
                 fact = store.facts.get(result_key)
                 if fact is None:
@@ -152,8 +189,26 @@ class PlanExecutor:
                 read_keys.append(result_key)
                 continue
 
+        # V2: absence entries — an optional constraint the step's validity
+        # implicitly assumes is unset (I-12). Only added while it's still
+        # genuinely absent; if it's already present the step must be
+        # re-planned around it, not bound as if it weren't there.
+        if store.config.absence_read_sets:
+            for key_template in step.absence_keys:
+                key = key_template.replace("$G", goal_id)
+                fact = store.facts.get(key)
+                if fact is not None and fact.status not in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS):
+                    return None, key
+                read_keys.append(key)
+
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return BindResult(args=args, read_set=read_set), None
+
+    def _find_step(self, store, goal_id: str, step_key: str):
+        plan = store.plans.current(goal_id)
+        if plan is None:
+            return None
+        return next((s for s in plan.steps if s.step_key == step_key), None)
 
     def _ask_for(self, store, goal_id: str, target_key: str | None, now_us: int, step_no: int) -> None:
         if target_key is None:

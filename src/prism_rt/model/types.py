@@ -338,6 +338,7 @@ class PlanStep:
     output_map: dict = field(default_factory=dict)  # result path -> derived.<gid>.<name>
     requires_commit_intent: bool = False
     structure_depends_on: tuple[str, ...] = ()  # slot names whose change forces replan, not rebind
+    absence_keys: tuple[str, ...] = ()  # V2: fact keys (with $G) the step's validity implicitly assumes are absent
 
 
 @dataclass(frozen=True)

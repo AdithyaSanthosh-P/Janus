@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 
+from prism_rt.kernel.detector import QuickDetector
 from prism_rt.kernel.interpret_apply import active_goal_id, apply_interpretation
 from prism_rt.kernel.proposals import parse_compose, parse_interpretation, parse_plan
 from prism_rt.kernel.results import ResultRouter
@@ -22,6 +23,7 @@ from prism_rt.model.events import (
     WorkerResultPayload,
 )
 from prism_rt.model.types import (
+    CallStatus,
     FactStatus,
     GoalStatus,
     JobKind,
@@ -35,6 +37,7 @@ from prism_rt.store.session import StoreTxn
 
 _RESULT_ROUTER = ResultRouter()
 _TURN_MANAGER = TurnManager()
+_QUICK_DETECTOR = QuickDetector()
 
 
 def _apply_manifest(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
@@ -49,9 +52,69 @@ def _apply_manifest(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> 
     )
 
 
+def _traverse_path(value, path: str):
+    for part in path.split("."):
+        if isinstance(value, dict):
+            value = value.get(part)
+        elif isinstance(value, list) and part.lstrip("-").isdigit():
+            index = int(part)
+            value = value[index] if -len(value) <= index < len(value) else None
+        else:
+            value = None
+        if value is None:
+            break
+    return value
+
+
+def _write_derived_facts(txn: StoreTxn, call_id: str, now_us: int, step_no: int, event_id: str) -> None:
+    """V2: map a consumed result through its step's `output_map` into
+    `derived.<gid>.<name>` facts, tagged with the call's own read set as
+    `derivation_read_set` — this is what makes a downstream call that binds
+    to the derived value (instead of the raw `result.<call_id>`) cancel
+    transitively when the upstream slot changes (`kernel/invalidation.py`).
+    """
+    if not txn.store.config.transitive_invalidation:
+        return
+    call = txn.store.call_ledger.get(call_id)
+    if call is None:
+        return
+    plan = txn.store.plans.current(call.goal_id)
+    if plan is None:
+        return
+    step = next((s for s in plan.steps if s.step_key == call.step_key), None)
+    if step is None or not step.output_map:
+        return
+    result_fact = txn.facts.get(f"result.{call.call_id}")
+    if result_fact is None:
+        return
+    for path, derived_name in step.output_map.items():
+        value = _traverse_path(result_fact.value, path)
+        if value is None:
+            continue
+        key = derived_name.replace("$G", call.goal_id)
+        txn.facts.set(
+            key,
+            value,
+            FactStatus.DERIVED,
+            Provenance(
+                source="tool",
+                event_id=event_id,
+                call_id=call.call_id,
+                step_no=step_no,
+                ts_us=now_us,
+                derivation_read_set=call.read_set,
+            ),
+            rule="derived.from_output_map",
+        )
+
+
 def _apply_tool_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
     payload: ToolResultPayload = env.payload
-    _RESULT_ROUTER.route(payload, txn.store, now_us, step_no=step_no, event_id=env.event_id)
+    outcome = _RESULT_ROUTER.route(payload, txn.store, now_us, step_no=step_no, event_id=env.event_id)
+    # outcome.branch == "consumed" covers both the ok and error sub-cases
+    # (see ResultRouter branch 7); only the ok one actually wrote a result.
+    if outcome.branch == "consumed" and outcome.new_status == CallStatus.CONSUMED and outcome.call_id is not None:
+        _write_derived_facts(txn, outcome.call_id, now_us, step_no, env.event_id)
 
 
 def _apply_text_chunk(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
@@ -64,6 +127,34 @@ def _apply_end_of_turn(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) 
     turn = _TURN_MANAGER.on_eot(now_us, txn)
     if turn is None or not turn.chunks:
         return
+
+    # V2: settle barrier needs to know when the floor last closed, regardless
+    # of whether this turn dispatches an interpretation (kernel/commit.py G10).
+    txn.facts.set(
+        "session.last_eot_ts",
+        now_us,
+        FactStatus.COMMITTED,
+        Provenance(source="system", event_id=env.event_id, turn_id=turn.turn_id, step_no=step_no, ts_us=now_us),
+        rule="reducers.eot_settle_marker",
+    )
+
+    # V2: a pure backchannel ("mm-hmm") during ongoing work needs no
+    # interpretation at all — dispatching one risks the model reading
+    # something disruptive into a turn that meant nothing (I-11). A brand
+    # new utterance (no active goal, or goal already finished) still goes
+    # through normal interpretation, since "ok" might be starting something.
+    full_text = " ".join(chunk.text for chunk in turn.chunks)
+    gid = active_goal_id(txn.store)
+    if gid is not None:
+        goal = txn.store.goals.get(gid)
+        if (
+            goal is not None
+            and goal.status == GoalStatus.ACTIVE
+            and goal.task_state in (TaskState.PLANNING, TaskState.EXECUTING, TaskState.RESPONDING)
+            and _QUICK_DETECTOR.detect(full_text).is_backchannel
+        ):
+            return
+
     txn.facts.set(
         "session.pending_interpretation_turn",
         turn.turn_id,

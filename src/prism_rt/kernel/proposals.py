@@ -75,6 +75,8 @@ def parse_plan(raw: dict, *, goal_id: str, plan_rev: int) -> Plan:
                 after=tuple(raw_step.get("after") or ()),
                 output_map=dict(raw_step.get("output_map") or {}),
                 requires_commit_intent=(kind == StepKind.WRITE),
+                structure_depends_on=tuple(raw_step.get("structure_depends_on") or ()),
+                absence_keys=tuple(raw_step.get("absence_keys") or ()),
             )
         )
     return Plan(goal_id=goal_id, plan_rev=plan_rev, steps=tuple(steps))

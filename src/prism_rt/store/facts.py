@@ -146,6 +146,12 @@ class FactStore:
             if fact.status in (FactStatus.COMMITTED, FactStatus.DERIVED)
         }
 
+    def all_derived(self) -> list[Fact]:
+        """V2: facts carrying a `derivation_read_set` — candidates for
+        transitive retraction when what they were derived from goes stale
+        (`kernel/invalidation.py`)."""
+        return [f for f in self._facts.values() if f.status == FactStatus.DERIVED]
+
     # --- change tracking, used by StoreTxn --------------------------------
 
     def changed_keys_pending(self) -> set[str]:

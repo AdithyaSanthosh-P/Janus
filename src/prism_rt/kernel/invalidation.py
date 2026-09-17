@@ -23,14 +23,41 @@ class InvalidationReport:
 
 
 class InvalidationEngine:
-    def invalidate(self, changed_keys: set[str], store: SessionStore) -> InvalidationReport:
+    def invalidate(self, changed_keys: set[str], store: SessionStore, *, txn=None) -> InvalidationReport:
+        """`txn` is only needed for the V2 transitive pass (it retracts
+        stale derived facts, a mutation) — V0/V1 callers that never enable
+        `config.transitive_invalidation` can omit it."""
         if not changed_keys:
             return InvalidationReport(frozenset(), (), ())
 
-        dep_ids = store.dep_index.dependents(changed_keys)
+        all_changed = set(changed_keys)
         invalidated: list[str] = []
         discarded: list[str] = []
 
+        invalidated.extend(self._mark_dependents(all_changed, store, discarded))
+
+        if txn is not None and store.config.transitive_invalidation:
+            # Fixpoint: a fact derived from something that just went stale
+            # is itself stale, and anything that read *it* cascades the
+            # same way — search -> derived.selected_flight -> get_seat_map,
+            # all cancelled in this same step. Bounded to 8 rounds (a
+            # correction's dependency chain is never realistically deeper).
+            for _round in range(8):
+                newly_retracted = self._retract_stale_derived(all_changed, store, txn)
+                if not newly_retracted:
+                    break
+                all_changed.update(newly_retracted)
+                invalidated.extend(self._mark_dependents(set(newly_retracted), store, discarded))
+
+        return InvalidationReport(
+            changed_keys=frozenset(all_changed),
+            invalidated_call_ids=tuple(invalidated),
+            discarded_call_ids=tuple(discarded),
+        )
+
+    def _mark_dependents(self, keys: set[str], store: SessionStore, discarded: list[str]) -> list[str]:
+        dep_ids = store.dep_index.dependents(keys)
+        invalidated: list[str] = []
         for dep_id in dep_ids:
             call = store.call_ledger.get(dep_id)
             if call is None:
@@ -48,12 +75,21 @@ class InvalidationEngine:
             # CANCEL_REQUESTED calls: a cancel is already pending; leave as-is.
 
             store.dep_index.unregister(dep_id)
+        return invalidated
 
-        return InvalidationReport(
-            changed_keys=frozenset(changed_keys),
-            invalidated_call_ids=tuple(invalidated),
-            discarded_call_ids=tuple(discarded),
-        )
+    def _retract_stale_derived(self, changed_keys: set[str], store: SessionStore, txn) -> list[str]:
+        retracted: list[str] = []
+        for fact in store.facts.all_derived():
+            if fact.key in changed_keys:
+                continue  # already accounted for this round
+            read_set = fact.provenance.derivation_read_set
+            if read_set is None:
+                continue
+            if store.facts.is_valid(read_set).is_valid:
+                continue
+            if txn.facts.retract(fact.key, rule="invalidation.transitive"):
+                retracted.append(fact.key)
+        return retracted
 
     def cancellation_actions(self, report: InvalidationReport, store: SessionStore) -> list[IntendedAction]:
         """CANCEL is emitted for every call currently marked INVALIDATED —
