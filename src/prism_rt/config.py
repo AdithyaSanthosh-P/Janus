@@ -28,12 +28,14 @@ class Config:
     enforce_commit_gate: bool = True
     enforce_read_set_at_emission: bool = True
 
-    # V2 Innovation feature flags
-    transitive_invalidation: bool = False  # V2: True
-    settle_barrier_enabled: bool = False  # V2: True
-    absence_read_sets: bool = False  # V2: True
-    claim_grades_enabled: bool = False  # V2: True
-    rebinder_enabled: bool = False  # V2: True
+    # V2 Innovation feature flags — on by default now that V2 is frozen
+    # (v2-robust-recovery); construct Config(...=False) to get V1 behavior
+    # back for a specific test or comparison.
+    transitive_invalidation: bool = True
+    settle_barrier_enabled: bool = True
+    absence_read_sets: bool = True
+    claim_grades_enabled: bool = True
+    rebinder_enabled: bool = True
 
     # V3 Multimodal feature flags
     vision_enabled: bool = False  # V3: True

@@ -92,4 +92,17 @@ def drain(harness, max_us: int, *, step_us: int = 10_000, stop_on_final: bool = 
 
 @pytest.fixture
 def config() -> Config:
-    return Config()
+    """V0/V1 test files were written and timed against V1-era semantics
+    (writes admitted as soon as CommitGate's G1-G9 pass, no settle delay).
+    DEFAULT_CONFIG's V2 flags default True now that V2 is frozen, so this
+    fixture pins them back off explicitly — decoupling test_v0.py/test_v1.py
+    from the global default rather than baking V2 timing into tests that
+    were never designed to exercise it. test_v2.py constructs its own
+    Config(...) per scenario instead of using this fixture."""
+    return Config(
+        transitive_invalidation=False,
+        settle_barrier_enabled=False,
+        absence_read_sets=False,
+        claim_grades_enabled=False,
+        rebinder_enabled=False,
+    )

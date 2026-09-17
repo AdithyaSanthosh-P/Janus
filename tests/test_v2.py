@@ -45,6 +45,23 @@ CONFIRM_PRICE_TOOL = {
 }
 
 
+def v2_config(**overrides) -> Config:
+    """All V2 flags start False here regardless of DEFAULT_CONFIG's own
+    defaults (which flip True once V2 is frozen) — each test opts in to
+    exactly the feature(s) it means to exercise via `overrides`, so it
+    stays isolated from unrelated V2 behavior (e.g. a write test that
+    doesn't care about the settle barrier shouldn't suddenly wait 300ms
+    just because some *other* flag defaulted True at the dataclass level)."""
+    return Config(
+        transitive_invalidation=overrides.pop("transitive_invalidation", False),
+        settle_barrier_enabled=overrides.pop("settle_barrier_enabled", False),
+        absence_read_sets=overrides.pop("absence_read_sets", False),
+        claim_grades_enabled=overrides.pop("claim_grades_enabled", False),
+        rebinder_enabled=overrides.pop("rebinder_enabled", False),
+        **overrides,
+    )
+
+
 def new_harness(config, tools=None, provider=None, **kwargs):
     kwargs.setdefault("worker_latency_us", FAST_WORKER_LATENCY)
     return SimHarness(config, seed=1, tools=tools, provider=provider, **kwargs)
@@ -68,7 +85,7 @@ def flat_plan(tool, *, kind="read", param="destination", output_map=None, extra_
 # --- I-04: transitive cancel of a downstream chained call -------------------
 
 
-def test_i04_transitive_cancel_of_downstream_chain(config=None):
+def test_i04_transitive_cancel_of_downstream_chain():
     provider = ScriptedProvider()
     provider.register(
         "interpret",
@@ -105,7 +122,7 @@ def test_i04_transitive_cancel_of_downstream_chain(config=None):
     )
     provider.register("compose", "seats", {"text": "Seat map ready.", "claims": ["result:s2"]})
 
-    config = Config(transitive_invalidation=True)
+    config = v2_config(transitive_invalidation=True)
     h = new_harness(
         config,
         tools={
@@ -205,7 +222,7 @@ def test_i04_chain_three_steps_interrupt_at_step_two():
     )
     provider.register("compose", "confirmed", {"text": "Booked.", "claims": ["effect:s3"]})
 
-    config = Config(transitive_invalidation=True)
+    config = v2_config(transitive_invalidation=True)
     h = new_harness(
         config,
         tools={
@@ -277,7 +294,7 @@ def test_i05_correction_arriving_right_before_completion_still_converges_truthfu
     provider.register("plan", "goal_intent: search_flights", flat_plan("search_flights"))
     provider.register("compose", "s1", {"text": "Mumbai flights found.", "claims": ["result:s1"]})
 
-    config = Config()
+    config = v2_config()
     h = new_harness(config, tools={"search_flights": {"latency_ms": 500, "response": {"flight_id": "AI-1"}}}, provider=provider)
     h.send(0, [manifest_event([SEARCH_FLIGHTS_TOOL])])
     h.send(100_000, [chunk_event("Find flights to Pune")])
@@ -321,7 +338,7 @@ def test_i10_localized_correction_rebinds_without_replanning():
     provider.register("plan", "goal_intent: search_flights", flat_plan("search_flights"))
     provider.register("compose", "s1", {"text": "Mumbai flights found.", "claims": ["result:s1"]})
 
-    config = Config(rebinder_enabled=True)
+    config = v2_config(rebinder_enabled=True)
     h = new_harness(config, tools={"search_flights": {"latency_ms": 800, "response": {"flight_id": "AI-9"}}}, provider=provider)
     h.send(0, [manifest_event([SEARCH_FLIGHTS_TOOL])])
     h.send(100_000, [chunk_event("Find flights to Pune")])
@@ -355,7 +372,7 @@ def test_i11_backchannel_does_not_cancel_or_reinterpret():
     provider.register("plan", "goal_intent: search_flights", flat_plan("search_flights"))
     provider.register("compose", "s1", {"text": "Pune flights found.", "claims": ["result:s1"]})
 
-    config = Config()
+    config = v2_config()
     h = new_harness(config, tools={"search_flights": {"latency_ms": 400, "response": {"flight_id": "AI-1"}}}, provider=provider)
     h.send(0, [manifest_event([SEARCH_FLIGHTS_TOOL])])
     h.send(100_000, [chunk_event("Find flights to Pune")])
@@ -415,7 +432,7 @@ def test_i12_optional_constraint_addition_invalidates_via_absence_entry():
     )
     provider.register("compose", "s1", {"text": "Direct flights to Pune found.", "claims": ["result:s1"]})
 
-    config = Config(absence_read_sets=True)
+    config = v2_config(absence_read_sets=True)
     h = new_harness(config, tools={"search_flights": {"latency_ms": 800, "response": {"flight_id": "AI-1"}}}, provider=provider)
     h.send(0, [manifest_event([SEARCH_FLIGHTS_TOOL])])
     h.send(100_000, [chunk_event("Find flights to Pune")])
@@ -459,7 +476,7 @@ def test_i14_correction_within_settle_window_blocks_the_original_booking():
     provider.register("plan", "book_flight", flat_plan("book_flight", kind="write", param="flight_id"))
     provider.register("compose", "confirmation", {"text": "Booked AI-2.", "claims": ["effect:s1"]})
 
-    config = Config(settle_barrier_enabled=True, settle_ms=300)
+    config = v2_config(settle_barrier_enabled=True, settle_ms=300)
     h = new_harness(config, tools={"book_flight": {"latency_ms": 50, "response": {"confirmation": "XYZ"}}}, provider=provider)
     h.send(0, [manifest_event([BOOK_FLIGHT_TOOL])])
     h.send(100_000, [chunk_event("Book flight AI-1")])
@@ -504,7 +521,7 @@ def test_i15_write_cancelled_in_flight_completes_anyway_and_is_reconciled():
     provider.register("interpret", "wait cancel that", {"act": "abort", "slot_deltas": []})
     provider.register("plan", "book_flight", flat_plan("book_flight", kind="write", param="flight_id"))
 
-    config = Config()
+    config = v2_config()
     h = new_harness(config, tools={"book_flight": {"latency_ms": 800, "response": {"confirmation": "XYZ"}}}, provider=provider)
     h.send(0, [manifest_event([BOOK_FLIGHT_TOOL])])
     h.send(100_000, [chunk_event("Book the flight")])
@@ -529,7 +546,7 @@ def test_i15_write_cancelled_in_flight_completes_anyway_and_is_reconciled():
 # --- S-04: paraphrase duplicate detection (canonical fingerprint) -----------
 
 
-def test_s04_paraphrased_duplicate_write_blocked_by_fingerprint(config=None):
+def test_s04_paraphrased_duplicate_write_blocked_by_fingerprint():
     provider = ScriptedProvider()
     provider.register(
         "interpret",
@@ -539,7 +556,7 @@ def test_s04_paraphrased_duplicate_write_blocked_by_fingerprint(config=None):
     provider.register("plan", "book_flight", flat_plan("book_flight", kind="write", param="flight_id"))
     provider.register("compose", "confirmation", {"text": "Booked.", "claims": ["effect:s1"]})
 
-    config = Config()
+    config = v2_config()
     h = new_harness(config, tools={"book_flight": {"latency_ms": 100, "response": {"confirmation": "XYZ"}}}, provider=provider)
     h.send(0, [manifest_event([BOOK_FLIGHT_TOOL])])
     h.send(100_000, [chunk_event("Book the flight")])
@@ -591,7 +608,7 @@ def test_s10_intended_grade_while_write_settles():
     provider.register("plan", "book_flight", flat_plan("book_flight", kind="write", param="flight_id"))
     provider.register("compose", "confirmation", {"text": "Booked.", "claims": ["effect:s1"]})
 
-    config = Config(settle_barrier_enabled=True, settle_ms=300, claim_grades_enabled=True)
+    config = v2_config(settle_barrier_enabled=True, settle_ms=300, claim_grades_enabled=True)
     h = new_harness(config, tools={"book_flight": {"latency_ms": 100, "response": {"confirmation": "XYZ"}}}, provider=provider)
     h.send(0, [manifest_event([BOOK_FLIGHT_TOOL])])
     h.send(100_000, [chunk_event("Book the flight")])
@@ -624,7 +641,7 @@ def test_r05_completion_cancellation_race_deterministic():
     provider.register("compose", "s1", {"text": "Mumbai flights found.", "claims": ["result:s1"]})
 
     def run_once():
-        config = Config()
+        config = v2_config()
         h = new_harness(config, tools={"search_flights": {"latency_ms": 500, "response": {"flight_id": "AI-1"}}}, provider=ScriptedProvider())
         # re-register on the fresh provider each run (ScriptedProvider isn't shared to keep this hermetic)
         h.provider.register(
@@ -667,7 +684,7 @@ def test_t05_settle_timer_liveness_no_deadlock():
     provider.register("plan", "book_flight", flat_plan("book_flight", kind="write", param="flight_id"))
     provider.register("compose", "confirmation", {"text": "Booked.", "claims": ["effect:s1"]})
 
-    config = Config(settle_barrier_enabled=True, settle_ms=300)
+    config = v2_config(settle_barrier_enabled=True, settle_ms=300)
     h = new_harness(config, tools={"book_flight": {"latency_ms": 50, "response": {"confirmation": "XYZ"}}}, provider=provider)
     h.send(0, [manifest_event([BOOK_FLIGHT_TOOL])])
     h.send(100_000, [chunk_event("Book the flight")])
@@ -723,7 +740,7 @@ def test_v2_replay_identity():
         provider.register("plan", "goal_intent: search_flights", flat_plan("search_flights"))
         provider.register("compose", "s1", {"text": "Mumbai flights found.", "claims": ["result:s1"]})
 
-        config = Config(transitive_invalidation=True, rebinder_enabled=True)
+        config = v2_config(transitive_invalidation=True, rebinder_enabled=True)
         h = new_harness(config, tools={"search_flights": {"latency_ms": 400, "response": {"flight_id": "AI-1"}}}, provider=provider)
         h.send(0, [manifest_event([SEARCH_FLIGHTS_TOOL])])
         h.send(100_000, [chunk_event("Find flights to Pune")])
