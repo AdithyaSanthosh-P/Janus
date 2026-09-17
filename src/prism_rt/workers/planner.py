@@ -22,7 +22,16 @@ PLAN_SCHEMA = {
                     "local_id": {"type": "string"},
                     "tool": {"type": "string"},
                     "kind": {"type": "string", "enum": ["read", "write"]},
-                    "bindings": {"type": "object"},
+                    "bindings": {
+                        "type": "object",
+                        "description": (
+                            "Map of tool parameter name -> binding object. Each "
+                            "binding object is one of: "
+                            '{"type": "fact", "key": "<fact key, e.g. slot.$G.destination>"}, '
+                            '{"type": "literal", "value": <any>}, '
+                            '{"type": "step_output", "step_key": "<local_id of an earlier step>", "path": "<field name>"}.'
+                        ),
+                    },
                     "after": {"type": "array", "items": {"type": "string"}},
                     "output_map": {"type": "object"},
                 },
