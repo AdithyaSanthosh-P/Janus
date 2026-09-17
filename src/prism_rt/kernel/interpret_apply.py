@@ -5,14 +5,20 @@ are written through `FactStore.set`, so the *existing*, unmodified
 DependencyIndex/InvalidationEngine from V0 does the cancellation. Nothing
 here needs to know what was in flight.
 
-V1 has no rebinder (`docs/sonnet_implementation_plan.md` §4 VERSION 1,
-Known Limitations): any slot change on an ACTIVE goal sends it back to
-PLANNING for a fresh plan rather than trying to patch the existing one.
+V1 had no rebinder: any slot change on an ACTIVE goal sent it back to
+PLANNING for a fresh plan. V2 adds one (`config.rebinder_enabled`,
+§8.4 "rebind first, plan second"): a purely-local correction — every
+changed slot is FACT-bound in an existing step, and no affected step's
+tool choice depends on that slot (`PlanStep.structure_depends_on`) —
+stays in EXECUTING instead, letting the ordinary invalidation + rebind
+cycle handle it with no Planner round-trip. Anything else (new goal,
+structural change, not currently executing) still replans.
 """
 
 from __future__ import annotations
 
 from prism_rt.model.types import (
+    BindingKind,
     CallStatus,
     FactStatus,
     GoalRecord,
@@ -45,6 +51,36 @@ def _slot_key(goal_id: str, delta) -> str:
     if delta.scope == "session":
         return f"session.{delta.name}"
     return f"slot.{goal_id}.{delta.name}"
+
+
+def _can_rebind(store, goal_id: str, changed_names: set[str]) -> bool:
+    """True iff every step the changed slots touch can just be re-bound
+    against the new value (§8.4) — false if there's no plan to rebind
+    against, or if any touched step's tool choice depends on the value
+    (`structure_depends_on`), which needs a real replan instead."""
+    if not changed_names:
+        return False
+    plan = store.plans.current(goal_id)
+    if plan is None:
+        return False
+
+    prefix = f"slot.{goal_id}."
+    referenced = False
+    for step in plan.steps:
+        step_slot_names = {
+            binding.fact_key.replace("$G", goal_id)[len(prefix):]
+            for binding in step.bindings.values()
+            if binding.kind == BindingKind.FACT
+            and binding.fact_key
+            and binding.fact_key.replace("$G", goal_id).startswith(prefix)
+        }
+        touched = step_slot_names & changed_names
+        if not touched:
+            continue
+        referenced = True
+        if touched & set(step.structure_depends_on):
+            return False
+    return referenced
 
 
 def _set_active_goal(txn: StoreTxn, goal_id: str | None, now_us: int, step_no: int, *, event_id: str) -> None:
@@ -208,7 +244,21 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         if interp.act == InterpretAct.ANSWER_CLARIFICATION or changed:
             txn.facts.retract(f"goal.{gid}.clarify_target", rule="interpret_apply.clarify_resolved")
         if changed and goal.task_state not in (TaskState.COMPLETED, TaskState.FAILED):
-            txn.store.goals.update(gid, task_state=TaskState.PLANNING)
+            changed_names = {d.name for d in interp.slot_deltas if d.scope != "session"}
+            if (
+                txn.store.config.rebinder_enabled
+                and goal.task_state == TaskState.EXECUTING
+                and _can_rebind(txn.store, gid, changed_names)
+            ):
+                # Purely a fact change a bound step already reads — leave
+                # task_state as EXECUTING. The slot write above already
+                # invalidated the stale call through the ordinary
+                # DependencyIndex mechanism (§8.4: "rebind first, plan
+                # second"); PlanExecutor re-binds it against the new value
+                # next DECIDE phase, same step, no model round-trip.
+                pass
+            else:
+                txn.store.goals.update(gid, task_state=TaskState.PLANNING)
         return gid
 
     # BACKCHANNEL / SMALLTALK / UNCLEAR: nothing further to do.
