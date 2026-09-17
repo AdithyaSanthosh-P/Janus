@@ -54,11 +54,22 @@ class PlanExecutor:
         for step in plan.steps:
             latest = store.call_ledger.latest_by_step(gid, step.step_key)
 
-            if latest is not None and latest.status in (CallStatus.PROPOSED, CallStatus.IN_FLIGHT):
+            if latest is not None and latest.status == CallStatus.IN_FLIGHT:
                 continue  # already in progress
 
             attempt = 1
-            if latest is not None and latest.status == CallStatus.CONSUMED:
+            if latest is not None and latest.status == CallStatus.PROPOSED:
+                # A call CommitGate hasn't admitted yet (e.g. still waiting
+                # out the settle barrier, G10) can go stale before it's ever
+                # emitted — a slot it reads changes while it sits blocked.
+                # Without this check it stays PROPOSED forever failing G2
+                # for the wrong reason, and FastResponder could still speak
+                # about a call nobody cares about anymore.
+                if store.facts.is_valid(latest.read_set).is_valid:
+                    continue  # still valid, waiting on CommitGate — nothing to do
+                store.call_ledger.set_status(latest.call_id, CallStatus.DISCARDED)
+                attempt = latest.attempt + 1
+            elif latest is not None and latest.status == CallStatus.CONSUMED:
                 # §3.5: a step carries over across plan revisions only while
                 # its resolved arguments are unchanged — i.e. its read set
                 # is still valid. If a slot it read has since changed, this
