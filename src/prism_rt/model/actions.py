@@ -32,6 +32,7 @@ class CancelBody:
 class FinalBody:
     text: str
     task_completed: bool = True
+    claim_grade: ClaimGrade | None = None  # V2: RESULT (read-only plan) or EFFECT_DONE (confirmed write)
 
 
 @dataclass(frozen=True)

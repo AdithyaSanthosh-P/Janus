@@ -8,6 +8,13 @@ architecture describes but nothing in V1's scope requires them — they are
 not implemented, not silently dropped from something that used to emit
 them.
 
+V2 adds (gated by config.claim_grades_enabled unless noted): ClaimGrade on
+ACK/FINAL bodies; an INTENDED-grade utterance while a write is held by the
+settle barrier ("Booking the flight now" — pending, not yet emitted); and
+(unconditional — a safety property, not an innovation to toggle off)
+reconcile INFORM for a write that completed after being cancelled, so a
+booking that went through anyway is never left unreported (W4).
+
 Every "have we already said this" check is a small fact
 (`ack.<goal>.acked_job`, `clarify.<goal>.asked`, `inform.<call>.sent`)
 rather than a formal OutputLedger — sufficient for one utterance per
@@ -24,6 +31,9 @@ from prism_rt.model.actions import FinalBody, IntendedAction, SpeakBody
 from prism_rt.model.types import (
     EMPTY_READ_SET,
     ActionType,
+    CallStatus,
+    ClaimGrade,
+    EffectStatus,
     FactStatus,
     GoalStatus,
     JobKind,
@@ -31,6 +41,11 @@ from prism_rt.model.types import (
     StepKind,
     TaskState,
 )
+
+_RECONCILE_TEMPLATES = {
+    EffectStatus.CONFIRMED: "Just so you know — the earlier booking had already gone through before I could cancel it.",
+    EffectStatus.UNKNOWN: "I'm not sure whether the earlier booking went through — I couldn't get a result back after cancelling.",
+}
 
 
 class FastResponder:
@@ -40,6 +55,7 @@ class FastResponder:
     def decide(self, store, now_us: int, step_no: int, *, skip_call_ids: frozenset[str] = frozenset()) -> list[IntendedAction]:
         actions: list[IntendedAction] = []
         actions.extend(self._inform_blocked_writes(store, now_us, step_no, skip_call_ids))
+        actions.extend(self._reconcile_completed_after_cancel(store, now_us, step_no))
 
         gid = active_goal_id(store)
         if gid is None:
@@ -52,6 +68,8 @@ class FastResponder:
             actions.extend(self._ack_plan_dispatch(store, gid, now_us, step_no))
         if goal.status == GoalStatus.ACTIVE and goal.task_state == TaskState.CLARIFYING:
             actions.extend(self._clarify(store, gid, now_us, step_no))
+        if goal.status == GoalStatus.ACTIVE and goal.task_state == TaskState.EXECUTING:
+            actions.extend(self._intended_for_settling_write(store, gid, now_us, step_no, skip_call_ids))
         if goal.task_state == TaskState.RESPONDING:
             actions.extend(self._final(store, goal, now_us, step_no))
 
@@ -72,10 +90,11 @@ class FastResponder:
             Provenance(source="system", step_no=step_no, ts_us=now_us),
             rule="responder.ack",
         )
+        grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
         return [
             IntendedAction(
                 action_type=ActionType.SPEAK,
-                body=SpeakBody(text=ACK_DEFAULT, kind="ack"),
+                body=SpeakBody(text=ACK_DEFAULT, kind="ack", claim_grade=grade),
                 read_set=EMPTY_READ_SET,
                 rule_id="responder.ack",
             )
@@ -112,16 +131,36 @@ class FastResponder:
             return []
         text = text_fact.value or FINAL_FALLBACK
         task_completed = goal.status != GoalStatus.ABANDONED
+
+        grade = None
+        if store.config.claim_grades_enabled:
+            grade = ClaimGrade.EFFECT_DONE if self._has_confirmed_write(store, goal.goal_id) else ClaimGrade.RESULT
+
         return [
             IntendedAction(
                 action_type=ActionType.FINAL,
-                body=FinalBody(text=text, task_completed=task_completed),
+                body=FinalBody(text=text, task_completed=task_completed, claim_grade=grade),
                 read_set=EMPTY_READ_SET,
                 needs_snapshot=True,
                 rule_id="responder.final",
                 goal_id=goal.goal_id,
             )
         ]
+
+    def _has_confirmed_write(self, store, goal_id: str) -> bool:
+        plan = store.plans.current(goal_id)
+        if plan is None:
+            return False
+        for step in plan.steps:
+            if step.kind != StepKind.WRITE:
+                continue
+            call = store.call_ledger.latest_by_step(goal_id, step.step_key)
+            if call is None:
+                continue
+            effect = store.effect_ledger.by_fingerprint(call.fingerprint)
+            if effect is not None and effect.status == EffectStatus.CONFIRMED:
+                return True
+        return False
 
     def _inform_blocked_writes(self, store, now_us: int, step_no: int, skip_call_ids) -> list[IntendedAction]:
         actions: list[IntendedAction] = []
@@ -147,6 +186,72 @@ class FastResponder:
                     body=SpeakBody(text=INFORM_DUPLICATE_WRITE, kind="inform"),
                     read_set=EMPTY_READ_SET,
                     rule_id="responder.inform_duplicate",
+                )
+            )
+        return actions
+
+    def _intended_for_settling_write(self, store, goal_id: str, now_us: int, step_no: int, skip_call_ids) -> list[IntendedAction]:
+        """S-10: while a write sits PROPOSED behind the settle barrier
+        (G10), say so with an INTENDED claim — never IN_PROGRESS, since the
+        call hasn't been emitted yet (§9.3's own rule: never claim
+        IN_PROGRESS for a call not yet emitted)."""
+        if not store.config.claim_grades_enabled or not store.config.settle_barrier_enabled:
+            return []
+        for call in store.call_ledger.proposed():
+            if call.kind != StepKind.WRITE or call.goal_id != goal_id or call.call_id in skip_call_ids:
+                continue
+            decision = self._commit_gate.evaluate(call, store, now_us)
+            if decision.allowed or decision.rule_id not in ("G10", "G11"):
+                continue
+            acked = store.facts.get(f"ack.{goal_id}.intended_call")
+            if acked is not None and acked.status != FactStatus.RETRACTED and acked.value == call.call_id:
+                return []
+            store.facts.set(
+                f"ack.{goal_id}.intended_call",
+                call.call_id,
+                FactStatus.COMMITTED,
+                Provenance(source="system", step_no=step_no, ts_us=now_us),
+                rule="responder.intended",
+            )
+            return [
+                IntendedAction(
+                    action_type=ActionType.SPEAK,
+                    body=SpeakBody(text=f"On it — {call.tool.replace('_', ' ')} now.", kind="ack", claim_grade=ClaimGrade.INTENDED),
+                    read_set=EMPTY_READ_SET,
+                    rule_id="responder.intended",
+                )
+            ]
+        return []
+
+    def _reconcile_completed_after_cancel(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
+        """I-15: a write that got cancelled but completed anyway (or whose
+        outcome is now unknown) must be reported — never silently dropped
+        (W4: no false undo claims). Unconditional: this is a safety
+        property, not an innovation to gate behind a flag."""
+        actions: list[IntendedAction] = []
+        for call in store.call_ledger.all():
+            if call.kind != StepKind.WRITE or call.status != CallStatus.COMPLETED_AFTER_CANCEL:
+                continue
+            already = store.facts.get(f"inform.{call.call_id}.sent")
+            if already is not None and already.status != FactStatus.RETRACTED:
+                continue
+            effect = store.effect_ledger.by_fingerprint(call.fingerprint)
+            template = _RECONCILE_TEMPLATES.get(effect.status) if effect is not None else None
+            if template is None:
+                continue  # FAILED (genuinely didn't happen) needs no reconciliation notice
+            store.facts.set(
+                f"inform.{call.call_id}.sent",
+                True,
+                FactStatus.COMMITTED,
+                Provenance(source="system", step_no=step_no, ts_us=now_us),
+                rule="responder.reconcile",
+            )
+            actions.append(
+                IntendedAction(
+                    action_type=ActionType.SPEAK,
+                    body=SpeakBody(text=template, kind="inform"),
+                    read_set=EMPTY_READ_SET,
+                    rule_id="responder.reconcile",
                 )
             )
         return actions
