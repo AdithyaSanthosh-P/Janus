@@ -44,72 +44,74 @@ When documents conflict, higher rank wins:
 
 | Field | Value |
 |---|---|
-| **Current version** | V1 FROZEN — interruptible text agent (MVP) |
-| **MVP status** | DONE — V1 is the first submission-capable version |
+| **Current version** | V2 FROZEN — robust recovery + innovation core |
+| **MVP status** | DONE at V1; V2 strictly improves on it |
 | **Git initialized** | YES |
-| **Latest Git tag** | `v1-text-agent` (branch `release/v1`); `v0-skeleton` still intact |
-| **Submission fallback** | `v1-text-agent` / `release/v1` — full text agent with real LLM-worker interface (ScriptedProvider-driven in tests), turns, goals, interruption recovery |
+| **Latest Git tag** | `v2-robust-recovery` (branch `release/v2`); `v1-text-agent`/`release/v1` and `v0-skeleton` still intact |
+| **Submission fallback** | `v2-robust-recovery` / `release/v2` — transitive invalidation, settle barrier, rebinder, absence read-sets, claim grades, reconciliation, all on by default |
 
 ### Implemented
-V0 (see git history / `v0-skeleton` tag) plus full V1 per `docs/sonnet_implementation_plan.md` §4 VERSION 1 / §5 Phases 10–15:
-- **Turn management**: `kernel/turns.py` (`TurnManager` — chunk buffering, prefix-digest fact so a job dispatched mid-turn is naturally invalidated by a later chunk), `kernel/detector.py` (`QuickDetector`, cue-detection only — chunk-anchored speculative cancellation is V2 scope), `config/lexicons.py`.
-- **Goal/task state**: `kernel/task.py` (`TaskStateMachine` — the sole INTERPRET/PLAN/COMPOSE dispatcher, idempotent, called every step; allocates job_id and writes `JobRecord` itself during DECIDE so `FastResponder` can ACK in the same step), `kernel/interpret_apply.py` (interpretation → goal/fact mutations; slot deltas go through ordinary `FactStore.set`, so the unmodified V0 `InvalidationEngine` cancels dependents with no new mechanism). New store types: `GoalRegistry`, `PlanStore`, `TurnLog`, `JobTable` (`store/ledgers.py`), all wired into `SessionStore`/`StoreTxn`.
-- **LLM workers** (`workers/`): `gateway.py` (`ModelGateway` + `ScriptedProvider`, used by every test; optional untested-here `AnthropicProvider`), `interpreter.py`/`planner.py`/`composer.py` (prompt-building only — response parsing is kernel-side in `kernel/proposals.py` per the package boundary), `runner.py` (`WorkerRunner` protocol, `ScriptedRunner` mirrors `MockToolRegistry`'s latency-then-deliver pattern, `AsyncWorkerRunner` for optional live use).
-- **Execution**: `kernel/executor.py` (`PlanExecutor` — creates PROPOSED calls from ready plan steps via dependency+binding resolution with `$G` goal-id substitution; handles read/write retries; does **not** duplicate CommitGate's admission logic, reuses the unmodified V0 `scan_and_admit`).
-- **Speech**: `kernel/responder.py` (`FastResponder` — ACK, CLARIFY, INFORM (blocked duplicate writes), FINAL; PROGRESS/HOLD are real architecture concepts not needed by V1's scenarios and are **not implemented**, not silently dropped), `config/templates.py`.
-- **Integration**: `kernel/step.py` DECIDE phase now runs cancellation → TaskStateMachine → PlanExecutor → CommitGate → FastResponder (the architecture's fixed order); DISPATCH phase submits jobs TaskStateMachine requested. `kernel/reducers.py` handles `text_chunk`/`end_of_turn`/`interruption`/`worker_result`. `observability/watchdog.py` (the one permitted wall-clock read), `entry.py` (Runtime/run_scenario composition root for a real harness transport — unverified, no real kit IO contract exists yet).
-- **Sim**: `sim/harness.py` now polls `ScriptedRunner` results the same way it polls `MockToolRegistry` results — a `WORKER_RESULT` can never land in the same step it was dispatched.
+V0 + V1 (see git history / `v0-skeleton`, `v1-text-agent` tags) plus full V2 per `docs/sonnet_implementation_plan.md` §4 VERSION 2 / §5 Phase 16. All five V2 flags now default `True` in `Config` (`config.py`) — construct `Config(flag=False)` to get V1 behavior back for comparison:
+- **Transitive invalidation** (`transitive_invalidation`): consuming a result now writes `derived.<gid>.<name>` facts from the plan step's `output_map`, tagged with the call's own read set as `Provenance.derivation_read_set`. `kernel/invalidation.py`'s fixpoint loop (max 8 rounds) retracts a stale derived fact and cascades to whatever read *it*, so a 2- or 3-step chain (search → derived flight → seat map / price → book) cancels every downstream call in the same step a slot changes. `PlanExecutor._bind`'s `STEP_OUTPUT` binding prefers the derived fact over the raw `result.<call_id>` when this is on.
+- **Settle barrier** (`settle_barrier_enabled`): `CommitGate` gains G10 (settle_ms since `session.last_eot_ts`) and G11 (no newer turn open) for writes — catches "book the 6pm one" → 200ms → "wait, the 8pm one" before the first booking ever goes out. New `store/ledgers.py` `TimerWheel` + `StepReport.next_wake_us` are a pure liveness hint (T-05) — no correctness depends on a timer firing; a blocked call is just re-evaluated every step like always.
+- **Rebinder** (`rebinder_enabled`): `interpret_apply._can_rebind` — a slot change stays in `EXECUTING` instead of forcing a full replan when every affected step is FACT-bound to it and none has `structure_depends_on` including it (§8.4). Zero Planner round-trip for a purely local correction.
+- **Absence read-sets** (`absence_read_sets`): `PlanStep.absence_keys` — a step can declare an optional fact it assumes is unset; `PlanExecutor._bind` adds an `ABSENT` read-set entry for it, so adding that fact later ("only direct flights") invalidates the call through the ordinary mechanism with no new machinery.
+- **Claim grades** (`claim_grades_enabled`) + **reconciliation** (unconditional, not gated — a safety property): `FinalBody`/`SpeakBody.claim_grade` (UNDERSTOOD/INTENDED/RESULT/EFFECT_DONE); an INTENDED-graded utterance while a write sits behind G10; and `FastResponder._reconcile_completed_after_cancel` truthfully reports a write that completed (or whose outcome is unknown) despite being cancelled (W4, I-15).
 
 ### Tested / Verified
-`tests/test_v0.py` (8 tests) + `tests/test_v1.py` (15 tests: N-01..N-04, I-01, I-03, I-07, I-08/I-09, I-13, S-01..S-03, R-02, R-06, plus 5x replay identity) — **23/23 passing**, `TraceChecker` reports 0 violations on every test including the static no-wall-clock scan.
+`tests/test_v0.py` (8) + `tests/test_v1.py` (15) + `tests/test_v2.py` (13: I-04, I-04-chain, I-05, I-10 through I-15, S-04, S-10, R-05, T-05, plus 5x replay identity) — **36/36 passing**, `TraceChecker` 0 violations everywhere including the static no-wall-clock scan.
 
-Run with: `cd /home/adi/Desktop/Hackathons/Prism && source .venv/bin/activate && python -m pytest tests/ -v` (venv has pydantic/PyYAML/pytest/pytest-asyncio; dev machine runs Python 3.14 — code avoids 3.11+-only syntax for the 3.10–3.12 Docker target but this is unverified on the actual target versions).
+Run with: `cd /home/adi/Desktop/Hackathons/Prism && source .venv/bin/activate && python -m pytest tests/ -v`. `tests/conftest.py`'s shared `config` fixture pins all five V2 flags back to `False` for `test_v0.py`/`test_v1.py` (they were written and timed against V1 semantics); `test_v2.py` has its own `v2_config(**overrides)` helper that starts every flag `False` and enables only what each scenario means to exercise — deliberately decoupled from whatever `DEFAULT_CONFIG` becomes later.
 
-Also verifiable interactively: `PYTHONPATH=src:. python demo/run_v0_demo.py` (V0-era terminal trace of same-step cancellation; still valid, not yet updated to show V1's real ACK/CLARIFY/FINAL speech — see Next Task).
+Also verifiable interactively: `PYTHONPATH=src:. python demo/run_v0_demo.py` (V0-era raw trace) and `demo/run_v1_demo.py` (real spoken ACK/CANCEL/FINAL) — neither updated yet to show V2's rebinder/settle/reconcile behavior specifically (optional, not blocking).
 
-**Three real kernel bugs found and fixed while writing the V1 tests** (design review alone would not have caught these):
-1. `PlanExecutor` treated a `CANCEL_REQUESTED` call as "still in progress" — a correction's replacement call didn't get proposed until the stale call's late result arrived, defeating same-step cancellation's purpose. Fixed: `CANCEL_REQUESTED` now gets an immediate fresh attempt.
-2. Calls never included `goal.active`/`catalog.version` in their read set (architecture spec calls for this, §4.4) — so ABORT never invalidated in-flight calls. Fixed the read set; `_abandon_goal` also directly invalidates (goal.active must stay pointing at the abandoned goal so FastResponder can still find it to speak the final message), and `InvalidationEngine.cancellation_actions` now scans the ledger for any `INVALIDATED` call rather than only its own fact-diff's list.
-3. `TraceChecker`'s own S3 and W1 checks had false positives (compared last snapshot against *final* state rather than state-as-of-that-step; flagged legitimate write retries as duplicates). Both fixed to check the real invariant.
+**Five more real kernel bugs found and fixed while writing the V2 tests** (on top of the three found during V1 — eight total across the project, all from writing tests against the real kernel, none from design review):
+1. `PlanExecutor` treated `CONSUMED` as "done forever" for a step_key regardless of whether the facts it read had since changed — contradicting the architecture's own §3.5 carry-over rule ("a step carries over only while its resolved arguments are unchanged"). A corrected step never re-ran; everything downstream silently bound to pre-correction data. Fixed: both `propose_ready_calls` and `_step_done` now check the consumed call's read-set validity, not just its status.
+2. The same bug's sibling: a `PROPOSED`-but-not-yet-admitted call (e.g. blocked behind settle) could also go stale before ever being emitted, and was left blocked forever failing G2 for the wrong reason. Fixed identically — replace it if its read set has gone stale, mark the old one `DISCARDED`.
+3. `CANCEL_REQUESTED` calls blocked their own replacement's proposal until the stale call's late result formally resolved it (~800ms later in one repro) — defeating same-step cancellation's entire purpose. Fixed: `CANCEL_REQUESTED` now gets an immediate fresh attempt, uncounted against retry limits.
+4. Calls never included `goal.active`/`catalog.version` in their read set (architecture spec §4.4 calls for this explicitly) — so ABORT never invalidated in-flight calls. Fixed the read set; `_abandon_goal` also directly invalidates (since `goal.active` must stay pointing at the abandoned goal so FastResponder can still speak the final "cancelled" message), and `InvalidationEngine.cancellation_actions` now scans the ledger for any `INVALIDATED` call rather than only what its own fact-diff pass found this step.
+5. `TraceChecker`'s own S3 and W1 checks had false positives (compared a snapshot against *final* state instead of state-as-of-that-step; flagged legitimate write retries as duplicates). Both fixed to check the actual invariant.
+
+(V1's three bugs are still documented in git history on the V1 freeze commit if needed — not re-listed here to keep this file from growing unbounded; see `git log --oneline` around the `v1-text-agent` tag.)
 
 ### Failing / Broken
 Nothing currently failing.
 
 ### In Progress
-V2 not yet started.
+V3 not yet started.
 
-### Deferred (per sonnet_implementation_plan.md §1.2, plus V1-specific scope trims — see module docstrings for each)
+### Deferred (per sonnet_implementation_plan.md §1.2, plus scope trims documented in module docstrings)
 - `kernel/perception.py`, `workers/vision.py`/`asr.py`/`framer.py`, response frames, evidence store/blobs → V3
-- Transitive invalidation, settle barrier, claim-typed emission, rebinder (localized re-binding instead of full replan) → V2
-- Chunk-anchored speculative cancellation (QuickDetector value extraction is built but unwired — cues only) → V2
-- Result reuse on `RETURN_TO_GOAL` (V1 always forces a fresh PLANNING pass, even when a retained result could be reused) → V2 rebinder territory
-- PROGRESS/HOLD utterance kinds → not needed by V1 scenarios, not implemented
-- Automatic worker-job abort on staleness (jobs are safely *rejected* via read-set validity on late delivery, just not proactively cancelled — acceptable correctness-wise, leaves some wasted compute) → optimization, not correctness
+- Chunk-anchored speculative cancellation (QuickDetector value extraction is built but unwired — cues only, used for backchannel detection) → not planned before V3/V4, low scoring value relative to effort
+- Result reuse on `RETURN_TO_GOAL` (still forces a fresh PLANNING pass even when a retained result could be reused — the rebinder only covers in-place slot corrections on the *current* goal, not goal-switch-back) → possible V3/V4 polish, not currently planned
+- PROGRESS/HOLD utterance kinds → not needed by any scenario tested so far, not implemented
+- Automatic worker-job abort on staleness (jobs are safely *rejected* via read-set validity on late delivery, just not proactively cancelled — correct, just leaves a little wasted compute) → optimization, not correctness
+- Literal two-phase emission (validate-all-then-write-all) — the existing per-action validate-then-write loop already gives the same guarantee for this system (no action's validation depends on another action emitted earlier in the same batch), so this would be a structural no-op; documented in `kernel/responder.py` rather than built
 
 ### Cut
 - `sim/explorer.py`, `sim/minimize.py` — adversarial PCT, delta-debugging
 - Multiple clock models — build Model B only
 - Production observability (Prometheus, telemetry spans)
-- YAML scenario format (`docs/sonnet_implementation_plan.md` §6.2) — V0/V1 tests are Python-native (`SimHarness.send()`/`drain()`) instead; the YAML format's `scripted_responses` section only makes sense once a real kit wire format exists to target
+- YAML scenario format (`docs/sonnet_implementation_plan.md` §6.2) — all tests are Python-native (`SimHarness.send()`/`drain()`) instead; the YAML format's `scripted_responses` section only makes sense once a real kit wire format exists to target
 
 ### Known Risks
 - Evaluation kit unreleased — `adapters/codec.py`'s wire schema is a provisional guess, isolated behind that one module so it's cheap to replace; `entry.py`'s `HarnessIO` contract is likewise a guess
 - Dev/test environment is Python 3.14 (no 3.10–3.12 interpreter available locally); Docker target is 3.11 — code avoids 3.11+-only syntax deliberately but this is unverified on the actual target versions
 - No live LLM validation has been run (no API key in this environment) — `AnthropicProvider`/`AsyncWorkerRunner` are real but untested against a live model
+- V3 (multimodal) needs a real vision-capable API key and test fixture images — the first version with a genuine external dependency this project doesn't already have covered
 - Deadline: 25 Sep 2026
 
 ### Next Task
-**Begin V2 (Robust Recovery + Innovation Core)** — follow `docs/sonnet_implementation_plan.md` §4 VERSION 2, §5 Phase 16:
-1. `kernel/invalidation.py` — transitive retraction (provenance graph walk, fixpoint loop)
-2. `store/facts.py` — `derivation_read_set` support on derived facts
-3. `kernel/commit.py` — settle barrier (G10, G11), timer liveness rule
-4. `kernel/emission.py` — two-phase emission, claim grades
-5. `kernel/executor.py` — rebinder (localized correction → re-bind without a full replan; also would let `RETURN_TO_GOAL` reuse retained results, closing the gap noted above)
-6. `kernel/responder.py` — templates keyed by claim grade
-7. `config.py` — flip V2 feature flags to `True`
-8. `tests/test_v2.py` — 12 scenarios (I-04, I-05, I-10 through I-15, S-04, S-10, R-05, T-05); run, stabilize, freeze `v2-robust-recovery` + `release/v2` branch
+**Begin V3 (Multimodal Grounding)** — follow `docs/sonnet_implementation_plan.md` §4 VERSION 3, §5 Phase 17:
+1. `kernel/perception.py` — simplified perception scheduler
+2. `store/ledgers.py` — extend with `EvidenceStore` (observations, questions, conflicts)
+3. `workers/vision.py` — vision analyzer (real LLM vision call; `ScriptedProvider`-driven in tests exactly like the other workers)
+4. `kernel/reducers.py` — handle `video_frame` events
+5. `tests/test_v3.py` — 5 multimodal scenarios (N-05, M-03, M-06, M-07, M-08); run, stabilize, freeze `v3-multimodal` + `release/v3` branch
 
-Optional, not blocking V2: update `demo/run_v0_demo.py` (or add a `demo/run_v1_demo.py`) to show V1's actual spoken ACK/CLARIFY/FINAL output — the V0 demo still only shows the V0-era raw trace.
+Before starting: confirm whether a vision-capable API key is available for at least manual/optional live validation (V3 is explicitly the first version with a real external dependency — see Known Risks). If not available, V3 can still be built and tested entirely against `ScriptedProvider` (matching how every prior version's tests work), same as the plan's own "Mock first, live second" principle — just flag that live vision has never actually been exercised.
+
+Optional, not blocking V3: update the demo scripts to show V2's rebinder/settle-barrier/reconcile behavior specifically (current demos predate V2).
 
 ---
 
@@ -134,32 +136,34 @@ Full details: `docs/sonnet_implementation_plan.md` (§3 invariants, §4 version 
 ## For the Next Agent
 
 ### What to do next
-Implement V2 (Robust Recovery + Innovation Core). Follow `docs/sonnet_implementation_plan.md` §4 VERSION 2, §5 Phase 16, on top of the frozen `v1-text-agent` tag / `release/v1` branch. Do not modify V0/V1 files' public interfaces — every V2 change is guarded by a `Config` flag defaulting to the V1 value (guiding principle 4).
+Implement V3 (Multimodal Grounding). Follow `docs/sonnet_implementation_plan.md` §4 VERSION 3, §5 Phase 17, on top of the frozen `v2-robust-recovery` tag / `release/v2` branch. Do not modify V0/V1/V2 files' public interfaces — this is the first version touching genuinely new event types (`video_frame`) rather than extending existing kernel modules, so the blast radius on existing code should be naturally small; keep it that way.
 
 ### Files to read first
 1. This file (`currentStatus.md`)
-2. `docs/sonnet_implementation_plan.md` — §4 VERSION 2 section, §5 Phase 16
-3. The V1 source under `src/prism_rt/kernel/` (`invalidation.py`, `commit.py`, `emission.py`, `executor.py`, `responder.py` — all four get extended, none replaced) and `model/types.py` for the existing `CallRecord`/`Fact`/`ReadSet` shapes V2 builds on (e.g. `derivation_read_set` already has a field slot on `Provenance`, just unused so far)
+2. `docs/sonnet_implementation_plan.md` — §4 VERSION 3 section, §5 Phase 17
+3. `docs/prompt 2.txt` §10 (Multimodal architecture) for the AT_UTTERANCE/CURRENT_STATE question modes and confidence-band rules (HIGH/MEDIUM/LOW) this version needs to implement
+4. `src/prism_rt/model/events.py` for the existing `VIDEO_FRAME`... actually check first whether a video_frame payload type exists yet in `EVENT_CLASS_BY_PAYLOAD_TYPE`/`PAYLOAD_TYPES` — V0/V1/V2 never needed one
 
 ### Current blockers
-None — V1 frozen and passing (23/23 tests), ready to begin V2.
+None — V2 frozen and passing (36/36 tests), ready to begin V3. V3's only real blocker is external: whether a vision-capable API key is available (see Known Risks) — but per "Mock first, live second," this doesn't need to block starting, only live validation.
 
 ### Commands to run before modifying anything
 ```bash
 cd /home/adi/Desktop/Hackathons/Prism
-git status                        # confirm working tree is clean at v1-text-agent
-git log --oneline -8
-source .venv/bin/activate && python -m pytest tests/ -v   # confirm all 23 tests still pass
+git status                        # confirm working tree is clean at v2-robust-recovery
+git log --oneline -12
+source .venv/bin/activate && python -m pytest tests/ -v   # confirm all 36 tests still pass
 ```
 
 ### Important context
-- Git repo initialized, V1 frozen at tag `v1-text-agent` / branch `release/v1`; `v0-skeleton` still intact as the emergency fallback one level further back.
+- Git repo initialized, V2 frozen at tag `v2-robust-recovery` / branch `release/v2`; `v1-text-agent`/`release/v1` and `v0-skeleton` still intact as successively older emergency fallbacks.
 - `src/`, `tests/`, `config/`, `pyproject.toml`, `demo/` all exist — see them before assuming anything is missing.
 - Python target: 3.11 in Docker, must also run on 3.10 and 3.12. Dev/test venv here runs 3.14 (no 3.10–3.12 interpreter was available locally) — keep avoiding 3.11+-only syntax (`ExceptionGroup`, `TaskGroup`, `Self`) since it hasn't been verified against the real target versions.
 - The evaluation kit is unreleased. `adapters/codec.py` has a provisional wire schema, isolated behind that one module; `entry.py`'s `HarnessIO` is likewise a guess.
 - All timing via `ClockPort.now_us()`. Zero `time.time()`/`datetime.now()`/etc. in `kernel/` or `store/` — enforced by `TraceChecker.check_static_no_wallclock`, run as part of every test.
-- `TraceChecker` (`sim/checker.py`) itself had two false-positive bugs found and fixed during V1 (see "Tested / Verified" above) — if a V2 test trips a checker violation, seriously consider whether the checker's assumption is wrong before assuming the kernel is.
-- V1 has three known, documented scope gaps that V2's rebinder is expected to close: no chunk-anchored speculative cancellation, no rebind-in-place (every correction forces a full replan), no retained-result reuse on `RETURN_TO_GOAL`.
+- `TraceChecker` (`sim/checker.py`) has had real false-positive bugs before (see the V2 bug list above) — if a V3 test trips a checker violation, seriously consider whether the checker's assumption is wrong before assuming the kernel is.
+- `DEFAULT_CONFIG` now has all five V2 flags `True`. If V3 needs its own comparably-scoped test isolation, follow the same pattern `tests/test_v2.py` set: a local `v3_config(**overrides)` helper (or similar) that starts flags at an explicit known baseline rather than trusting whatever the dataclass defaults happen to be by the time V3 lands — this is what kept `test_v0.py`/`test_v1.py` stable through the V2 default flip with zero changes to their own logic.
+- Writing tests against the *real* kernel (not mocks) found 8 genuine bugs across V1+V2 that design review alone missed — keep doing that for V3 rather than trusting the implementation once it "looks right."
 
 ---
 
@@ -171,6 +175,6 @@ Update after: implementing a feature, fixing a bug, completing tests, changing v
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-17 20:40 IST |
-| **Current agent/task** | Implemented and froze V1 (Interruptible Text Agent / MVP) |
-| **Latest meaningful change** | Built full V1 (turns, goals, task state machine, LLM workers, executor, responder, integration), wrote and passed all 15 `tests/test_v1.py` scenarios (23/23 with V0), fixed 3 real kernel bugs + 2 checker false-positives found in the process, tagged `v1-text-agent` + branch `release/v1` |
+| **Last updated** | 2026-09-17 22:10 IST |
+| **Current agent/task** | Implemented and froze V2 (Robust Recovery + Innovation Core) |
+| **Latest meaningful change** | Built full V2 (transitive invalidation, settle barrier + timer liveness, rebinder, absence read-sets, claim grades, reconciliation), wrote and passed all 12 `tests/test_v2.py` scenarios + replay identity (36/36 with V0+V1), found and fixed 5 more real kernel bugs in the process (8 total across the project), flipped `DEFAULT_CONFIG`'s V2 flags to `True` and fixed the resulting test-isolation gaps, tagged `v2-robust-recovery` + branch `release/v2` |
