@@ -254,7 +254,11 @@ class GoalRecord:
     created_turn: str = ""
     created_step: int = 0
     replaced_by: str | None = None
-    suspended_task_state: TaskState | None = None
+    # Current task state while ACTIVE; frozen at whatever it was the moment
+    # the goal is SUSPENDED, so RETURN_TO_GOAL resumes from here with no
+    # separate "suspended" copy needed (§4.2: "Last task state, for resume
+    # after suspension").
+    task_state: TaskState = TaskState.IDLE
 
 
 @dataclass(frozen=True)
@@ -268,3 +272,135 @@ class Snapshot:
 def fingerprint_for(tool: str, args: dict) -> str:
     """Digest of (tool name, canonical args) — CommitGate duplicate detection."""
     return compute_digest({"tool": tool, "args": args})
+
+
+# ---------------------------------------------------------------------------
+# V1: turns, interpretation, plans, worker proposals
+#
+# Not enumerated as their own files in docs/sonnet_implementation_plan.md's
+# V1 file list (only kernel/store/workers additions are listed there) — these
+# records are added directly to model/types.py, consistent with where V0's
+# core records already live, since `model` is the only package every other
+# V1 package (kernel, workers) is allowed to depend on for shared shapes.
+# ---------------------------------------------------------------------------
+
+
+class SlotOp(str, Enum):
+    SET = "set"
+    CLEAR = "clear"
+
+
+@dataclass(frozen=True)
+class SlotDelta:
+    name: str
+    scope: str  # "goal" | "session"
+    op: SlotOp
+    value: Any = None
+
+
+@dataclass(frozen=True)
+class TurnInterpretation:
+    """Interpreter worker output (`docs/prompt 2.txt` §4.6, V1 subset —
+    visual_reference/ambiguities are V3 multimodal concerns, dropped here)."""
+
+    turn_id: str
+    input_digest: str
+    act: InterpretAct
+    intent: str | None = None
+    slot_deltas: tuple[SlotDelta, ...] = ()
+    commit_intent: bool = False
+    resume_goal_id: str | None = None
+    ack_phrase: str | None = None
+
+
+class BindingKind(str, Enum):
+    FACT = "fact"
+    LITERAL = "literal"
+    STEP_OUTPUT = "step_output"
+
+
+@dataclass(frozen=True)
+class Binding:
+    kind: BindingKind
+    fact_key: str | None = None  # FACT
+    value: Any = None  # LITERAL
+    step_key: str | None = None  # STEP_OUTPUT
+    path: str | None = None  # STEP_OUTPUT: dotted path into that step's result
+
+
+@dataclass(frozen=True)
+class PlanStep:
+    step_key: str  # digest of (goal_id, tool, binding template) — stable across revisions
+    tool: str
+    kind: StepKind
+    bindings: dict  # param name -> Binding
+    after: tuple[str, ...] = ()  # step_keys that must be CONSUMED first
+    output_map: dict = field(default_factory=dict)  # result path -> derived.<gid>.<name>
+    requires_commit_intent: bool = False
+    structure_depends_on: tuple[str, ...] = ()  # slot names whose change forces replan, not rebind
+
+
+@dataclass(frozen=True)
+class Plan:
+    goal_id: str
+    plan_rev: int
+    steps: tuple[PlanStep, ...]
+
+
+@dataclass(frozen=True)
+class InterpretationProposal:
+    interpretation: TurnInterpretation
+    read_set: ReadSet
+
+
+@dataclass(frozen=True)
+class PlanProposal:
+    plan: Plan
+    read_set: ReadSet
+
+
+@dataclass(frozen=True)
+class ComposeProposal:
+    text: str
+    claims: tuple  # V1: opaque strings naming what the text asserts; graded in V2
+    read_set: ReadSet
+
+
+@dataclass(frozen=True)
+class ChunkRecord:
+    ts_us: int
+    text: str
+
+
+@dataclass(frozen=True)
+class Turn:
+    turn_id: str
+    opened_ts_us: int
+    closed_ts_us: int | None = None
+    chunks: tuple[ChunkRecord, ...] = ()
+    prefix_digest: str = ""
+    is_interruption: bool = False
+    during_goal: str | None = None
+
+
+class JobStatus(str, Enum):
+    RUNNING = "running"
+    DONE = "done"
+    ABORTED = "aborted"
+
+
+@dataclass(frozen=True)
+class JobRecord:
+    """Bookkeeping for a dispatched worker job — lets TaskStateMachine avoid
+    re-dispatching (e.g.) a second PLAN job for a goal that already has one
+    in flight. Correctness of *accepting* the eventual result never depends
+    on this table — that's read_set validity (K4), same as everything else.
+    """
+
+    job_id: str
+    kind: JobKind
+    goal_id: str | None
+    turn_id: str | None
+    read_set: ReadSet
+    status: JobStatus = JobStatus.RUNNING
+    dispatched_step: int = 0

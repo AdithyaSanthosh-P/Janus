@@ -187,7 +187,11 @@ def test_write_passes_commit_gate_effect_confirmed_no_duplicate(config):
         txn.call_ledger.create(dup)
 
     report_dup = h.send(150_000, inject=inject_duplicate)
-    assert report_dup.emit_report.emitted == ()
+    # No second TOOL_CALL for the duplicate fingerprint — CommitGate G5/G6
+    # blocked it. V1's FastResponder truthfully informs about the block
+    # (it didn't exist in V0, so there was nothing to assert here then).
+    emitted_types = [er.action.action_type for er in report_dup.emit_report.emitted]
+    assert ActionType.TOOL_CALL not in emitted_types
 
     h.advance(400_000)
     assert h.store.call_ledger.get(call_id).status == CallStatus.CONSUMED

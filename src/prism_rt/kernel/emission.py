@@ -22,7 +22,15 @@ from prism_rt.model.actions import (
     SpeakBody,
     ToolCallBody,
 )
-from prism_rt.model.types import TERMINAL_CALL_STATUSES, ActionType, CallStatus
+from prism_rt.model.types import (
+    TERMINAL_CALL_STATUSES,
+    ActionType,
+    CallStatus,
+    FactStatus,
+    GoalStatus,
+    Provenance,
+    TaskState,
+)
 from prism_rt.store.session import SessionStore
 
 _EMISSION_ORDER = {
@@ -147,3 +155,26 @@ class EmissionGate:
             assert isinstance(body, CancelBody)
             store.call_ledger.set_status(body.target_call_id, CallStatus.CANCEL_REQUESTED, cancel_reason=body.reason)
             store.dep_index.unregister(body.target_call_id)
+        elif ia.action_type == ActionType.FINAL and ia.goal_id is not None:
+            self._complete_goal(ia.goal_id, store, now_us)
+
+    def _complete_goal(self, goal_id: str, store: SessionStore, now_us: int) -> None:
+        goal = store.goals.get(goal_id)
+        if goal is None:
+            return
+        if goal.status == GoalStatus.ACTIVE:
+            store.goals.update(goal_id, status=GoalStatus.COMPLETED, task_state=TaskState.COMPLETED)
+        else:
+            store.goals.update(goal_id, task_state=TaskState.COMPLETED)
+
+        store.facts.retract(f"compose.{goal_id}.text", rule="emission.final_consumed")
+
+        active_fact = store.facts.get("goal.active")
+        if active_fact is not None and active_fact.status != FactStatus.RETRACTED and active_fact.value == goal_id:
+            store.facts.set(
+                "goal.active",
+                None,
+                FactStatus.COMMITTED,
+                Provenance(source="system", step_no=0, ts_us=now_us),
+                rule="emission.final_clears_active",
+            )

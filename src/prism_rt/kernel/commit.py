@@ -83,16 +83,26 @@ class CommitGate:
 
         return GateDecision(True, None, "G1-G8")
 
-    def scan_and_admit(self, store: SessionStore, now_us: int) -> list[IntendedAction]:
+    def scan_and_admit(self, store: SessionStore, now_us: int) -> tuple[list[IntendedAction], set[str]]:
         """Evaluate every PROPOSED call and turn the admitted ones into
         TOOL_CALL IntendedActions. A call that fails the gate simply stays
         PROPOSED — there is no separate Blocked status; it is re-evaluated
-        on the next step once whatever blocked it may have changed."""
+        on the next step once whatever blocked it may have changed.
+
+        Also returns the admitted call_ids: a call admitted just now stays
+        CallStatus.PROPOSED until EmissionGate flips it to IN_FLIGHT later
+        this same step, so anything else scanning `proposed()` calls this
+        step (V1: FastResponder's blocked-write check) needs to exclude
+        them — otherwise a write's own brand-new PENDING effect record
+        looks, to a second independent CommitGate.evaluate() call, like a
+        pre-existing duplicate of itself."""
         actions: list[IntendedAction] = []
+        admitted_call_ids: set[str] = set()
         for call in store.call_ledger.proposed():
             decision = self.evaluate(call, store, now_us)
             if not decision.allowed:
                 continue
+            admitted_call_ids.add(call.call_id)
 
             if call.kind == StepKind.WRITE:
                 lineage = f"{call.goal_id}:{call.step_key}"
@@ -121,4 +131,4 @@ class CommitGate:
                     rule_id=decision.rule_id,
                 )
             )
-        return actions
+        return actions, admitted_call_ids

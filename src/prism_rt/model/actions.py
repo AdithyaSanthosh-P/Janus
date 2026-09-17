@@ -59,3 +59,4 @@ class IntendedAction:
     needs_snapshot: bool = False
     trigger_event_id: str = ""
     rule_id: str = ""
+    goal_id: str | None = None  # V1: which goal a FINAL concludes, for EmissionGate's side effect

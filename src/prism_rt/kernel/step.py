@@ -5,9 +5,14 @@ awaiting anywhere inside (K1): ORDER, APPLY, INVALIDATE, DECIDE, EMIT,
 COMMIT, DISPATCH, LOG. `docs/prompt 2.txt` §5.2,
 `docs/sonnet_implementation_plan.md` §3.2.
 
-V0 has no worker jobs, so DISPATCH is a no-op; it exists as a phase now so
-V1 (`workers/`, `JobScheduler`) slots in without changing this file's
-control flow.
+DECIDE runs its components in the architecture's fixed order (§5.2):
+cancellation, TaskStateMachine, PlanExecutor, CommitGate, FastResponder —
+each sees the post-invalidation state and nothing decided later in the
+same step. TaskStateMachine allocates job_ids and writes JobRecords
+directly (so FastResponder, running right after it, can see "a PLAN job
+just started" and ACK in the same step); DISPATCH only has to make the
+actual `runner.submit()` calls, which is why it stays a thin phase 7 even
+though V1 has real worker jobs.
 """
 
 from __future__ import annotations
@@ -20,9 +25,12 @@ from prism_rt.adapters.output_writer import OutputWriter
 from prism_rt.config import Config
 from prism_rt.kernel.commit import CommitGate
 from prism_rt.kernel.emission import EmissionGate, EmitReport
+from prism_rt.kernel.executor import PlanExecutor
 from prism_rt.kernel.invalidation import InvalidationEngine, InvalidationReport
 from prism_rt.kernel.ordering import order_batch
 from prism_rt.kernel.reducers import apply as apply_reducer
+from prism_rt.kernel.responder import FastResponder
+from prism_rt.kernel.task import TaskStateMachine
 from prism_rt.model.events import Envelope
 from prism_rt.model.types import ChangeSet
 from prism_rt.observability.decision_log import DecisionLogger
@@ -49,15 +57,23 @@ class Kernel:
         runner: object | None = None,
         log: DecisionLogger | None = None,
     ) -> None:
+        """`runner` is duck-typed to `workers.runner.WorkerRunner`'s shape
+        (`.submit(job_id, kind, view, *, dispatched_us)`) — not imported
+        here, since kernel must not import workers (job dispatch happens
+        purely by calling whatever was handed in); `docs/prompt 2.txt`
+        §21.1."""
         self.config = config
         self.store = store
         self.clock = clock
-        self.runner = runner  # V1: WorkerRunner — unused in V0
+        self.runner = runner
         self.log = log
 
         self._emission_gate = EmissionGate(writer)
         self._invalidation_engine = InvalidationEngine()
         self._commit_gate = CommitGate()
+        self._task_state_machine = TaskStateMachine()
+        self._plan_executor = PlanExecutor()
+        self._fast_responder = FastResponder()
         self._step_no = 0
 
     def step(
@@ -97,10 +113,15 @@ class Kernel:
             changed_keys = txn.changed_keys()
             invalidation = self._invalidation_engine.invalidate(changed_keys, self.store)
 
-            # Phase 4: DECIDE (fixed component order: cancellation, then admission)
+            # Phase 4: DECIDE — fixed order: cancellation, TaskStateMachine,
+            # PlanExecutor, CommitGate, FastResponder.
             intended = []
             intended.extend(self._invalidation_engine.cancellation_actions(invalidation, self.store))
-            intended.extend(self._commit_gate.scan_and_admit(self.store, now_us))
+            dispatch_requests = self._task_state_machine.decide(self.store, now_us, step_no)
+            self._plan_executor.propose_ready_calls(self.store, now_us, step_no)
+            admitted_actions, admitted_call_ids = self._commit_gate.scan_and_admit(self.store, now_us)
+            intended.extend(admitted_actions)
+            intended.extend(self._fast_responder.decide(self.store, now_us, step_no, skip_call_ids=admitted_call_ids))
 
             # Phase 5: EMIT
             emit_report = self._emission_gate.emit(intended, self.store, now_us, self.store.ids)
@@ -108,7 +129,12 @@ class Kernel:
             # Phase 6: COMMIT
             change_set = txn.commit()
 
-        # Phase 7: DISPATCH — no worker jobs in V0.
+        # Phase 7: DISPATCH — submit jobs TaskStateMachine requested this
+        # step. The JobRecord already exists (written during DECIDE); this
+        # only makes the actual (unguarded) runner call.
+        if self.runner is not None:
+            for req in dispatch_requests:
+                self.runner.submit(req.job_id, req.kind, req.view, dispatched_us=now_us)
 
         # Phase 8: LOG
         if self.log is not None:
