@@ -45,6 +45,7 @@ class StepReport:
     change_set: ChangeSet
     invalidation: InvalidationReport
     emit_report: EmitReport
+    next_wake_us: int | None = None  # V2: earliest time a driver must call step() again (settle liveness)
 
 
 class Kernel:
@@ -153,4 +154,5 @@ class Kernel:
             change_set=change_set,
             invalidation=invalidation,
             emit_report=emit_report,
+            next_wake_us=self.store.timers.next_due_us(),
         )

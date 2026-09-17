@@ -12,7 +12,7 @@ from prism_rt.ids import IdGenerator
 from prism_rt.model.types import ChangeSet, FloorState
 from prism_rt.store.catalog import ToolCatalog
 from prism_rt.store.facts import DependencyIndex, FactStore, MutationGuard
-from prism_rt.store.ledgers import CallLedger, EffectLedger, GoalRegistry, JobTable, PlanStore, TurnLog
+from prism_rt.store.ledgers import CallLedger, EffectLedger, GoalRegistry, JobTable, PlanStore, TimerWheel, TurnLog
 
 
 class SessionStore:
@@ -33,6 +33,7 @@ class SessionStore:
         self.plans = PlanStore(self._guard)
         self.turn_log = TurnLog(self._guard)
         self.jobs = JobTable(self._guard)
+        self.timers = TimerWheel(self._guard)
         self.floor_state = FloorState.USER_TURN_CLOSED
 
     @classmethod
@@ -95,6 +96,10 @@ class StoreTxn:
     @property
     def jobs(self) -> JobTable:
         return self.store.jobs
+
+    @property
+    def timers(self) -> TimerWheel:
+        return self.store.timers
 
     def set_floor(self, state: FloorState) -> None:
         self.store.set_floor(state)

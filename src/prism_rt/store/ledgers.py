@@ -255,3 +255,37 @@ class JobTable:
 
     def running_by_kind_turn(self, kind: JobKind, turn_id: str | None) -> list[JobRecord]:
         return [j for j in self._jobs.values() if j.kind == kind and j.turn_id == turn_id and j.status == JobStatus.RUNNING]
+
+
+class TimerWheel:
+    """V2: harness-time timers, keyed by an idempotent caller-chosen
+    timer_id (e.g. `f"settle:{call_id}"` — re-scheduling the same id just
+    updates its due time rather than creating a duplicate).
+
+    Nothing in the kernel needs a timer to *fire* to make a correctness
+    decision — CommitGate re-evaluates every blocked call every step
+    regardless of triggers, same as it always has. A timer's only job is
+    liveness: telling whatever drives the kernel loop the earliest time
+    it must call `step()` again even with no new event, so a settle
+    window (`docs/prompt 2.txt` §13.3, §20) can't stall forever waiting
+    for a chunk that may never come (T-05). `Kernel.step()` surfaces this
+    as `StepReport.next_wake_us`.
+    """
+
+    def __init__(self, guard: MutationGuard) -> None:
+        self._guard = guard
+        self._due: dict[str, int] = {}
+
+    def schedule(self, timer_id: str, due_us: int) -> None:
+        self._guard.check()
+        self._due[timer_id] = due_us
+
+    def cancel(self, timer_id: str) -> None:
+        self._guard.check()
+        self._due.pop(timer_id, None)
+
+    def next_due_us(self) -> int | None:
+        return min(self._due.values()) if self._due else None
+
+    def due(self, now_us: int) -> list[str]:
+        return [tid for tid, due_us in self._due.items() if due_us <= now_us]

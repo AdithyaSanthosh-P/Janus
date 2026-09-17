@@ -81,6 +81,22 @@ class CommitGate:
         if existing_lineage is not None and existing_lineage.status == EffectStatus.UNKNOWN:
             return GateDecision(False, "unknown_effect_outcome", "G7")
 
+        # G10/G11: settle barrier (V2). Catches "book the 6pm one" -> 200ms
+        # -> "wait, the 8pm one" — without this, the first booking would
+        # already be in flight by the time the correction arrives. A write
+        # waits until config.settle_ms has passed since the floor last
+        # closed, AND no newer turn has opened since (a still-open floor
+        # already fails G3 above, but a turn can open and close again
+        # within the settle window itself, which G3 alone wouldn't catch).
+        if store.config.settle_barrier_enabled:
+            last_eot = store.facts.get("session.last_eot_ts")
+            last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else None
+            settle_us = store.config.settle_ms * 1000
+            if last_eot_ts is None or (now_us - last_eot_ts) < settle_us:
+                return GateDecision(False, "settle_not_elapsed", "G10")
+            if store.turn_log.open_turn_id() is not None:
+                return GateDecision(False, "new_turn_open", "G11")
+
         return GateDecision(True, None, "G1-G8")
 
     def scan_and_admit(self, store: SessionStore, now_us: int) -> tuple[list[IntendedAction], set[str]]:
@@ -101,8 +117,11 @@ class CommitGate:
         for call in store.call_ledger.proposed():
             decision = self.evaluate(call, store, now_us)
             if not decision.allowed:
+                if decision.rule_id == "G10":
+                    self._schedule_settle_wake(store, call, now_us)
                 continue
             admitted_call_ids.add(call.call_id)
+            store.timers.cancel(f"settle:{call.call_id}")
 
             if call.kind == StepKind.WRITE:
                 lineage = f"{call.goal_id}:{call.step_key}"
@@ -132,3 +151,14 @@ class CommitGate:
                 )
             )
         return actions, admitted_call_ids
+
+    def _schedule_settle_wake(self, store: SessionStore, call: CallRecord, now_us: int) -> None:
+        """A liveness nudge, not a correctness mechanism (T-05) — G10 is
+        re-checked from scratch every step regardless of whether this timer
+        ever fires; it only tells the driver the earliest time it must call
+        step() again even with no new event, so the settle window can't
+        stall forever under Model B (docs/prompt 2.txt §13.3)."""
+        last_eot = store.facts.get("session.last_eot_ts")
+        last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else now_us
+        due_us = last_eot_ts + store.config.settle_ms * 1000
+        store.timers.schedule(f"settle:{call.call_id}", due_us)
