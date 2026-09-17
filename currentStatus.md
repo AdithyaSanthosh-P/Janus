@@ -44,11 +44,11 @@ When documents conflict, higher rank wins:
 
 | Field | Value |
 |---|---|
-| **Current version** | V3 FROZEN — multimodal grounding |
-| **MVP status** | DONE at V1; V2 and V3 strictly improve on it |
+| **Current version** | V4 FROZEN — hardening + packaging |
+| **MVP status** | DONE at V1; V2, V3, V4 strictly improve on it |
 | **Git initialized** | YES |
-| **Latest Git tag** | `v3-multimodal` (branch `release/v3`); `v2-robust-recovery`/`release/v2`, `v1-text-agent`/`release/v1`, `v0-skeleton` still intact |
-| **Submission fallback** | `v3-multimodal` / `release/v3` — everything in V2 plus vision-grounded questions, claims, conflicts, and lease renewal, gated behind `vision_enabled` (default `False`, so V0-V2 behavior is bit-for-bit unchanged when it's off) |
+| **Latest Git tag** | `v4-hardened` (branch `release/v4`); `v3-multimodal`/`release/v3`, `v2-robust-recovery`/`release/v2`, `v1-text-agent`/`release/v1`, `v0-skeleton` still intact |
+| **Submission fallback** | `v4-hardened` / `release/v4` — everything in V3 plus reference-bound write identifiers (gated behind `reference_bound_identifiers`, default `False`), a verified Docker image, README, measurements.md, and timing-sweep tests |
 
 ### Implemented
 V0 + V1 (see git history / `v0-skeleton`, `v1-text-agent` tags) plus full V2 per `docs/sonnet_implementation_plan.md` §4 VERSION 2 / §5 Phase 16. All five V2 flags now default `True` in `Config` (`config.py`) — construct `Config(flag=False)` to get V1 behavior back for comparison:
@@ -66,10 +66,17 @@ V3 (multimodal grounding) per `docs/sonnet_implementation_plan.md` §4 VERSION 3
 - **`workers/vision.py`** (`VisionAnalyzer`): same `ScriptedProvider`-mocked worker pattern as Interpreter/Planner/Composer. The frame is passed by reference (`obs_id`) only — the existing `Provider.complete_json(kind, prompt, schema)` protocol is text-only (see `workers/gateway.py`'s `GeminiProvider`, added earlier this session for the same reason), so no test or live path here actually sends pixel data; a real image-grounded call would need a second, image-aware `Provider` method, out of scope.
 - **New event `video_frame`** (`model/events.py`, `adapters/codec.py`): always stored as an `Observation` on arrival, matching §10.3 ("evidence is always stored"); relevance is decided later, only by an open question.
 
-### Tested / Verified
-`tests/test_v0.py` (8) + `tests/test_v1.py` (15) + `tests/test_v2.py` (13) + `tests/test_v3.py` (6: N-05, M-06, M-07, M-08, M-03, plus replay identity) — **42/42 passing**, `TraceChecker` 0 violations everywhere including the static no-wall-clock scan (which now also covers `kernel/perception.py`).
+V4 (Hardening + Packaging) per `docs/sonnet_implementation_plan.md` §4 VERSION 4 and `docs/prototype_version_plan.md`'s V4 section (see Deferred below for the V4 items intentionally *not* built):
+- **C10 — reference-bound write identifiers** (`Config.reference_bound_identifiers`, default `False`): `docs/theme05_implementation_blueprint.md` §5.5. `PlanExecutor._bind` (`kernel/executor.py`) now refuses to bind a WRITE tool's identifier-like parameter (schema `enum`, `format: uuid`, or a name matching `*_id`/`*_code`/`*_number`/`*_ref`/`*_reference`) to a model-invented literal. Accepted origins: a consumed read result (`step_output`), a tool-derived fact (`provenance.source == "tool"`), a user-stated fact (`provenance.source == "user"`), or a literal matching verbatim text in a committed turn. A perception-sourced fact (V3) is deliberately *not* accepted — booking against a vision guess is exactly what this rule exists to prevent. A refused binding reuses the existing missing-slot clarify path (`_ask_for`) rather than a new gate.
+- **Targeted timing sweeps** (`tests/test_v4.py`): I-03, I-14, and R-05 re-run at 5 nearby event-timing offsets each (5ms increments, +-10ms total spread) instead of one hand-picked delay, to prove the same invariants hold under small timing perturbation. R-05's sweep specifically checks what that scenario actually guarantees — deterministic, structurally clean resolution of the completion/cancellation race — not that either destination always "wins" it, since nothing in V0/V1 reopens an already-composed goal (a wrong assumption in the first draft of this sweep, caught by the test itself failing until the assertion was corrected to match the real invariant).
+- **Dockerfile**: `python:3.11-slim`, installs the package + dev deps, runs the full suite by default. **Verified locally**: `docker build -t janus .` succeeds and `docker run --rm janus` passes all 60 tests on real Python 3.11 — the first actual verification of the 3.10-3.12 compatibility claim (dev environment here only has Python 3.14).
+- **README.md**: reproducible setup, version/tag table, known limitations.
+- **docs/measurements.md**: real numbers only (test coverage table; per-step kernel latency measured via `time.perf_counter()` around 44,200 `SimHarness` calls — mean 9.2us, p95 17.9us, well under the 5ms `step_budget_ms` telemetry target; an internal flag-off/flag-on comparison table in place of a true baseline, since the hidden eval kit that would provide one is unreleased).
 
-Run with: `cd /home/adi/Desktop/Hackathons/Prism && source .venv/bin/activate && python -m pytest tests/ -v`. `tests/conftest.py`'s shared `config` fixture pins all five V2 flags back to `False` for `test_v0.py`/`test_v1.py`; `test_v2.py`'s `v2_config(**overrides)` and `test_v3.py`'s `v3_config(**overrides)` each start every flag `False` (V3's defaults `vision_enabled=True`) and enable only what each scenario means to exercise.
+### Tested / Verified
+`tests/test_v0.py` (8) + `tests/test_v1.py` (15) + `tests/test_v2.py` (13) + `tests/test_v3.py` (6) + `tests/test_v4.py` (18: I-03/I-14/R-05 sweeps x5 each, C10 x3) — **60/60 passing**, `TraceChecker` 0 violations everywhere including the static no-wall-clock scan. Also verified on real Python 3.11 inside Docker (not just this machine's Python 3.14): 60/60 passing there too.
+
+Run with: `cd /home/adi/Desktop/Hackathons/Prism && source .venv/bin/activate && python -m pytest tests/ -v`, or `docker build -t janus . && docker run --rm janus`. `tests/conftest.py`'s shared `config` fixture pins all five V2 flags back to `False` for `test_v0.py`/`test_v1.py`; `test_v2.py`'s `v2_config`, `test_v3.py`'s `v3_config`, and `test_v4.py`'s `v4_config` each start every V2-V4 flag at an explicit known baseline (V3's own default flips `vision_enabled` to `True`) and enable only what each scenario means to exercise.
 
 Also verifiable interactively: `PYTHONPATH=src:. python demo/run_v0_demo.py` (V0-era raw trace), `demo/run_v1_demo.py` (real spoken ACK/CANCEL/FINAL), and `demo/run_v1_live_demo.py` (same scenario against the real Gemini API) — none updated to show V2's rebinder/settle/reconcile or V3's multimodal behavior specifically (optional, not blocking).
 
@@ -86,9 +93,14 @@ Also verifiable interactively: `PYTHONPATH=src:. python demo/run_v0_demo.py` (V0
 Nothing currently failing.
 
 ### In Progress
-V4 not yet started.
+Nothing in progress. All four planned versions (V0-V4) are built, tested, and frozen. Remaining work is optional polish (demo video, PPT, deferred V4 items below) or genuinely blocked (kit integration).
 
 ### Deferred (per sonnet_implementation_plan.md §1.2, plus scope trims documented in module docstrings)
+- V4 items from `docs/prototype_version_plan.md`'s (higher-ranked) V4 section, deliberately not built this pass, in order of how much new machinery each would need:
+  - **Kit wire-format integration** (codec mapping to the real kit, policy updates from kit answers, public suite validation) — genuinely blocked: the kit is unreleased. Nothing to build against yet.
+  - **Inert-tail promotion (C1)** — needs a pre-EOT speculative-interpretation subsystem (prefix-digest-based INTERPRET dispatch before end-of-turn) that doesn't exist anywhere in this codebase yet; V1's "Known Limitations" already scoped this out and V2's rebinder only covers post-EOT corrections. A real new subsystem, not a targeted addition — judged too large relative to its scoring value for this pass.
+  - **Enhanced TraceChecker (all 34 invariant checks from the blueprint)** — only P1, P3, S3, W1, plus the static no-wall-clock scan and replay identity (C1) are implemented; the blueprint's full invariant catalog is much larger. Every check that *is* implemented has caught real bugs (see the V1/V2 bug lists); the untried ones are an unquantified risk, not a known-safe gap.
+  - **Demo video recording, PPT preparation** — outside what an agent session can produce; the demo scripts (`demo/run_v1_demo.py`, `demo/run_v1_live_demo.py`) are ready to record from.
 - V3 scope trims (see `model/types.py`'s V3 section docstring and `kernel/perception.py`'s module docstring for the full list): QuickDetector-cue and plan-declared question triggers (only the Interpreter "demand" trigger is wired); frame-count-based leases (flat timeout only); coalescing/watch-mode re-analysis of a newer frame while a job is in flight; multiple simultaneous open questions/conflicts per goal (one each, tracked directly); ASR (`workers/asr.py`, audio_mode handling) — not implemented at all; live pixel-grounded vision calls (the `Provider` protocol is text-only; `workers/vision.py` passes frames by reference only, same limitation `GeminiProvider` already has)
 - Chunk-anchored speculative cancellation (QuickDetector value extraction is built but unwired — cues only, used for backchannel detection, and now also `visual_reference` per-chunk detection which V3 doesn't use either — see `kernel/perception.py`) → not planned before V4, low scoring value relative to effort
 - Result reuse on `RETURN_TO_GOAL` (still forces a fresh PLANNING pass even when a retained result could be reused — the rebinder only covers in-place slot corrections on the *current* goal, not goal-switch-back) → possible V3/V4 polish, not currently planned
@@ -104,20 +116,18 @@ V4 not yet started.
 
 ### Known Risks
 - Evaluation kit unreleased — `adapters/codec.py`'s wire schema is a provisional guess, isolated behind that one module so it's cheap to replace; `entry.py`'s `HarnessIO` contract is likewise a guess
-- Dev/test environment is Python 3.14 (no 3.10–3.12 interpreter available locally); Docker target is 3.11 — code avoids 3.11+-only syntax deliberately but this is unverified on the actual target versions
+- ~~Dev/test environment is Python 3.14...unverified on the actual target versions~~ — **resolved in V4**: `docker build -t janus . && docker run --rm janus` verified 60/60 tests passing on real Python 3.11.
 - Live LLM validation: `GeminiProvider` (`workers/gateway.py`) has been verified against the real Gemini API for the text-only INTERPRET/PLAN/COMPOSE path (`demo/run_v1_live_demo.py`) — but only text, since `Provider.complete_json` carries no image parameter. `workers/vision.py` has never been called against a real vision model; `AnthropicProvider`/`AsyncWorkerRunner` also remain untested against a live model.
 - V3 shipped without ever exercising real pixel-grounded vision (see above) — every V3 test is `ScriptedProvider`-driven, matching how every prior version's tests work, per the plan's own "Mock first, live second" principle. A true live vision path would need a second, image-aware `Provider` method — not built.
+- V4 shipped without the kit wire-format integration, inert-tail promotion (C1), or the full 34-check `TraceChecker` — see Deferred above for why each was cut. None of these block a safe submission (V4's own 60 tests + all prior tags still pass); they're scoring upside left on the table, not correctness gaps in what shipped.
+- `PRISM_GENAI_HACKATHON_Y2026` (the final submission tag) has **not** been applied yet — tagging it is a deliberate, explicitly confirmed action per the project's own versioning rule, not something to do automatically on freezing V4. `v4-hardened` is ready to be that tag whenever the user says so.
 - Deadline: 25 Sep 2026
 
 ### Next Task
-**Begin V4 (Hardening + Packaging)** — follow `docs/sonnet_implementation_plan.md` §4 VERSION 4, §5 Phase 18:
-1. `Dockerfile` — build and run all tests in the Docker target (Python 3.11), the first real verification of the 3.10–3.12 compatibility claim
-2. `README.md` — reproducible setup
-3. Targeted timing sweeps (`tests/test_v4.py`) on I-03, I-14, R-05 (±10ms offsets) — and worth adding equivalents for V3's lease-expiry/renewal timing (`test_m03_stale_frame_renewal`'s hand-tuned latencies), since that's the newest timing-sensitive logic
-4. Full regression run across all versions; demo recording; PPT prep
-5. Final freeze: `git tag v4-hardened`, `git tag PRISM_GENAI_HACKATHON_Y2026`
-
-Optional, not blocking V4: update the demo scripts to show V2's rebinder/settle-barrier/reconcile and V3's multimodal behavior specifically (current demos predate both).
+**All four planned versions (V0-V4) are complete.** What's left is optional and explicitly deferred (see above), or requires a decision only the team can make:
+1. **Submission**: when ready, tag the judged commit `PRISM_GENAI_HACKATHON_Y2026` (currently `v4-hardened` on `main`/`release/v4` is the candidate) — confirm with the team first, this is a one-way "this is final" action.
+2. Optional polish, roughly in order of value for effort: demo video recording (5 min, covering chain correction / settle barrier / visual lease / adversarial timing per `docs/prototype_version_plan.md`'s V4 demo script), PPT prep, updating `demo/run_v1_demo.py`/`run_v1_live_demo.py` to show V2/V3 behavior specifically (current demos predate both).
+3. If there's still real time before the deadline and more scoring depth is wanted: pick one deferred V4 item (kit integration is blocked; inert-tail promotion (C1) and the full 34-check TraceChecker are both real, bounded pieces of work — see Deferred above for what each needs).
 
 ---
 
@@ -142,34 +152,35 @@ Full details: `docs/sonnet_implementation_plan.md` (§3 invariants, §4 version 
 ## For the Next Agent
 
 ### What to do next
-Implement V4 (Hardening + Packaging). Follow `docs/sonnet_implementation_plan.md` §4 VERSION 4, §5 Phase 18, on top of the frozen `v3-multimodal` tag / `release/v3` branch. Do not modify V0/V1/V2/V3 files' public interfaces or `Config` flag defaults — V4 is packaging/verification, not new kernel behavior; the only source changes expected are `Dockerfile`, `README.md`, and new timing-sweep tests.
+There is no mandatory next implementation task — V0 through V4 are all built, tested, and frozen. Read the updated Next Task section above and confirm with the team which optional item (if any) is wanted: submission tagging, demo recording, or a specific deferred V4 item. Do not pick a deferred item and start building it without checking — `PRISM_GENAI_HACKATHON_Y2026` in particular must never be tagged without explicit team confirmation that it's final.
 
 ### Files to read first
 1. This file (`currentStatus.md`)
-2. `docs/sonnet_implementation_plan.md` — §4 VERSION 4 section, §5 Phase 18
-3. `docs/prototype_version_plan.md` for the original V4 scope/time-budget framing
-4. `pyproject.toml` for the declared Python version range (`>=3.10,<3.13`) that the Dockerfile needs to target and actually verify for the first time
+2. `README.md` for the outward-facing project summary and version table
+3. `docs/measurements.md` for what's actually been measured so far
+4. If picking up a deferred item: its entry in the Deferred section above names exactly what it needs
 
 ### Current blockers
-None — V3 frozen and passing (42/42 tests), ready to begin V4. Nothing external is required to start (Docker build/test run, README, timing sweeps are all self-contained); live vision validation remains an open, non-blocking risk (see Known Risks).
+None. `v4-hardened` on `main`/`release/v4` is a complete, tested, Docker-verified submission candidate.
 
 ### Commands to run before modifying anything
 ```bash
 cd /home/adi/Desktop/Hackathons/Prism
-git status                        # confirm working tree is clean at v3-multimodal
+git status                        # confirm working tree is clean at v4-hardened
 git log --oneline -12
-source .venv/bin/activate && python -m pytest tests/ -v   # confirm all 42 tests still pass
+source .venv/bin/activate && python -m pytest tests/ -v   # confirm all 60 tests still pass
+docker build -t janus . && docker run --rm janus          # confirm the Docker image still builds/passes
 ```
 
 ### Important context
-- Git repo initialized, V3 frozen at tag `v3-multimodal` / branch `release/v3`; `v2-robust-recovery`/`release/v2`, `v1-text-agent`/`release/v1`, `v0-skeleton` still intact as successively older emergency fallbacks.
-- `src/`, `tests/`, `config/`, `pyproject.toml`, `demo/` all exist — see them before assuming anything is missing.
-- Python target: 3.11 in Docker, must also run on 3.10 and 3.12. Dev/test venv here runs 3.14 (no 3.10–3.12 interpreter was available locally) — keep avoiding 3.11+-only syntax (`ExceptionGroup`, `TaskGroup`, `Self`) since it hasn't been verified against the real target versions. **The Docker build is V4's first chance to actually verify this claim** — treat any failure there as a real bug, not a fluke.
+- Git repo initialized, V4 frozen at tag `v4-hardened` / branch `release/v4`; `v3-multimodal`/`release/v3`, `v2-robust-recovery`/`release/v2`, `v1-text-agent`/`release/v1`, `v0-skeleton` still intact as successively older emergency fallbacks.
+- `src/`, `tests/`, `config/`, `pyproject.toml`, `demo/`, `Dockerfile`, `README.md`, `docs/measurements.md` all exist — see them before assuming anything is missing.
+- Python 3.10-3.12 compatibility is now actually verified (not just assumed) via the Docker build on 3.11 — see Known Risks for what's still unverified (live vision, the full 34-check TraceChecker, kit integration).
 - The evaluation kit is unreleased. `adapters/codec.py` has a provisional wire schema, isolated behind that one module; `entry.py`'s `HarnessIO` is likewise a guess.
 - All timing via `ClockPort.now_us()`. Zero `time.time()`/`datetime.now()`/etc. in `kernel/` or `store/` — enforced by `TraceChecker.check_static_no_wallclock`, run as part of every test.
-- `TraceChecker` (`sim/checker.py`) has had real false-positive bugs before (see the V2 bug list above) — if a V4 test trips a checker violation, seriously consider whether the checker's assumption is wrong before assuming the kernel is.
-- `DEFAULT_CONFIG` has all five V2 flags `True`; `vision_enabled` (V3) defaults `False` (deliberately — V3's tests each opt in via `v3_config`, unlike V2's flags which flipped the global default once frozen). Decide, if it matters for V4, whether to flip `vision_enabled` to `True` by default the way V2's flags were — not done yet, no test currently depends on it either way.
-- Writing tests against the *real* kernel (not mocks) found 8 genuine bugs across V1+V2, and a real schema gap (Gemini's live `bindings` call) while wiring the live provider — keep doing that for V4's timing sweeps rather than trusting the implementation once it "looks right."
+- `TraceChecker` (`sim/checker.py`) has had real false-positive bugs before (see the V2 bug list above) — if a test trips a checker violation, seriously consider whether the checker's assumption is wrong before assuming the kernel is. The V4 timing sweeps also caught a *test*-authoring bug this way (the first draft of the R-05 sweep asserted an invariant the scenario doesn't actually guarantee) — the same "verify the assumption, not just the kernel" discipline applies to test code too.
+- `DEFAULT_CONFIG` has all five V2 flags `True`; `vision_enabled` (V3) and `reference_bound_identifiers` (V4) both default `False` (deliberately — each version's own tests opt in explicitly via their `vN_config` helper, unlike V2's flags which flipped the global default once frozen). Whether to flip either to `True` by default is an open, low-stakes decision — nothing currently depends on it either way.
+- Writing tests against the *real* kernel (not mocks) found 8 genuine bugs across V1+V2, a real schema gap (Gemini's live `bindings` call) while wiring the live provider, and a test-authoring bug (R-05 sweep, above) — keep doing that rather than trusting an implementation once it "looks right."
 
 ---
 
@@ -181,6 +192,6 @@ Update after: implementing a feature, fixing a bug, completing tests, changing v
 
 | Field | Value |
 |---|---|
-| **Last updated** | 2026-09-17 |
-| **Current agent/task** | Wired a live Gemini provider into the V1 gateway, then implemented and froze V3 (Multimodal Grounding) |
-| **Latest meaningful change** | Added `GeminiProvider` (`workers/gateway.py`, stdlib `urllib`, text-only) + `demo/run_v1_live_demo.py`, verified live against the real Gemini API (found and fixed a real schema gap: `PLAN_SCHEMA`'s `bindings` field had no shape description, so a live model couldn't produce valid ones). Then built full V3 (`kernel/perception.py` PerceptionScheduler, `store/ledgers.py` EvidenceStore, `workers/vision.py`, `video_frame` event + reducer, conflict detection/CLARIFY, `$Q` plan-binding substitution, lease expiry/renewal), all gated behind `Config.vision_enabled` (default `False`). Wrote and passed all 5 `tests/test_v3.py` scenarios (N-05, M-06, M-07, M-08, M-03) + replay identity (42/42 with V0-V2), zero regressions. Tagged `v3-multimodal` + branch `release/v3`. |
+| **Last updated** | 2026-09-18 |
+| **Current agent/task** | Implemented and froze V4 (Hardening + Packaging) — the last planned version |
+| **Latest meaningful change** | Added C10 (reference-bound write identifiers, `kernel/executor.py`, gated behind `Config.reference_bound_identifiers`); `tests/test_v4.py` with +-10ms timing sweeps on I-03/I-14/R-05 (5 offsets each) plus 3 direct C10 tests, 18/18 passing (60/60 with V0-V3); wrote and verified a `Dockerfile` (`docker build && docker run` passes all 60 tests on real Python 3.11 — the first actual check of the declared 3.10-3.12 compatibility, previously only assumed); wrote `README.md` and `docs/measurements.md` (real per-step latency numbers measured via `time.perf_counter()`, not estimated). Deliberately deferred kit integration (blocked, kit unreleased), inert-tail promotion (C1, needs a new pre-EOT speculative subsystem), and the full 34-check TraceChecker — documented as scope cuts, not silent gaps. Tagged `v4-hardened` + branch `release/v4`. Did **not** tag `PRISM_GENAI_HACKATHON_Y2026` — that's a explicitly confirmed final-submission action. |

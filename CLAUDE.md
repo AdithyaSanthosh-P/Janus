@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-This project is called **Janus** (`pyproject.toml` distribution name `janus`; the Python package import path is `prism_rt` — a naming mismatch left in place deliberately, not a leftover to "fix"). It's a hackathon entry for the Samsung PRISM GenAI Hackathon, Theme 05 (deadline 25 Sep 2026). V0, V1, V2, and V3 are implemented, tested, and frozen (git tags `v0-skeleton`, `v1-text-agent`/`release/v1`, `v2-robust-recovery`/`release/v2`, `v3-multimodal`/`release/v3`); V4 (hardening/Docker/timing sweeps) is next. Every future session should treat `currentStatus.md` as the live handoff record and update it after meaningful work (it says so explicitly — follow that rule).
+This project is called **Janus** (`pyproject.toml` distribution name `janus`; the Python package import path is `prism_rt` — a naming mismatch left in place deliberately, not a leftover to "fix"). It's a hackathon entry for the Samsung PRISM GenAI Hackathon, Theme 05 (deadline 25 Sep 2026). V0 through V4 are all implemented, tested, and frozen (git tags `v0-skeleton`, `v1-text-agent`/`release/v1`, `v2-robust-recovery`/`release/v2`, `v3-multimodal`/`release/v3`, `v4-hardened`/`release/v4`) — this is the full planned scope; remaining work is optional (see `currentStatus.md`'s Next Task) or the final `PRISM_GENAI_HACKATHON_Y2026` submission tag, which needs explicit team confirmation, not autonomous action. Every future session should treat `currentStatus.md` as the live handoff record and update it after meaningful work (it says so explicitly — follow that rule).
 
 **Read `currentStatus.md` first, every session.** It names the read order for the other docs, the current implementation state, and the next task. Do not re-derive that from scratch — it is kept up to date for exactly this purpose.
 
@@ -49,7 +49,7 @@ Build in strict stages; each version must be independently runnable/submittable 
 - **V1** — interruptible text agent with real LLM workers (Interpreter/Planner/Composer via `ModelGateway`). Tag `v1-text-agent`, branch `release/v1`. This is the submission-capable MVP.
 - **V2** — robustness innovations (transitive invalidation, settle barrier, absence read sets, claim grades, rebinder), each behind a `Config` feature flag defaulting OFF until enabled. Tag `v2-robust-recovery`, branch `release/v2`.
 - **V3** — multimodal grounding (`kernel/perception.py` PerceptionScheduler, `store/ledgers.py` EvidenceStore, `workers/vision.py`, `video_frame` events, perception claims/conflicts/leases), entirely behind `Config.vision_enabled` (default OFF). Tag `v3-multimodal`, branch `release/v3`.
-- **V4** — hardening/adversarial timing sweeps + Docker.
+- **V4** — hardening: reference-bound write identifiers (C10, `Config.reference_bound_identifiers`, default OFF), targeted timing sweeps, a verified Dockerfile (Python 3.11), README, measurements.md. Tag `v4-hardened`, branch `release/v4`. Deliberately deferred: kit wire-format integration (kit unreleased), inert-tail promotion (C1), the full 34-check TraceChecker — see `currentStatus.md`'s Deferred section.
 
 Rules: never break a frozen version's interfaces (guard new behavior behind `Config` flags); the highest frozen version/tag is always the emergency-submission fallback; final submission needs git tag `PRISM_GENAI_HACKATHON_Y2026` on the judged commit. Stop conditions (when to halt a version and fall back) are in `docs/sonnet_implementation_plan.md` §13.
 
