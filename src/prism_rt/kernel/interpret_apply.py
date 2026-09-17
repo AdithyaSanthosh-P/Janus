@@ -13,6 +13,7 @@ PLANNING for a fresh plan rather than trying to patch the existing one.
 from __future__ import annotations
 
 from prism_rt.model.types import (
+    CallStatus,
     FactStatus,
     GoalRecord,
     GoalStatus,
@@ -83,6 +84,25 @@ def _abandon_goal(txn: StoreTxn, goal_id: str, now_us: int, step_no: int, *, eve
     goal = txn.store.goals.get(goal_id)
     if goal is None:
         return
+
+    # Abandonment has no single fact whose change should invalidate exactly
+    # this goal's calls (clearing goal.active would also spuriously
+    # invalidate a *different* goal's calls if one becomes active later the
+    # same step, and FastResponder still needs goal.active to find this
+    # goal to speak the abort FINAL). So the goal's own non-terminal calls
+    # are invalidated directly here, same marking InvalidationEngine would
+    # apply — InvalidationEngine.cancellation_actions picks them up from
+    # the ledger regardless of how they got marked (P3 still holds: this
+    # runs in the same step as the ABORT interpretation is applied).
+    for call in txn.store.call_ledger.non_terminal():
+        if call.goal_id != goal_id:
+            continue
+        if call.status == CallStatus.IN_FLIGHT:
+            txn.store.call_ledger.set_status(call.call_id, CallStatus.INVALIDATED)
+            txn.store.dep_index.unregister(call.call_id)
+        elif call.status == CallStatus.PROPOSED:
+            txn.store.call_ledger.set_status(call.call_id, CallStatus.DISCARDED)
+
     txn.store.goals.update(goal_id, status=GoalStatus.ABANDONED, task_state=TaskState.RESPONDING)
     txn.facts.set(
         f"compose.{goal_id}.text",

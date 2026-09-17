@@ -57,7 +57,6 @@ class PlanExecutor:
             if latest is not None and latest.status in (
                 CallStatus.PROPOSED,
                 CallStatus.IN_FLIGHT,
-                CallStatus.CANCEL_REQUESTED,
                 CallStatus.CONSUMED,
             ):
                 continue  # already in progress or done
@@ -68,6 +67,12 @@ class PlanExecutor:
                 if latest.attempt > max_retries:
                     self._fail_goal(store, gid, step, now_us, step_no)
                     continue
+                attempt = latest.attempt + 1
+            elif latest is not None and latest.status == CallStatus.CANCEL_REQUESTED:
+                # A step whose call was just cancelled (a correction
+                # invalidated it) gets a fresh attempt immediately — this is
+                # not a failure retry, so it never waits on max_*_retries or
+                # on the stale call's eventual (irrelevant) result.
                 attempt = latest.attempt + 1
 
             if not all(self._step_done(store, gid, dep) for dep in step.after):
@@ -101,7 +106,12 @@ class PlanExecutor:
 
     def _bind(self, step, goal_id: str, store) -> tuple[BindResult | None, str | None]:
         args: dict = {}
-        read_keys: list[str] = []
+        # Every call's read set includes goal.active and catalog.version
+        # (`docs/prompt 2.txt` §4.4), regardless of whether a binding
+        # touched them — this is what makes goal abandonment/replacement
+        # cancel in-flight calls through the ordinary invalidation
+        # mechanism, with no separate "cancel all calls of this goal" path.
+        read_keys: list[str] = ["goal.active", "catalog.version"]
         for param, binding in step.bindings.items():
             if binding.kind == BindingKind.LITERAL:
                 args[param] = binding.value
@@ -129,7 +139,13 @@ class PlanExecutor:
                 value = fact.value
                 if binding.path:
                     for part in binding.path.split("."):
-                        value = value.get(part) if isinstance(value, dict) else None
+                        if isinstance(value, dict):
+                            value = value.get(part)
+                        elif isinstance(value, list) and part.lstrip("-").isdigit():
+                            index = int(part)
+                            value = value[index] if -len(value) <= index < len(value) else None
+                        else:
+                            value = None
                         if value is None:
                             break
                 args[param] = value

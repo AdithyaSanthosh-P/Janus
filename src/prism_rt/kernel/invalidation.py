@@ -56,17 +56,22 @@ class InvalidationEngine:
         )
 
     def cancellation_actions(self, report: InvalidationReport, store: SessionStore) -> list[IntendedAction]:
-        """CANCEL is emitted for every call marked INVALIDATED this step —
-        DISCARDED calls were never emitted, so there is nothing to cancel."""
+        """CANCEL is emitted for every call currently marked INVALIDATED —
+        scanning the ledger directly (not just `report.invalidated_call_ids`)
+        so this also covers calls a reducer invalidated directly rather than
+        through a fact change this engine tracked (V1: goal abandonment,
+        which has no single fact whose change alone should invalidate every
+        other goal's calls too — see kernel/interpret_apply.py's
+        `_abandon_goal`). DISCARDED calls were never emitted, so there is
+        nothing to cancel for those."""
         actions = []
-        for call_id in report.invalidated_call_ids:
-            call = store.call_ledger.get(call_id)
-            if call is None or call.status != CallStatus.INVALIDATED:
+        for call in store.call_ledger.all():
+            if call.status != CallStatus.INVALIDATED:
                 continue
             actions.append(
                 IntendedAction(
                     action_type=ActionType.CANCEL,
-                    body=CancelBody(target_call_id=call_id, reason="read_set_invalidated"),
+                    body=CancelBody(target_call_id=call.call_id, reason="read_set_invalidated"),
                     read_set=EMPTY_READ_SET,
                     rule_id="P3",
                 )

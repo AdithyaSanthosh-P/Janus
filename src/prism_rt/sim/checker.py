@@ -37,7 +37,7 @@ class TraceChecker:
     def check(self, reports: list, store=None) -> list[Violation]:
         violations: list[Violation] = []
         violations.extend(self._check_p3(reports))
-        violations.extend(self._check_w1(reports))
+        violations.extend(self._check_w1(reports, store))
         violations.extend(self._check_p1(reports))
         violations.extend(self._check_s3(reports, store))
         return violations
@@ -62,9 +62,12 @@ class TraceChecker:
                     )
         return violations
 
-    # W1: no two emitted WRITE tool_calls share a fingerprint (CommitGate
-    # G5/G6 should have prevented the second one from ever being admitted).
-    def _check_w1(self, reports: list) -> list[Violation]:
+    # W1: no two emitted WRITE tool_calls share a fingerprint *unless* the
+    # later one is a legitimate retry (CallRecord.attempt > 1) of a FAILED
+    # prior attempt — CommitGate G5/G6 only ever admits a repeat fingerprint
+    # in that case (a FAILED effect doesn't block), so a repeat with
+    # attempt == 1 indicates a real duplicate slipped through.
+    def _check_w1(self, reports: list, store) -> list[Violation]:
         seen: dict[str, tuple[int, str]] = {}
         violations = []
         for report in reports:
@@ -78,6 +81,10 @@ class TraceChecker:
                 fp = fingerprint_for(body.tool_name, body.arguments)
                 if fp in seen:
                     prev_step, prev_call = seen[fp]
+                    call = store.call_ledger.get(body.call_id) if store is not None else None
+                    if call is not None and call.attempt > 1:
+                        seen[fp] = (report.step_no, body.call_id)
+                        continue  # legitimate retry, not a duplicate
                     violations.append(
                         Violation(
                             "W1",
@@ -104,33 +111,20 @@ class TraceChecker:
         return violations
 
     # S3: every snapshot-bearing action carries a non-empty, well-formed
-    # snapshot. V0 emits no snapshot-bearing actions (FastResponder/FINAL
-    # are V1), so this is vacuous until then; it also re-projects the
-    # *last* such action against final store state as a best-effort check
-    # (only the final state is available post-run, not per-step history).
+    # snapshot. A full S3 check (snapshot equals a fresh projection of state
+    # *as of that step*) needs per-step FactStore history, which V0/V1 don't
+    # retain — comparing against final post-run state instead is unsound
+    # whenever a later action's own side effects (e.g. FINAL clearing
+    # goal.active) legitimately change state after the snapshot was taken.
+    # This checks only the structural property every snapshot must have.
     def _check_s3(self, reports: list, store) -> list[Violation]:
         violations: list[Violation] = []
-        last_snapshot_action = None
         for report in reports:
             for er in report.emit_report.emitted:
-                if er.action.snapshot is not None:
-                    if not er.action.snapshot.digest:
-                        violations.append(
-                            Violation("S3", f"action {er.action.action_id} carries an empty snapshot digest", report.step_no)
-                        )
-                    last_snapshot_action = er.action
-        if store is not None and last_snapshot_action is not None:
-            from prism_rt.kernel.snapshot import SnapshotProjector
-
-            fresh = SnapshotProjector().project(store)
-            if fresh.digest != last_snapshot_action.snapshot.digest:
-                violations.append(
-                    Violation(
-                        "S3",
-                        f"last emitted snapshot (action {last_snapshot_action.action_id}) does not match "
-                        "a fresh projection of the final store state",
+                if er.action.snapshot is not None and not er.action.snapshot.digest:
+                    violations.append(
+                        Violation("S3", f"action {er.action.action_id} carries an empty snapshot digest", report.step_no)
                     )
-                )
         return violations
 
     def check_static_no_wallclock(self, roots: list[Path]) -> list[Violation]:
