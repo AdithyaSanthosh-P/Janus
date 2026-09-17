@@ -1,0 +1,596 @@
+Theme 05: Interruptible Real-Time Agents — Technical Innovation Analysis
+Samsung PRISM Generative AI Hackathon, 3rd Edition. Third document in the series, after Pre-Architecture Problem Analysis and System Architecture. References of the form "arch §8.3" point to the architecture document; invariant IDs (P3, W1, K3, …) are defined there and in the analysis.
+
+No implementation code. Every claimed benefit is paired with the metric that would show it. No numbers are reported, because nothing has been measured yet.
+
+1. Limitations of the baseline architecture
+The baseline is sound in its core commitments: single writer, read-set validation, one commit gate. Reviewing it against adversarial timing still finds seventeen weaknesses. Three are defects that must be fixed regardless of any innovation (L3, L4, L15). The rest are places where stale work can survive, latency remains higher than necessary, or safety depends on luck in timing.
+
+1.1 Findings
+L1 — Transitive invalidation lag. Where: downstream calls bind to derived facts (arch §3.1, §4.3 STEP_OUTPUT); derived facts change only when the upstream call re-runs. Sequence: search_flights(Pune) consumed → derived.selected_flight = F1 → get_seat_map(F1) in flight → user says "Mumbai." The search is invalidated and re-issued, but get_seat_map's read set contains only derived.selected_flight, which has not changed. The seat-map call is not cancelled until the new search returns. If its result arrives first, it is consumed and may be narrated. Affects: Interruption Recovery (late cancellation), Task Completion, quality.
+
+L2 — Staleness by omission. Where: read sets contain only facts used in bindings (arch §3.2). Sequence: search_flights(destination, date) in flight → user adds "only direct flights," which maps to an optional nonstop parameter that was never bound. No fact in the read set changed, so the result is consumed and the final response lists connecting flights. Affects: Task Completion, Interruption Recovery, quality.
+
+L3 — Same-step claim ordering defect. Where: emission order puts SPEAK before TOOL_CALL (arch §5.2), while the truth rule requires an IN_PROGRESS claim to reference an in-flight call (arch §15.3). Sequence: the end-of-turn step intends ACK "searching now" and call c1. Validated in order, the ACK references a call that does not exist yet and is rejected, losing latency. If the rule were relaxed and c1 then failed schema validation, the ACK would be a false claim. Affects: Response Latency, quality, Safety & Protocol. Defect.
+
+L4 — Timer liveness under a stepped clock. Where: deadlines, cancellation inference, re-prompts, and hold timers fire only when harness time passes (arch §13.3). Under clock Model B the harness may be waiting for the agent. Sequence: write b1 is cancelled → CommitGate blocks b2 until b1's deadline infers the cancellation → the mock suppresses results of cancelled calls, so no further event is scheduled → the harness waits for the agent while the agent waits for a timer. Nothing happens until the 120 s cap. Affects: Task Completion. Defect.
+
+L5 — Post-turn corrections against same-step writes. Where: CommitGate G3 requires only a closed floor (arch §7.4). Sequence: "book the 6 pm one" ends at t → b1 emitted at t → "no wait, 8 pm" at t + 150 ms → cancellation race → reconciliation or a double booking. Affects: Safety & Protocol, Task Completion.
+
+L6 — Exact-digest promotion of speculative interpretation. Where: arch §11.3. Sequence: the prefix "book a flight to Pune on Friday" is interpreted; the final chunk is "please." The digest no longer matches, so full re-interpretation runs after end of turn, and both the acknowledgment and any EOT-anchored cancellation wait for a model call under clock Model A. Affects: Response Latency, Interruption Recovery.
+
+L7 — Detector recall on indirect corrections. Where: QuickDetector extracts only exact, high-confidence values (arch §9.2). Sequence: "actually, the later one" while get_seat_map runs for the earlier flight. No value is extracted, so cancellation waits for interpretation. Affects: Interruption Recovery. Residual by design: high precision was chosen over recall.
+
+L8 — Result-to-final-response latency. Where: the Composer runs after the last result, with a 1.5 s fallback deadline (arch §9.4). Effect: longer exposure to barge-in at the end of every task, and pacing gaps. Affects: quality, Task Completion.
+
+L9 — Triage hold serializes valid work behind interpretation. Where: arch §8.3. Even a backchannel ("mm-hmm") holds all speech and new calls until the interpreter returns. Affects: Response Latency (minor), quality.
+
+L10 — Perception claims never expire. Where: arch §10.3–10.5. Watch mode re-analyzes frames only while dependent calls are in flight. Sequence: manual lookup completes → the indicator on the device changes in later frames → the final response, grounded in the old claim, describes a state that no longer exists. Watch mode is also the most compute-intensive part of perception. Affects: Task Completion and quality on visual scenarios.
+
+L11 — Uncalibrated confidence labels. Where: arch §10.5. Conflicts open or not depending on HIGH/MEDIUM labels the vision model verbalizes. Affects: spurious or missing clarifications. Residual.
+
+L12 — Lexical perception triggers. Where: arch §10.4. "What's wrong with it?" while showing a device contains no cue word, so perception waits for the planner to request it. Affects: Response Latency and Task Completion on visual scenarios.
+
+L13 — Fingerprints over strings. Where: arch §7.4. "The 6 am one," "AI 505," and "flight five-oh-five" can yield different canonical arguments for the same booking. Planner-generated identifiers can be fabricated and still pass schema validation. Affects: Safety & Protocol (duplicates escape), Task Completion (argument accuracy).
+
+L14 — Unordered writes in multi-step plans. Where: arch §7.3 limits one write per lineage but does not order writes relative to reads. Effect: writes may be in flight while reads that could change them are pending, lengthening the window in which an interruption finds an irreversible action underway. Affects: Safety & Protocol, Task Completion.
+
+L15 — No distinction between intended and in-progress actions in speech. Where: arch §7.8 emits "Booking the 6 am flight now" in the same step as the gate pass. Once any delay exists between the decision and the emission (L5's remedy introduces one), this wording becomes false. Affects: quality (truthfulness), Floor management. Defect once writes can wait.
+
+L16 — No priority between speculative and critical worker jobs. Where: arch §14.1 caps concurrency without priorities. Under Model A, speculation can delay the interpretation that a pending end of turn needs. Affects: Response Latency.
+
+L17 — Visible speculative reads disabled. Where: arch §11.1 defaults, pending the kit's rules on extra calls (Q6). Long-latency reads cannot start before end of turn. Affects: Response Latency and Task Completion time. Deferred by necessity.
+
+1.2 Mapping to the review questions
+Question	Findings
+Where is it still vulnerable?	L1, L2, L4, L5, L13, L14
+Where could hidden timing scenarios break it?	L1 (result before upstream re-run), L4 (stepped clock), L5 (correction just after end of turn), L10 (state change after lookup)
+Where does latency remain unnecessarily high?	L6, L8, L9, L12, L16, L17
+Where can stale work survive?	L1, L2, L10
+Where can multimodal evidence mislead?	L10, L11, L12
+Where can state-changing tools become dangerous?	L5, L13, L14
+Where can the fast path become untruthful?	L3, L15
+Where is concurrency overly serialized?	L9, L16; the kernel itself is not (steps are milliseconds)
+2. Candidates
+Seventeen candidates, grouped by the problem they attack.
+
+ID	Candidate	Addresses
+C1	Inert-tail promotion of speculative interpretation	L6, L7
+C2	Prepared response frames with typed holes	L8, L3
+C3	Event-anchored reaction scheduling	L6, L8, L16
+C4	Planner bypass for single-tool intents	— (new-goal latency)
+C5	Provenance-closed invalidation with value-based early cutoff	L1
+C6	Schema-complete read sets	L2
+C7	Evidence leases	L10, L11
+C8	Claim-typed atomic emission	L3, L15
+C9	Commit-last ordering with a settled commit barrier	L5, L14, L4
+C10	Reference-bound write arguments	L13
+C11	Effect verification probes	Unknown write outcomes
+C12	Agreement-based perception confidence	L11
+C13	Demand-driven perception at interpretation time	L12
+C14	Dual-channel interpretation cross-check	L7
+C15	Expected-value gating of visible speculative reads	L17
+C16	Criticality-aware worker scheduling	L16
+C17	Adversarial schedule exploration with shared invariant monitors	All timing-dependent findings
+3. Evaluation of each candidate
+Scales used: Complexity S (under two days), M (two to four days), L (more); Demo potential Low, Medium, High; Scoring relevance High, Medium, Low, with the category named.
+
+C1. Inert-tail promotion of speculative interpretation
+#	Field	Evaluation
+1	Problem solved	Exact-digest promotion fails whenever a turn ends with content-free words or a chunk arrives after the last speculative interpretation finished. The full interpretation then runs on the critical path after end of turn (L6)
+2	Mechanism	At end of turn, compute the tail: final transcript minus the prefix covered by the latest completed speculative interpretation. Promote that interpretation if QuickDetector finds in the tail no value, no correction, hold, abort, or negation cue, and no token outside an inert lexicon (politeness words, fillers, discourse markers). Otherwise dispatch a tail-conditioned re-interpretation (previous interpretation plus tail), which is a shorter model call. Additional guards: the tail must be empty when a clarification is pending, and a turn that sets commit intent needs two consecutive prefix interpretations with identical act, intent, and slot digests
+3	Technical novelty	Incremental processing and early commitment are established in spoken dialogue research (Schlangen and Skantze, 2009). The difference here is that promotion is gated by a deterministic check wired into the same validity machinery as tool calls, so early commitment cannot bypass cancellation or commit rules
+4	Core invariant	A promoted interpretation can differ from the full-transcript interpretation only by tail content that carries no value and no change cue
+5	Architecture	Changes the promotion rule in TurnManager and TaskController (arch §11.3); adds an inert lexicon to QuickDetector configuration
+6	Interruptions	More end-of-turn steps apply interpretation immediately, so EOT-anchored cancellations land in the same step. A correction in the tail always contains a cue or value, so it always forces re-interpretation
+7	Virtual time	Under Model A, removes one model call from end-of-turn reactions. Under Model B, no latency change, but fewer decisions happen in worker-completion steps
+8	Multimodal	Applies to synthetic chunks from ASR. Disfluencies ("uh") are inert; self-repair markers ("I mean") are cues
+9	Tool safety	Stricter promotion for commit-bearing turns limits the risk of acting on a promoted interpretation
+10	Latency	Expected reduction in end-of-turn → acknowledgment and end-of-turn → cancellation latency on turns with inert tails
+11	Computational cost	Negative: saves model calls
+12	Failure modes	A word inert in general is content in context ("fine" answering "Shall I book it?"); mitigated by the pending-clarification rule. A negation outside the lexicon's scope; mitigated by making negation tokens never inert
+13	Complexity	S
+14	Testability	For every turn in local runs, also compute the full interpretation offline. Measure promotion hit rate and promotion disagreement rate (target: zero disagreements on act, intent, and slots). Ablate end-of-turn latency under the Model A simulator
+15	Demo potential	Low alone; Medium as part of a latency timeline
+16	Scoring relevance	Medium: Response Latency and cancellation promptness under Model A; negligible under Model B. Clock model must be known before this is prioritized
+C2. Prepared response frames with typed holes
+#	Field	Evaluation
+1	Problem solved	After the last result, the final response waits for a model (L8). Generated text needs heuristic truth checks that can reject valid text or miss subtle fabrication
+2	Mechanism	When the last required call of a plan is emitted, dispatch a FRAME job. The model writes the final response in advance as a template with typed holes bound to result paths, using a fixed operator set (field, count, min or max by field, first-k, exists) and branches for non-empty success, empty success, and error. The kernel validates the frame against the tool's output schema, or against the shape of an earlier result from the same tool in this session. When the result arrives, the kernel selects the branch, evaluates holes deterministically, type-checks, renders, and emits FINAL in the same step. The frame's read set includes goal facts and constraints, so a correction drops it. Composer remains the fallback
+3	Technical novelty	Template generation and slot filling are old. The contribution is preparing the template speculatively against an in-flight call so the final response becomes event-anchored, and making grounding structural: every data value in the text is the output of a hole evaluated on a consumed result
+4	Core invariant	Every entity, number, time, or code in a frame-rendered response is the value of a hole evaluated on a result consumed for the active goal
+5	Architecture	New job kind FRAME; ResponsePlan becomes frame input; free-text truth checks remain only for Composer fallback
+6	Interruptions	A frame and its result must both be valid in the emission step, so no final response built for superseded values can be emitted
+7	Virtual time	Under Model A, result → FINAL latency becomes one kernel step. Under Model B, FINAL moves from a worker-completion step to the result step
+8	Multimodal	Holes may reference accepted perception claims, subject to lease validity (C7)
+9	Tool safety	Completion wording exists only in the success branch; error results force the error branch, so a failed write cannot be reported as done
+10	Latency	Result → FINAL; not the scored latency metric (first substantive speech)
+11	Computational cost	One model call per completed plan, as with the Composer, but made earlier; wasted when invalidated
+12	Failure modes	No output schema and no earlier result → cannot validate → fallback. Answers requiring reasoning beyond the operator set (e.g., the cheapest direct flight after 5 pm under an unmapped constraint) → fallback. Wrong hole paths → validation failure → fallback. Rigid rendering may lower naturalness
+13	Complexity	M
+14	Testability	Frame coverage (share of FINALs rendered from frames); frame validation failure rate; result → FINAL latency; truth violations in frame output (target: zero by construction); pairwise naturalness comparison against Composer output on identical results, by blind rating (reported as a proxy for the quality judge, not as a score)
+15	Demo potential	High: a frame visibly prepared before the result, filled on arrival; a correction dropping it
+16	Scoring relevance	Medium-High: Task Completion (response grounding) and quality (truthfulness). Not Response Latency as the specification defines it
+C3. Event-anchored reaction scheduling
+#	Field	Evaluation
+1	Problem solved	Scored actions (cancellations, first substantive speech, first tool call after end of turn, FINAL) often happen in steps triggered by worker completions. Their timing then depends on model latency and machine load, so latency trails events and traces vary between runs
+2	Mechanism	For each harness event the agent can anticipate — end of an open turn, the result of each in-flight call, the answer to a pending clarification — the JobScheduler maintains a reaction slot holding the proposals needed to act on it: prefix interpretation (C1), response frame (C2), perception for an open visual question (C13), acknowledgment phrase. Slots are filled in order of imminence and criticality (C16). When the event arrives, the kernel only validates and selects. The design objective is reported as the event-anchored ratio: the share of scored actions emitted in steps triggered by harness events
+3	Technical novelty	The idea resembles precomputation and branch prediction. The contribution is treating event anchoring as an explicit, measured objective for a trace-scored agent, and organizing all speculation around it rather than as independent optimizations
+4	Core invariant	A prepared reaction takes effect only if its read set is valid in the step of the event it anticipates; otherwise the normal path runs
+5	Architecture	JobScheduler gains a reaction-slot table and a priority rule; emission unchanged
+6	Interruptions	Slots are invalidated like any proposal and refilled for the new state after triage
+7	Virtual time	Directly targets Model A latency and run-to-run variance; under Model B it improves robustness if the harness does not wait for speculative jobs
+8	Multimodal	Perception for open questions is a slot, so claims can be ready at end of turn
+9	Tool safety	None directly; writes still pass the commit barrier
+10	Latency	All event → action latencies
+11	Computational cost	More speculative model calls; waste rate is measurable and bounded by one job per slot
+12	Failure modes	Compute contention under Model A (mitigated by C16); hosted API rate limits; wasted calls when predictions fail often
+13	Complexity	M
+14	Testability	Event-anchored ratio; per-trigger latency distributions; trace variance across 20 runs of each scenario under the Model A simulator; speculative waste rate
+15	Demo potential	Medium: a timeline in which actions line up with the events that caused them
+16	Scoring relevance	Medium: Response Latency and cancellation promptness, mainly under Model A
+C4. Planner bypass for single-tool intents
+#	Field	Evaluation
+1	Problem solved	A new goal waits for a planner call before its first tool call
+2	Mechanism	If the interpretation names a candidate tool that is READ and whose required parameters are all committed, emit it as a single-step plan while the planner runs; keep it if the accepted plan contains the identical step, cancel it otherwise
+3	Technical novelty	Low; common routing shortcut
+4	Core invariant	Bypass calls are read-only and cancelled unless the accepted plan contains an identical step
+5	Architecture	Adds a path in TaskController
+6	Interruptions	Bypass calls are cancelled like any other
+7	Virtual time	Benefit only under Model A
+8	Multimodal	None
+9	Tool safety	Read-only by construction
+10	Latency	End of turn → first tool call, which is not the scored latency metric
+11	Computational cost	None
+12	Failure modes	Visible wasted calls and cancellations whenever the planner disagrees, with unknown trace penalties (Q6)
+13	Complexity	S
+14	Testability	End of turn → first call latency; bypass disagreement rate
+15	Demo potential	Low
+16	Scoring relevance	Low. The baseline already plans speculatively on transcript prefixes, and C1 makes those plans usable at end of turn. Rejected
+C5. Provenance-closed invalidation with value-based early cutoff
+#	Field	Evaluation
+1	Problem solved	Derived facts outlive the slot values that produced them, so downstream in-flight calls are cancelled late and their results can be consumed (L1)
+2	Mechanism	Every derived fact stores the read set of the call whose result produced it (its provenance). The dependency index links provenance keys to derived facts. When a provenance fact changes, the derived fact is marked RETRACTED in the same apply phase, recursively along the plan. Retraction invalidates all dependents, so downstream in-flight calls are cancelled in the same step as the correction. When the upstream step re-runs and produces a derived fact with the same digest, the retraction clears; completed downstream results whose read sets match become valid again and are reused rather than re-run (early cutoff). In-flight downstream calls are never kept alive in the hope of a cutoff: cancellation promptness takes priority over saving work
+3	Technical novelty	Dynamic dependency tracking and early cutoff come from incremental build systems and self-adjusting computation (Acar, 2005; Mitchell, 2012; Hammer et al., 2014). The application to an agent's tool plan, with an eager-cancel / lazy-reuse split dictated by a cancellation grace period, is uncommon in agent orchestration, which typically re-plans per turn
+4	Core invariant	After every apply phase, no non-retracted derived fact has a provenance read set that is invalid
+5	Architecture	FactStore gains provenance; InvalidationEngine gains transitive retraction; ResultRouter records provenance
+6	Interruptions	Cancellation of transitive dependents happens in the step of the correction. Reversions and corrections that do not change upstream outputs reuse completed downstream work
+7	Virtual time	Independent of clock model. Cancellation delay for chained calls drops from roughly one upstream tool latency to one step
+8	Multimodal	Perception claims used as tool inputs become provenance, so a changed claim cascades exactly like a changed slot
+9	Tool safety	Writes downstream of a retracted fact are blocked immediately, preventing a booking with a flight ID from a superseded search
+10	Latency	No added latency; reuse removes some re-runs
+11	Computational cost	Index size proportional to derived facts times provenance size; small
+12	Failure modes	Over-retraction when provenance includes facts not semantically used (harmless but wasteful). False cutoff if result canonicalization drops meaningful fields; mitigated by digesting the full canonical result
+13	Complexity	M
+14	Testability	Chain scenarios (search → detail → booking) with corrections at swept offsets. Metrics: transitive cancellation delay; stale downstream consumptions (target zero); re-executed steps per correction. C17 should find L1 in the baseline and not with C5
+15	Demo potential	High: baseline and C5 side by side on the same interleaving
+16	Scoring relevance	High: Interruption Recovery (prompt cancellation, no stale re-runs); Task Completion; Safety (writes blocked on stale identifiers)
+C6. Schema-complete read sets
+#	Field	Evaluation
+1	Problem solved	A result stays valid after the user adds a constraint the call never read (L2)
+2	Mechanism	A call's read set records every parameter in its tool's schema, bound or not; unbound parameters record absence. Setting a previously absent parameter changes absence to a value and invalidates the call. Goal-level constraints that map to no tool parameter are recorded in the read sets of response frames and of steps that select among results, so the answer reflects them even when the tool cannot. Policy absence_sensitivity (default: user-sourced facts only) prevents a later perception claim for an optional parameter from retroactively invalidating completed work
+3	Technical novelty	This is the phantom problem from databases, handled there by predicate locks and serializable snapshot isolation (Eswaran et al., 1976; Cahill et al., 2008). Treating an unset optional tool parameter as a predicate read is the transfer
+4	Core invariant	A consumed result was produced under the current value, including absence, of every parameter its tool accepts
+5	Architecture	ArgBinder records absence entries; DependencyIndex indexes absent keys
+6	Interruptions	Additions ("only morning flights") cancel and re-bind in the same step instead of answering the old question
+7	Virtual time	Independent
+8	Multimodal	Governed by absence_sensitivity to avoid perception-driven churn
+9	Tool safety	A user addition before a commit changes the write's arguments before the gate passes
+10	Latency	May cause re-runs that turn out unnecessary; those re-runs are required for correctness
+11	Computational cost	Read-set size grows with parameter count; negligible
+12	Failure modes	Interpreter slot names that do not match parameter names produce no absence change (same exposure as the baseline). Over-invalidation when an optional parameter is irrelevant to the result
+13	Complexity	S
+14	Testability	Addition-after-call scenarios. Metric: omission escapes, defined as consumed results whose tool had an optional parameter set later in the same goal before FINAL (target zero)
+15	Demo potential	Medium-High: "only direct flights" arriving mid-search
+16	Scoring relevance	Medium-High: Task Completion (argument and grounding correctness); Interruption Recovery (cancellation, updated snapshot). Whether hidden scenarios contain additions is unknown; the public suite's "clarifications" and "interruptions" make it plausible
+C7. Evidence leases
+#	Field	Evaluation
+1	Problem solved	Perception claims never expire (L10), and baseline watch mode spends compute continuously while remaining blind after calls complete
+2	Mechanism	Each accepted claim carries a lease determined by its question mode. AT_UTTERANCE claims are pinned to their anchor frame and never expire, because freshness is irrelevant to what the user pointed at. CURRENT_STATE claims expire after lease_frames newer frames or lease_ms of harness time since capture, whichever comes first. Leases are checked only at points of use: the commit barrier (C9), emission of a statement that relies on the claim, and binding of a new call. An expired lease at a point of use triggers renewal: one perception job on the newest frame for the same question. Agreement renews the lease and raises confidence by one band (replacing stability_k). Disagreement at HIGH confidence changes the claim fact and cascades (C5); disagreement at MEDIUM opens a conflict. Reads may proceed on an expired lease with hedged wording; writes and unhedged statements may not. Watch mode is removed
+3	Technical novelty	Leases bound staleness in distributed caches (Gray and Cheriton, 1989). Applying time- and frame-bounded leases to perceptual claims, renewed only at points of use, turns freshness from a continuous perception cost into an on-demand check
+4	Core invariant	No write and no unhedged statement relies on a CURRENT_STATE claim whose lease has expired at the moment of emission
+5	Architecture	Claim gains a lease; PerceptionScheduler loses watch mode and gains renewal jobs; truth checks consult leases
+6	Interruptions	Renewal jobs are ordinary jobs with read sets; a goal change voids them
+7	Virtual time	lease_ms is in harness time. Under Model B, where time may stand still, the frame-count bound still works
+8	Multimodal	Core purpose
+9	Tool safety	Prevents writes (e.g., a support ticket naming a device state) based on outdated visual evidence
+10	Latency	Adds one perception call at points of use with expired leases; removes continuous watch analysis. Net effect must be measured
+11	Computational cost	Proportional to points of use with expired leases, rather than to frames arriving during in-flight periods
+12	Failure modes	Mis-tuned parameters (too short: excess renewals; too long: staleness). No newer frame available: renewal impossible → hedge or request a view. A single noisy frame at MEDIUM confidence opens a conflict rather than flipping the claim
+13	Complexity	M
+14	Testability	Synthetic frame sequences in which visible state changes after a lookup. Metrics: stale-evidence groundings, computed offline by analyzing every frame and checking claims used at emission (target zero for writes); perception calls per scenario versus watch mode
+15	Demo potential	High in a visual scenario
+16	Scoring relevance	Medium-High on visual scenarios: Task Completion (grounding) and quality (truthfulness), with the hidden-set multimodal weighting. Visual scenarios are 20% of the set; the effect is concentrated there
+C8. Claim-typed atomic emission
+#	Field	Evaluation
+1	Problem solved	Speech can claim work that a later action in the same step has not yet made true, or that the gate then rejects (L3). Speech cannot distinguish an intended write from one in progress (L15)
+2	Mechanism	(a) Two-phase emission: validate the entire step batch first, allowing claims to reference actions in the same batch; if a referenced action fails validation, dependent utterances are re-rendered at a lower claim grade or dropped before anything is written; then write in order. (b) Typed claims on an epistemic ladder: UNDERSTOOD < INTENDED < IN_PROGRESS < RESULT < EFFECT_DONE, plus EFFECT_FAILED and EFFECT_UNKNOWN. Every template and frame hole declares the grade it realizes, and wording follows the grade: "I'll book," "Booking," "Booked." The gate checks each claim against ledger state after the batch. Lexicon checks remain only for free-form model text
+3	Technical novelty	Speech-act typing is old in dialogue systems. The application is binding epistemic grade to ledger state and validating it atomically with the actions it describes
+4	Core invariant	Every emitted claim's grade is supported by ledger state that holds once the whole batch is applied
+5	Architecture	EmissionGate becomes two-phase; utterance claims gain grades; FastResponder templates are keyed by grade
+6	Interruptions	Cancellations are validated first, so no claim about cancelled work survives into the same batch
+7	Virtual time	None
+8	Multimodal	Claims resting on MEDIUM-confidence evidence render with hedged wording
+9	Tool safety	Removes false "doing" and "done" statements for writes waiting at the barrier
+10	Latency	Removes the ACK rejection in L3; otherwise none
+11	Computational cost	Negligible
+12	Failure modes	Template bank lacks natural phrasing for some grade and intent combinations; model text without declared claims falls back to lexicon checks
+13	Complexity	S
+14	Testability	Trace checker compares claims with ledger state; mutation tests inject gate rejections and deadline changes (target: zero false claims)
+15	Demo potential	Medium
+16	Scoring relevance	High relative to effort: quality (truthfulness), Floor management (no false completion claims), Safety & Protocol. Part (a) is mandatory as the fix for L3
+C9. Commit-last ordering with a settled commit barrier
+#	Field	Evaluation
+1	Problem solved	Writes emitted in the end-of-turn step are exposed to corrections that arrive moments later (L5). Writes in flight while informing reads are pending lengthen the exposure window (L14). Timers the gate relies on can deadlock under a stepped clock (L4)
+2	Mechanism	(a) Commit-last: PlanExecutor defers every WRITE until all READ steps not downstream of it are consumed; consecutive writes form one commit window. (b) Settle barrier: the first write of a window is admissible only when every gate condition holds, σ harness milliseconds have passed since the end of the committing turn with no new user event, leases for evidence-derived arguments are valid (C7), and no interpretation job is pending. (c) Timer liveness: timers are "no earlier than" deadlines; under a stepped clock, if the agent would otherwise be idle with only timers pending and the ClockPort cannot request time advance, the earliest timer fires immediately and is logged as LIVENESS_FIRE. σ then degrades to zero instead of deadlocking. (d) Speech about a waiting write uses INTENDED claims (C8)
+3	Technical novelty	Sagas order and compensate long-running transactions (Garcia-Molina and Salem, 1987); debouncing is common. The specific insight comes from the evaluation contract: Response Latency measures the first substantive spoken action, not write timing. The agent can therefore hold the floor with speech immediately and delay the irreversible effect, paying nothing in the latency metric
+4	Core invariant	A write is emitted only after a quiet interval σ following the turn that committed it, and only when no read remains that could change its arguments or its necessity
+5	Architecture	CommitGate G3 extended; PlanExecutor ordering rule; TimerWheel liveness rule; optional request_advance capability in the Model B ClockPort
+6	Interruptions	Corrections within σ of end of turn reach the agent before the write exists. Writes are never in flight while reads that inform them are pending
+7	Virtual time	σ is harness time. Under Model B it protects only if the harness delivers scheduled events before firing agent timers; otherwise the liveness rule applies. Effectiveness must be measured separately per clock model
+8	Multimodal	Lease renewal happens inside the barrier
+9	Tool safety	Core purpose
+10	Latency	Adds σ, plus any lease renewal, to write emission. First substantive speech is unchanged, because the INTENDED acknowledgment is emitted at end of turn. Must be verified with the latency metric
+11	Computational cost	None
+12	Failure modes	σ too long may reorder a write relative to the next scripted event and hurt Task Completion. σ too short gives no protection. A slow unrelated read delays writes; capped by commit_wait_cap_ms. Liveness fires nullify σ
+13	Complexity	S–M
+14	Testability	Sweep correction offsets from −500 to +1000 ms around end of turn in write scenarios, for σ ∈ {0, 150, 300, 600}. Metrics: writes later cancelled or reconciled; duplicates; write exposure window (first write emission to last write result); added write delay; first-speech latency (target: unchanged); liveness fires
+15	Demo potential	High: "wait, the 8 pm one" 200 ms after "book it." The baseline has to reconcile; C9 never books the 6 pm flight
+16	Scoring relevance	High: Safety & Protocol (zero duplicates), Task Completion, Interruption Recovery (fewer irrecoverable states). The liveness rule is mandatory as the fix for L4
+C10. Reference-bound write arguments
+#	Field	Evaluation
+1	Problem solved	String fingerprints miss duplicates under paraphrase, and planner-produced identifiers can be fabricated (L13)
+2	Mechanism	ArgBinder classifies write parameters as identifier-like (enum, format hint, name pattern such as *_id, *_code, *_number, or values that appeared for that parameter in consumed read results this session). An identifier argument must bind either to a field of a consumed read result or to a literal the user stated verbatim; model-produced identifiers are refused, and the plan must include a resolving read or a clarification. Fingerprints use the bound values. Free-text parameters keep ordinary canonicalization
+3	Technical novelty	The rule mirrors referential integrity and object-capability discipline (Miller, 2006): an action may name only what was obtained. Applied to model-planned write arguments
+4	Core invariant	Every identifier argument of a write names an entity observed in a consumed result of the active goal or stated verbatim by the user
+5	Architecture	ArgBinder rules; planner instructions; fingerprint input
+6	Interruptions	With C5, a correction that retracts the source result also retracts the reference, so the write blocks
+7	Virtual time	None
+8	Multimodal	An identifier read from a frame qualifies only as a HIGH-confidence claim with a valid lease
+9	Tool safety	Catches duplicates under paraphrase; blocks fabricated identifiers
+10	Latency	May add a resolving read when the user names an entity without a prior search
+11	Computational cost	Low
+12	Failure modes	Misclassified parameters (an identifier treated as free text, or the reverse); tools whose identifiers no read tool returns (covered by the user-verbatim rule only if the user says it)
+13	Complexity	S–M
+14	Testability	Paraphrase-duplicate scenarios; fabricated-identifier injection through a mocked planner (metric: blocked count); write argument accuracy
+15	Demo potential	Medium
+16	Scoring relevance	Medium: Safety & Protocol (duplicates), Task Completion (argument extraction)
+C11. Effect verification probes
+#	Field	Evaluation
+1	Problem solved	Write outcomes that remain unknown after a deadline
+2	Mechanism	At catalog load, map each write tool to a read tool that can verify its effect (by description similarity and shared parameters); on UNKNOWN, call the probe
+3	Technical novelty	Low
+4	Core invariant	An UNKNOWN effect is resolved only by a result, never by assumption
+5	Architecture	ReconcilePolicy extension (already present in baseline as a planner-identified option)
+6	Interruptions	None specific
+7	Virtual time	None
+8	Multimodal	None
+9	Tool safety	Useful when mapping is right; a wrong mapping yields false confidence
+10	Latency	Adds a read in rare cases
+11	Computational cost	Low
+12	Failure modes	Mapping unreliable without declared relationships; mock environment may offer no probe tools
+13	Complexity	M
+14	Testability	Weak without kit scenarios that contain both unknown outcomes and probe tools
+15	Demo potential	Low
+16	Scoring relevance	Low and unmeasurable before the kit. Rejected; the baseline's conservative reconciliation stays
+C12. Agreement-based perception confidence
+#	Field	Evaluation
+1	Problem solved	Verbalized confidence labels are uncalibrated (L11)
+2	Mechanism	Derive confidence from agreement across K frames or crops of the same scene, rather than from the model's stated confidence
+3	Technical novelty	Self-consistency sampling is established; modest transfer
+4	Core invariant	Confidence reflects observed agreement, not self-report
+5	Architecture	VisionAnalyzer runs K analyses per claim
+6	Interruptions	More in-flight perception to abort
+7	Virtual time	Under Model A, K times the perception latency
+8	Multimodal	Central
+9	Tool safety	Fewer writes on false HIGH claims, if calibration improves
+10	Latency	Worse on every visual turn
+11	Computational cost	K× perception
+12	Failure modes	Correlated errors across near-identical frames make agreement meaningless
+13	Complexity	M
+14	Testability	Calibration needs labelled frames, which the team does not have
+15	Demo potential	Low
+16	Scoring relevance	Unmeasurable now. Deferred. C7's renewal agreement already provides a cheap form of the same signal at points of use
+C13. Demand-driven perception at interpretation time
+#	Field	Evaluation
+1	Problem solved	Implicit visual references wait for the planner (L12)
+2	Mechanism	The interpreter reports required arguments it cannot bind and marks those that are plausibly visible (visual_candidate). If frames exist, the kernel dispatches a targeted perception job in the same step as interpretation acceptance, or as a reaction slot before end of turn when the prefix interpretation already reports it
+3	Technical novelty	Low; a scheduling refinement
+4	Core invariant	Perception is still triggered by a question tied to the active goal, never by frame arrival alone
+5	Architecture	Interpreter output field; PerceptionScheduler trigger; a C3 reaction slot
+6	Interruptions	Ordinary job invalidation
+7	Virtual time	Latency benefit under Model A
+8	Multimodal	Removes a planner round trip from visual turns
+9	Tool safety	None
+10	Latency	End of turn → claims available
+11	Computational cost	Occasional unneeded perception job
+12	Failure modes	Interpreter over-reports visual candidates
+13	Complexity	S
+14	Testability	Time to first accepted claim on visual scenarios; unneeded perception job rate
+15	Demo potential	Low
+16	Scoring relevance	Low-Medium. Adopted as a supporting part of C3, not a headline mechanism
+C14. Dual-channel interpretation cross-check
+#	Field	Evaluation
+1	Problem solved	The interpreter can mis-scope a correction ("not Mumbai, Pune") while the detector extracted a different value
+2	Mechanism	When a HIGH detector value for a write-relevant slot disagrees with the committed interpretation, run a focused re-interpretation of that slot before the commit barrier passes
+3	Technical novelty	Low; redundancy check
+4	Core invariant	No write proceeds on a slot where the two channels disagree unresolved
+5	Architecture	Additional barrier condition
+6	Interruptions	None beyond extra latency on disagreement
+7	Virtual time	None
+8	Multimodal	None
+9	Tool safety	Small gain on writes
+10	Latency	Adds a model call on disagreement only
+11	Computational cost	Low
+12	Failure modes	Detector errors cause needless re-interpretation
+13	Complexity	S
+14	Testability	Disagreement rate and outcomes are loggable
+15	Demo potential	Low
+16	Scoring relevance	Low. Adopted as a logged diagnostic and a barrier condition for writes only
+C15. Expected-value gating of visible speculative reads
+#	Field	Evaluation
+1	Problem solved	Long-latency reads cannot start before end of turn (L17)
+2	Mechanism	Allow a pre-end-of-turn read when interpretation stability (C1) is high and the tool's expected latency exceeds the expected remaining utterance duration by a margin
+3	Technical novelty	Moderate: a cost-aware speculation policy
+4	Core invariant	A speculative read is emitted only if its expected latency saving exceeds a threshold and it can be cancelled under ordinary rules
+5	Architecture	spec_reads policy with a gating function
+6	Interruptions	More cancellations when predictions fail
+7	Virtual time	Benefit only where tool latency overlaps speech in harness time
+8	Multimodal	None
+9	Tool safety	Read-only
+10	Latency	Task time, not scored speech latency
+11	Computational cost	Low
+12	Failure modes	Visible extra calls and cancellations may be penalized
+13	Complexity	M
+14	Testability	Depends on Q6
+15	Demo potential	Low
+16	Scoring relevance	Unknown until the kit states whether extra calls are penalized. Deferred; the switch remains
+C16. Criticality-aware worker scheduling
+#	Field	Evaluation
+1	Problem solved	Speculative jobs delay critical ones under Model A (L16)
+2	Mechanism	Three priority classes: critical (interpretation of a closed turn, renewal at a waiting barrier), anticipatory (reaction slots for imminent events), opportunistic (other speculation). Opportunistic jobs are preempted or not started when critical jobs wait
+3	Technical novelty	Low; standard scheduling
+4	Core invariant	No critical job waits behind an opportunistic job
+5	Architecture	JobScheduler
+6	Interruptions	Triage raises interpretation of the interrupting turn to critical
+7	Virtual time	Model A only
+8	Multimodal	Perception jobs are classified the same way
+9	Tool safety	None
+10	Latency	Tail latency of critical reactions
+11	Computational cost	None
+12	Failure modes	Starved opportunistic work
+13	Complexity	S
+14	Testability	Queue-wait time for critical jobs under load
+15	Demo potential	Low
+16	Scoring relevance	Low-Medium. Adopted as a supporting part of C3
+C17. Adversarial schedule exploration with shared invariant monitors
+#	Field	Evaluation
+1	Problem solved	The hidden set tests adversarial timing; the nine public scenarios exercise a handful of orderings. Bugs such as L1 and L5 appear only at particular interleavings and are found by hand only by luck
+2	Mechanism	The local fake harness becomes a deterministic discrete-event simulator with pluggable clock semantics (Model A, Model B). Every source of timing variation is a controlled choice: tool latency within bounds, worker latency, chunk spacing, correction offset, tie order. Exploration runs in three forms: offset sweeps around critical events; randomized priority schedules over worker completions and ties, which give probabilistic coverage of ordering bugs of small depth (Burckhardt et al., 2010); and scenario mutation (insert, move, or duplicate a correction, drop a result, deliver a result twice). Oracles are the invariant monitors from the architecture's trace checker. Failing traces are minimized with delta debugging (Zeller and Hildebrandt, 2002) and kept as regression tests. The cheap per-action subset of the same monitors (claim support, cancellation target validity, write fingerprint uniqueness, snapshot projection equality) also runs online inside the EmissionGate, blocking the action and logging
+3	Technical novelty	Deterministic simulation testing (as popularized by FoundationDB), randomized concurrency testing, and delta debugging are established. Applying them to a conversational agent, with oracles derived from the scoring rubric, is uncommon; agents are usually evaluated on sampled transcripts
+4	Core invariant	Every invariant in arch §17 holds for every explored schedule; every counterexample becomes a permanent regression test
+5	Architecture	Testing package; online monitors in EmissionGate
+6	Interruptions	Primary test target
+7	Virtual time	Exercises both clock models explicitly, which is the only way to test correctness that must not depend on the clock model
+8	Multimodal	Frame sequences and perception latencies are part of the explored schedule
+9	Tool safety	Duplicate and reconciliation monitors run on every schedule
+10	Latency	Offline only; online monitors cost microseconds per action
+11	Computational cost	Offline compute; scales with schedules × scenarios. Worker outputs are replayed from recordings, so exploration makes no model calls
+12	Failure modes	Oracles only as good as the invariants; exploration bounds miss deep bugs; simulator semantics may differ from the real harness (re-validate when the kit arrives)
+13	Complexity	M (the fake harness exists in the baseline build plan; exploration and minimization add to it)
+14	Testability	Self-measuring: schedules explored, violations found per invariant, minimized counterexample sizes, violation rate before and after each mechanism
+15	Demo potential	High: a counterexample found automatically in a baseline variant, minimized to a few events, then passing with the mechanism
+16	Scoring relevance	Indirect but broad: raises the likelihood that adversarial hidden scenarios pass across all four categories. It cannot measure the hidden score; it measures invariant violation rates under controlled adversarial timing
+4. Comparison and decisions
+ID	Main scoring relevance	Measurable by	Complexity	Cost	Demo	Decision
+C1	RL, IR promptness (Model A)	Promotion hit and disagreement rate; EOT latency	S	Saves	Low	Select (in M1)
+C2	TC grounding, QM	Frame coverage; result → FINAL latency; truth violations	M	Neutral	High	Select (in M1)
+C3	RL, IR (Model A)	Event-anchored ratio; latency; variance	M	Speculative calls	Medium	Select (in M1)
+C4	Low	EOT → first call	S	—	Low	Reject
+C5	IR, TC, SP	Transitive cancel delay; stale consumptions; re-runs	M	Small	High	Select (in M2)
+C6	TC, IR	Omission escapes	S	Negligible	Medium-High	Select (in M2)
+C7	TC, QM on visual	Stale-evidence groundings; perception calls	M	Lower than watch mode	High	Select (in M2)
+C8	QM, Floor, SP	False claims under mutation	S	Negligible	Medium	Select (in M2; part a mandatory)
+C9	SP, TC, IR	Write reconciliations and duplicates across offset sweeps; unchanged speech latency	S–M	None	High	Select (in M3; liveness mandatory)
+C10	SP, TC	Paraphrase duplicates; fabricated-ID blocks	S–M	Low	Medium	Select (in M3)
+C11	Low	Weak	M	Low	Low	Reject
+C12	Unmeasurable now	Needs labels	M	K× perception	Low	Defer
+C13	Low-Medium	Time to first claim	S	Low	Low	Adopt as support (C3)
+C14	Low	Disagreement rate	S	Low	Low	Adopt as diagnostic
+C15	Unknown (Q6)	Depends on kit	M	Low	Low	Defer
+C16	Low-Medium	Critical queue wait	S	None	Low	Adopt as support (C3)
+C17	All, indirectly	Violation rates under exploration	M	Offline	High	Select (M4)
+RL = Response Latency, IR = Interruption Recovery, TC = Task Completion, SP = Safety & Protocol, QM = quality multiplier.
+
+5. The selected set
+5.1 Technical identity
+Prepare early. Check at the point of use. Commit late.
+
+A full-duplex agent fails in two opposite ways: it reacts after the event, or it acts on information that stopped being true. The selected mechanisms separate when work is done from when it takes effect, and attach to each piece of work an exact, cheap condition under which it may take effect.
+
+Mechanism	Parts	What it moves or checks
+M1 Prepared reactions	C3 event-anchored scheduling (with C13, C16); C1 inert-tail promotion; C2 response frames	Moves model work before the event it reacts to, so the kernel only validates and selects when the event arrives
+M2 Complete validity conditions	C5 provenance-closed invalidation with early cutoff; C6 schema-complete read sets; C7 evidence leases; C8 claim-typed atomic emission	Makes the condition for taking effect exact: transitive (derived facts), negative (absent parameters), temporal (perception), and epistemic (what speech may claim)
+M3 Settled commits	C9 commit-last ordering, settle barrier, timer liveness; C10 reference-bound arguments	Moves irreversible effects after everything that could change them, and ties their arguments to observed entities
+M4 Adversarial schedule exploration	C17	Checks that the conditions hold across interleavings, not in one lucky ordering
+5.2 Why these belong together
+Each mechanism is unsafe or weak without the others.
+
+M1 without M2 is dangerous. Prepared work is computed earlier and therefore has more time to go stale. Early preparation is only safe if staleness is detected exactly, including through derived facts and absent parameters.
+M2 without M1 costs latency. Precise invalidation produces more re-computation. If re-computation happens on the critical path after events, recovery gets slower; with M1 it is already underway.
+M1 without M3 exposes writes. A faster agent reaches irreversible actions sooner, sometimes before the user has finished correcting. M3 decouples the speed of speech from the timing of effects.
+M3 depends on M2. The barrier checks leases (C7) and blocks on retracted references (C5, C10); speech about waiting writes needs claim grades (C8).
+M4 is what makes the other three claims rather than hopes. Every mechanism above is a timing argument, and timing arguments are verified by exploring timings.
+The unifying technical idea is transactional: every action carries a validity condition, the condition is checked at the moment of effect, and the expensive parts of the work are scheduled so that checking is all that remains when the moment arrives.
+
+5.3 What was left out and why
+C4, C11: low measurable value over existing mechanisms.
+C12, C15: value depends on data or kit rules not yet available; switches remain in the design.
+C13, C14, C16: kept as supporting details, not as claims of innovation.
+No extra agents, no larger models, no decorative interface. None addresses a scored failure mode above.
+5.4 Priority under the deadline
+The kit arrives after registration; submission closes on 25 September 2026, leaving roughly nine days of work against the real harness. Order of work, by scoring relevance per unit of effort:
+
+Order	Item	Reason
+1	C8(a) atomic emission; C9(c) timer liveness	Defect fixes (L3, L4); small; failures are total
+2	C17 fake harness, sweeps, online monitors	Needed to measure everything else; exposes defects early
+3	C5 provenance-closed invalidation	Highest recovery impact; directly targets a likely hidden-test class
+4	C9(a, b) commit-last and settle barrier	Highest safety impact; small
+5	C6 schema-complete read sets	Small; closes a silent failure
+6	C8(b) claim grades	Small; truthfulness and required by C9
+7	C2 response frames	Medium effort; grounding and demo value
+8	C7 evidence leases	Visual scenarios; medium effort
+9	C1, C3	Latency under Model A; confirm clock model first
+10	C10 reference-bound arguments	Safety refinement
+11	C17 randomized schedules and minimization	Deepens coverage once basics pass
+If the kit shows clock Model B, items 9's latency value largely disappears and effort shifts to items 7, 8, and 10.
+
+6. Measurement plan
+No improvement is claimed until it appears in this plan's results.
+
+6.1 Experimental design
+Configurations: baseline architecture (with defect fixes applied, so comparisons are fair) versus baseline plus each mechanism, then the full set. Each mechanism is also removed individually from the full set (leave-one-out ablation).
+Clock models: every experiment runs under the Model A and Model B simulators, and later under the real harness.
+Scenario families (generated, parameterized): correction during read; correction during chain; addition during read; correction just after a write-committing turn; reversion; rapid triple correction; backchannel interruption; goal switch and return; unknown write outcome; paraphrased duplicate request; visual state change after lookup; conflicting visual evidence; public suite once released.
+Timing: each scenario is run across an offset sweep and, where relevant, randomized schedules; worker outputs replayed from recordings so variation comes only from timing.
+Reporting: medians and 95th percentiles, with counts of runs; no single-run claims.
+6.2 Metrics
+Metric	Definition	Mechanism	Expected direction	Scoring link
+Cancellation delay	Harness ms from the invalidating event to CANCEL, including transitive dependents	C5, C1	Down (transitive: from about one tool latency to one step)	IR
+Stale consumptions	Results consumed whose provenance was invalid at consumption	C5	To zero	IR, TC
+Re-executed steps per correction	Steps re-run whose result digest was unchanged	C5	Down	IR (stale re-runs)
+Omission escapes	Results consumed despite a later-set optional parameter in the same goal before FINAL	C6	To zero	TC
+Stale-evidence groundings	Claims used at emission contradicted by the newest frame ingested before emission	C7	To zero for writes	TC, QM
+Perception calls per visual scenario	Count	C7	Down versus watch mode	Cost
+False claims	Claims unsupported by ledger state after the batch, under mutation tests	C8	To zero	QM, Floor
+Write reconciliations and duplicates	Across offset sweeps	C9, C10	Down	SP, TC
+Write exposure window	Harness ms from first write emission to last write result in a commit window	C9	Down	SP
+First substantive speech latency	Per trigger	C1, C3; guard for C9	Down (C1, C3); unchanged (C9)	RL
+Result → FINAL latency	Harness ms	C2	Down	QM, TC
+Frame coverage	Share of FINALs rendered from frames	C2	Up	TC
+Event-anchored ratio	Share of scored actions emitted in harness-event steps	C3	Up	RL, determinism
+Promotion disagreement	Promoted vs full interpretation mismatch	C1	Zero	Safety of C1
+Speculative waste	Speculative jobs discarded ÷ dispatched	C1, C2, C3	Bounded	Cost
+Invariant violations under exploration	Per invariant, per 1,000 schedules	All; C17 measures	Down to zero	All
+Liveness fires	Timers fired by the liveness rule	C9	Reported	TC risk
+6.3 Results table template
+Configuration	Clock	Cancel delay p50/p95	Stale consumptions	Omission escapes	Stale-evidence groundings	False claims	Duplicates	Reconciliations	Speech latency p50/p95	Result → FINAL p50	Violations / 1k schedules
+Baseline + fixes	A	—	—	—	—	—	—	—	—	—	—
+Baseline + fixes	B	—	—	—	—	—	—	—	—	—	—
+Full set	A	—	—	—	—	—	—	—	—	—	—
+Full set	B	—	—	—	—	—	—	—	—	—	—
+Full set − M1	A	—	—	—	—	—	—	—	—	—	—
+Full set − M2	A	—	—	—	—	—	—	—	—	—	—
+Full set − M3	A	—	—	—	—	—	—	—	—	—	—
+When the kit's scoring rules are available, add a column with the local grader's estimate for each category, labelled as an estimate.
+
+7. Technical story
+7.1 The narrative
+Problem. In a full-duplex conversation, the facts an agent acts on change while it is acting. The evaluator scores the trace: whether each action was still valid at the moment it was taken, and how quickly the agent responded.
+
+Baseline limitation. A conventional asynchronous agent checks validity when work starts, does its model work after events arrive, and treats an issued tool call as done. Stale work therefore leaks through three gaps: through derived values, through constraints the call never read, and through old camera frames. Reactions trail events by model latency. Irreversible actions go out while the user is still correcting.
+
+Architectural insight. Treat every action as a transaction whose validity is checked at the moment it takes effect, against a complete dependency set. Do slow work before the event it reacts to. Take irreversible effects last. The scoring rules make the last step affordable: latency is measured to the first spoken action, not to the write.
+
+Mechanism.
+
+Prepared reactions: interpretations, response frames, and perception are ready before end of turn or before the result arrives.
+Complete validity conditions: dependencies are transitive, include absent parameters, carry leases for visual evidence, and grade what speech may claim.
+Settled commits: writes wait for a quiet interval and for every read that could change them, and name only observed entities.
+Adversarial schedule exploration: thousands of interleavings per scenario, checked against invariants derived from the rubric.
+Measurable effect. Cancellation delay for dependent calls, stale consumptions, omission escapes, stale-evidence groundings, false claims, duplicate and reconciled writes, speech latency, and invariant violations under exploration — each reported for baseline and full system, under both clock models. (Values to be filled from section 6.3.)
+
+Why it matters. These failures map onto the score: Interruption Recovery (35%) rewards prompt cancellation and no stale re-runs; Task Completion (40%) rewards grounded answers with correct arguments; Safety & Protocol (10%) requires zero duplicate state changes. They also map onto the specification's own use cases: a route computed for the old destination, a double booking, a manual lookup for the wrong device state.
+
+7.2 One sentence
+We treat every agent action as a transaction checked at the moment it takes effect, prepare the slow work before the events it reacts to, and delay irreversible effects until the conversation has settled — and we verify it across thousands of adversarial timings.
+
+7.3 Thirty-second version
+Users interrupt while an agent is working, so the information behind every action can change mid-flight. Our agent records exactly what each action depends on — including values derived from earlier results, constraints a tool never received, and how fresh its camera evidence is — and checks those dependencies at the instant of acting. Slow reasoning is done before the event that needs it, so reactions happen when events arrive. Bookings and other irreversible actions wait for a short quiet interval, which costs nothing in the latency score because speech continues immediately. We test all of this by replaying each scenario under thousands of timing variations and checking invariants taken from the scoring rules.
+
+7.4 Slide sequence
+Slide	Title	Content
+1	The information behind every action changes mid-flight	One interleaving: search in flight, correction, dependent call, late result
+2	Where conventional agents leak stale work	Three leaks: derived values, unread constraints, old frames; plus writes during corrections
+3	Insight: validity is checked when an action takes effect	Transaction view; the three conditions (transitive, negative, temporal) plus claim grades
+4	Prepare early, commit late	Timeline: reaction slots filled before events; write held for the settle interval while speech continues
+5	Verified across adversarial timing	Schedule exploration; invariants from the rubric; a minimized counterexample
+6	Results	Table from section 6.3, baseline vs full set, both clock models
+7	Limits	What remains (section 7.7)
+7.5 README section draft
+Design highlights
+
+Validity at the point of use. Every tool call, prepared response, and perception claim records exactly what it depends on. Dependencies include facts derived from earlier results (so a correction cancels dependent calls in the same step), tool parameters that were left unset (so an added constraint invalidates the answer), and time-bounded leases on camera evidence. Nothing takes effect unless its dependencies still hold at that instant.
+
+Prepared reactions. Transcript prefixes are interpreted while the user speaks; final responses are prepared as typed templates while the last tool call runs. When the triggering event arrives, the coordinator only validates and emits.
+
+Settled commits. State-changing calls run after all reads that could change them, after a short quiet interval following the user's request, and only with identifiers taken from observed results or the user's own words. Speech acknowledges the intent immediately, with wording graded to what has actually happened.
+
+Adversarial schedule exploration. A deterministic simulator replays each scenario under systematic and randomized timing variations. Invariants derived from the scoring rules are checked on every schedule; failing schedules are minimized and kept as regression tests.
+
+See docs/measurements.md for results under both clock models.
+
+7.6 Demo narration (five minutes)
+Time	Scene	What is shown	Narration point
+0:00–0:40	Framing	Trace timeline of one scenario	The evaluator scores whether each action was valid when taken
+0:40–1:50	Chain correction	Search → seat map in flight → "Mumbai instead." Baseline variant: seat map for the old flight keeps running and its result is spoken. Full system: both calls cancelled in the correction step; reused results where values reverted	Dependencies are transitive; cancellation happens at the event, not after re-planning
+1:50–2:50	Write settling	"Book the 6 pm one" then, 200 ms later, "wait, the 8 pm one." Baseline: booking in flight, reconciliation. Full system: "I'll book the 8 pm flight," one booking	Speech holds the floor; the irreversible action waits; latency metric unchanged
+2:50–3:50	Visual lease	Manual lookup on a blinking amber light; later frames show solid red; final response renews the lease and reports the current state	Evidence expires; freshness is checked where it is used
+3:50–4:40	Verification	Exploration run count, one minimized counterexample from a baseline variant, passing after the mechanism	Timing claims are tested across timings
+4:40–5:00	Results	Section 6.3 table	Measured under both clock models
+7.7 Jury questions and prepared answers
+Isn't this just optimistic concurrency control? The validation step is. The contribution is what goes into the read set for an agent: derived facts with their provenance, absent tool parameters, leases on perception, and graded speech claims. It is also scheduling work so that validation is all that remains when events arrive. OCC alone would still leak stale work through each of those gaps.
+
+What happens if the harness pauses the clock while your agent computes? Correctness mechanisms (M2, M3, M4) do not depend on the clock model. Latency mechanisms (M1) matter mainly when agent compute advances time. We measure both configurations and report them separately. The timer liveness rule exists specifically because a paused clock can otherwise deadlock timer-based logic.
+
+Doesn't the settle interval hurt latency? It delays the state-changing call, not speech. The specification measures latency to the first substantive spoken action, and the acknowledgment is emitted at end of turn. The metric table includes speech latency as a guard; if it changes, the claim is wrong.
+
+How do you know this works on hidden scenarios? We do not know the hidden score. We know invariant violation rates under controlled adversarial timings, across scenario families built from the evaluation's stated emphases. That is evidence about robustness, not a score prediction.
+
+Why not a larger or faster model? Most of the failures above are coordination failures that a perfect model would still commit: stale transitive work, unread constraints, writes during corrections. Model speed matters for one mechanism (M1) and only under one clock model.
+
+Do false cancellations hurt you? They can. The detector acts only on high-precision matches, and every false cancellation is logged and counted. The trade-off is reported: cancellation delay against false-cancellation rate.
+
+What does multimodal support cost? Perception runs only for questions tied to the active goal and, for freshness, only at points of use. We report perception calls per visual scenario against the continuous watch-mode alternative.
+
+What is new here, honestly? The individual techniques are established: incremental computation, predicate reads, leases, sagas, randomized concurrency testing. The combination, and its derivation from a trace-scored full-duplex agent's failure modes, is what we contribute. We state the lineage in the documentation.
+
+What if the kit defines duplicates or snapshots differently than you assumed? Those are settings, not structure. The duplicate key, snapshot carrier, cancellation anchor, and clock model are configuration with safe defaults.
+
+Why not use an existing agent framework? Frameworks we have seen coordinate at turn boundaries and treat an issued tool call as done. The scoring requires validity at the moment of each action, which needs a single-writer coordinator with dependency tracking.
+
+8. Architecture deltas
+Changes required in the architecture document to adopt the selected set.
+
+Architecture section	Change	Source
+§3.1 Facts	Derived facts carry provenance read sets; RETRACTED status used for transitive retraction	C5
+§3.2 Read sets	Include absence entries for every tool parameter; constraint facts in frame and selection read sets	C6
+§3.3 Validity	Validity fails on RETRACTED provenance; clears when re-derived with equal digest	C5
+§4.7 Utterance	Claim grades: UNDERSTOOD, INTENDED, IN_PROGRESS, RESULT, EFFECT_DONE, EFFECT_FAILED, EFFECT_UNKNOWN	C8
+§4.8 Claim	Lease (mode, anchor frame, frame count and harness-time bounds, renewal count)	C7
+§5.2 Step	Emission becomes two-phase (validate batch, then write)	C8
+§7.4 CommitGate	Add settle interval, pending-interpretation, lease validity, reference-binding conditions	C9, C10, C7
+§7.2 / §8.4 PlanExecutor	Commit-last ordering of writes	C9
+§8.1 Propagation	Transitive retraction before dependent marking	C5
+§9.3 FastResponder	Templates keyed by claim grade	C8
+§9.4 Jobs	New FRAME job; Composer becomes fallback	C2
+§10.4 Perception	Remove watch mode; add renewal at points of use; add interpretation-time demand trigger	C7, C13
+§11.3 Promotion	Inert-tail rule with commit-turn stability guard	C1
+§13.3 Timers	Liveness rule; optional request_advance in Model B ClockPort	C9
+§14.1 Scheduling	Reaction-slot table; three priority classes	C3, C16
+§15.2 EmissionGate	Online invariant monitors	C17
+§16.5 Testing	Randomized schedules, scenario mutation, delta-debugging minimization	C17
+§20 Policies	Add settle_ms (σ), commit_wait_cap_ms, lease_frames, lease_ms, absence_sensitivity, inert_lexicon, frame_operators	All
+References
+Acar, U. A. (2005). Self-Adjusting Computation. PhD thesis, Carnegie Mellon University.
+Burckhardt, S., Kothari, P., Musuvathi, M., and Nagarakatte, S. (2010). A randomized scheduler with probabilistic guarantees of finding bugs. ASPLOS.
+Cahill, M. J., Röhm, U., and Fekete, A. D. (2008). Serializable isolation for snapshot databases. SIGMOD.
+Eswaran, K. P., Gray, J. N., Lorie, R. A., and Traiger, I. L. (1976). The notions of consistency and predicate locks in a database system. Communications of the ACM.
+Garcia-Molina, H., and Salem, K. (1987). Sagas. SIGMOD.
+Gray, C., and Cheriton, D. (1989). Leases: an efficient fault-tolerant mechanism for distributed file cache consistency. SOSP.
+Hammer, M. A., Phang, K. Y., Hicks, M., and Foster, J. S. (2014). Adapton: composable, demand-driven incremental computation. PLDI.
+Kung, H. T., and Robinson, J. T. (1981). On optimistic methods for concurrency control. ACM Transactions on Database Systems.
+Miller, M. S. (2006). Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control. PhD thesis, Johns Hopkins University.
+Mitchell, N. (2012). Shake before building: replacing Make with Haskell. ICFP.
+Schlangen, D., and Skantze, G. (2009). A general, abstract model of incremental dialogue processing. EACL.
+Zeller, A., and Hildebrandt, R. (2002). Simplifying and isolating failure-inducing input. IEEE Transactions on Software Engineering.

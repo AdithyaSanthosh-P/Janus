@@ -1,0 +1,1353 @@
+Theme 05: Interruptible Real-Time Agents — System Architecture
+Samsung PRISM Generative AI Hackathon, 3rd Edition. Companion to Theme 05 — Pre-Architecture Problem Analysis. Invariant IDs T, S, P, W, O, M, C refer to section 14 of that document; this document adds kernel invariants K. Appendix questions Q1–Q16 refer to its Appendix A.
+
+This is a design, not an implementation. It is specified tightly enough that an implementer should not need to make structural decisions, only to fill in behavior at the stated interfaces.
+
+0. Design stance
+Four commitments shape every later decision.
+
+One writer, serialized. A single coordination kernel owns all session state and applies every event in a deterministic order. Every other component proposes; none mutates.
+Optimistic work, validated at commit. Slow work runs concurrently against a frozen copy of the state it needs and records exactly what it read. The kernel accepts the output only if everything it read is still true. Invalidation becomes a lookup, not a judgment.
+Reads may be tried; writes happen once. Speculation, parallelism, and retries are permitted for read-only tools. State-modifying calls pass a single gate, require committed user intent, and are recorded in an effect ledger before emission.
+Unknowns live in adapters and policies, not in structure. The evaluation kit is unreleased. Each open question from the analysis maps to an adapter or a policy setting with a stated default (section 20). Answering a question changes a setting, not the architecture.
+What the system is not: an LLM loop that calls tools. No language model emits to the harness or mutates state. Models are workers whose outputs are proposals.
+
+1. High-level architecture
+Slow-path workers
+
+Coordination kernel, single writer
+
+Harness adapter
+
+Evaluation harness
+
+jobs with frozen views
+
+proposals with read sets
+
+Input queue
+
+Output queue
+
+Virtual clock
+
+Ingress and protocol codec
+
+ClockPort
+
+Emission gate
+
+Mailbox
+
+Step engine
+
+Fast-path reflexes
+
+Tool subsystem
+
+Session store
+
+Interpreter
+
+Planner
+
+Composer
+
+Vision analyzer
+
+Speech recognizer
+
+Model gateway
+
+Decision log
+
+Mapping to the specification's three paths
+
+Specification term [G§1]	Realized by	Why here
+Fast path	Reflexes executed inside the kernel step: QuickDetector, FastResponder, invalidation and cancellation	Speech must read a consistent state at the moment it is emitted (O2), and must be emitted in the same step as its trigger (latency). Both require being inside the single writer. Reflexes are deterministic and cheap, so they do not slow the kernel
+Slow path	Workers: Interpreter, Planner, Composer, VisionAnalyzer, SpeechRecognizer	Everything slow or nondeterministic runs outside the kernel, so it can never block ingestion (T3)
+Coordination layer	Kernel step engine, session store, tool subsystem, emission gate	Single writer; owns cancellation, snapshots, and idempotency, as the specification assigns
+2. Component architecture
+2.1 Components and responsibilities
+"Kernel" components are synchronous, bounded, deterministic functions invoked during a kernel step; they never await. "Worker" components run concurrently outside the kernel.
+
+Component	Layer	Runs	Responsibility	Must never
+Ingress	Adapter	Async task	Read harness input queue; decode via ProtocolCodec; assign event_id and arrival seq; post to mailbox; convert malformed input to a MalformedInput event	Interpret content
+ProtocolCodec	Adapter	Library	Map wire JSON ↔ internal event and action models; the only place wire field names appear	Hold state
+ClockPort	Adapter	Library	Provide harness time now(); provide wake-up hints wake_at(t); one implementation per clock model (section 13)	Be bypassed; no other core module reads the wall clock
+EmissionGate	Adapter, invoked by kernel	Kernel (synchronous)	Validate every action (schema, identifiers, manifest, truth rules); stamp time; write to output queue; report rejections	Repair an action silently; emit anything unvalidated
+Mailbox	Kernel	—	Ordered buffer of external and internal events	—
+StepEngine	Kernel	Kernel task	Run the six-phase step (section 5.2)	Await anything
+Reducers	Kernel	Kernel	Pure event → state-change functions	Emit actions
+InvalidationEngine	Kernel	Kernel	Map changed facts through the dependency index to affected calls, jobs, held proposals, pending utterances	Decide what to do next; only marks
+TurnManager	Kernel	Kernel	Open and close user turns; transcript assembly and prefix digests; floor state	—
+QuickDetector	Kernel (fast path)	Kernel	Deterministic, schema-aware extraction of high-precision signals from each chunk (section 9.2)	Guess; low-confidence output is discarded
+TaskController	Kernel	Kernel	The task state machine (section 6); triage resolution	—
+PlanExecutor and Rebinder	Kernel	Kernel	Select ready plan steps; bind arguments; re-bind steps after localized corrections without calling the planner	Invent plan structure
+ArgBinder	Kernel	Kernel	Resolve step bindings to canonical argument values; validate against the tool schema; produce the call's read set	Accept a hypothesis for a write
+CommitGate	Kernel	Kernel	Admission control for state-modifying calls (section 7.4)	Be bypassed
+ResultRouter	Kernel	Kernel	Match results to calls; validate; decide consume, retain, or stale (section 3.6)	Consume a result without a relevance check
+RetryPolicy, ReconcilePolicy	Kernel	Kernel	Decide retries and effect reconciliation by mutability and outcome certainty	Retry a write with unknown outcome
+ClarificationManager	Kernel	Kernel	Decide when to ask, what to ask, and what the question blocks	Ask about information already ingested
+PerceptionScheduler and SlotResolver	Kernel	Kernel	Decide which frames and clips to analyze; align evidence in time; merge claims with user statements; open conflicts	Analyze every frame
+FastResponder and UtteranceBudget	Kernel (fast path)	Kernel	Produce acknowledgments, progress, holds, repairs from ledger state; enforce pacing	Claim anything the ledger does not support
+SnapshotProjector	Kernel	Kernel	Compute the snapshot from committed state at emission	Cache a snapshot
+JobScheduler	Kernel	Kernel	Dispatch, supersede, and abort worker jobs; concurrency caps	Block on a job
+TimerWheel	Kernel	Kernel	Timers keyed by harness time	Use wall time
+Session store	State	Owned by kernel	Fact store, dependency index, ledgers, evidence, holds, goals, tool catalog (section 4)	Be written by anything except reducers and kernel decisions
+Interpreter	Worker (LLM)	Async	Turn transcript + context → TurnInterpretation	Emit or mutate
+Planner	Worker (LLM)	Async	Goal + facts + catalog → Plan	Emit or mutate
+Composer	Worker (LLM)	Async	ResponsePlan → natural text	Add facts not in the plan
+VisionAnalyzer	Worker	Process or thread pool	Frame + question → claims with confidence	Decide relevance
+SpeechRecognizer	Worker	Process or thread pool	WAV → timed transcript segments (audio-only mode)	Close turns
+ModelGateway	Worker infrastructure	Async	Model access; structured-output enforcement; deterministic parameters; transport timeouts; record/replay for tests only	Retain anything across sessions in evaluation mode
+DecisionLog	Observability	Kernel (append)	One structured record per step (section 16)	Affect decisions
+LatencyMeter, TraceChecker, Replayer, TimingSweeper	Observability	Offline and test	Measure, verify invariants, replay, sweep timings	Run inside the evaluated agent's decision path
+PolicyRegistry	Configuration	Loaded at setup	All tunable and kit-dependent settings (section 20)	Change during a scenario
+2.2 Interfaces
+All messages are immutable records. Field lists are normative; names may be adapted, but nothing may be removed.
+
+InputEvent (Ingress → Mailbox) event_id, seq (arrival order), ts (harness timestamp), type ∈ {TEXT_CHUNK, END_OF_TURN, AUDIO_CLIP, VIDEO_FRAME, INTERRUPTION, TOOL_RESULT, TOOL_MANIFEST, SCENARIO_END if provided}, payload (decoded, typed per event type), raw_ref (for logging).
+
+InternalEvent (kernel, workers, timers → Mailbox) event_id, seq, ts = ClockPort.now() at insertion, type ∈ {WORKER_RESULT, TIMER_FIRED, EMIT_REJECTED, MALFORMED_INPUT, SYNTHETIC_CHUNK}, payload.
+
+Job (JobScheduler → worker) job_id, kind ∈ {INTERPRET, PLAN, COMPOSE, VISION, ASR}, speculative (bool), view (copied subset of facts, catalog, evidence references the job needs), read_set, input_digest (e.g., transcript prefix digest), question (for VISION), cancel_token.
+
+WorkerResult (worker → Mailbox) job_id, status ∈ {OK, FAILED, ABORTED}, proposal (one of the proposal types below), diagnostics.
+
+Proposal types
+
+InterpretationProposal: TurnInterpretation (section 4.6) + read_set + input_digest.
+PlanProposal: Plan + read_set (includes goal.active and the goal's plan_rev).
+CompositionProposal: utterance_text + response_plan_id + read_set.
+PerceptionProposal: observation_id + claims[] + question_id + read_set.
+TranscriptProposal: segments[] with capture offsets (converted by the kernel into SYNTHETIC_CHUNK events).
+Action (kernel → EmissionGate) action_id, kind ∈ {SPEAK, TOOL_CALL, CANCEL, CLARIFY, FINAL}, utterance (for speech kinds: utt_kind, text, claims[]), call (for TOOL_CALL: call_id, tool, args), cancel_target (call_id), snapshot (when attached), trigger_event_id, read_set.
+
+EmitReport (EmissionGate → kernel, synchronous return) Per action: EMITTED with emitted_ts, or REJECTED with reason_code. Rejections are also posted as EMIT_REJECTED for the next step.
+
+ClockPort now() → harness_ts; wake_at(ts) (hint to resume the kernel no earlier than ts); busy(flag) (used only by clock Model B, section 13).
+
+ToolCatalog get(tool_name) → ToolSpec{name, description, params_schema, output_schema?, mutability ∈ {READ, WRITE}, mutability_source ∈ {DECLARED, DEFAULTED}, status ∈ {USABLE, QUARANTINED}, frame_param?}; version.
+
+3. Core model: facts, read sets, and generations
+This section is the plan/generation model. Everything that detects stale work depends on it.
+
+3.1 Facts
+All session knowledge that any decision depends on is stored as facts.
+
+Field	Meaning
+key	Namespaced string (below)
+value	Canonical form (normalized strings, ISO dates, sorted structures)
+digest	Hash of canonical value
+ver	Session revision number at last change
+status	HYPOTHESIS, COMMITTED, CONFIRMED, DERIVED, RETRACTED
+provenance	Source event IDs or call ID or observation ID; modality; capture timestamp
+confidence	HIGH, MEDIUM, LOW (for evidence-derived facts)
+The session revision is a single counter incremented on every fact mutation. It orders changes; it is not by itself a validity test.
+
+Key namespaces
+
+Namespace	Examples	Written by
+goal.active	value = active goal_id or none	Goal creation, replacement, return, abort
+goal.<gid>.intent, goal.<gid>.commit_intent, goal.<gid>.plan_rev	intent label; whether the user expressed intent to act	Interpretation commit; planner acceptance
+slot.<gid>.<name>	slot.g2.destination	Interpretation commit; evidence acceptance; carry-over
+session.<name>	session.user_name, session.device_model	Interpretation commit (session-scoped facts)
+hyp.<turn_id>.<name>	Hypotheses from partial transcripts	QuickDetector; speculative interpretation
+turn.<turn_id>.prefix	Transcript prefix digest	TurnManager
+result.<call_id>	Canonical result payload	ResultRouter on consumption
+derived.<gid>.<name>	derived.g2.selected_flight (mapped from a step output)	PlanExecutor on consumption
+claim.<question_id>.<name>	Accepted perception claims	SlotResolver
+catalog.version	Manifest version	Manifest reducer
+3.2 Read sets
+Every unit of work records the facts it depended on: read set = set of (key, ver, digest).
+
+Recorded for: worker jobs, proposals, plan steps, tool calls, pending utterances, held proposals, snapshot-bearing actions.
+
+3.3 Validity rule
+A read set is valid if and only if, for every (key, ver, digest) in it, the fact key exists, is not RETRACTED, and its current digest equals digest.
+
+A fact has changed for a read set if its current ver is greater than the recorded ver.
+
+Two tests serve two purposes.
+
+Change (versions) drives the dependency index and invalidation: it is cheap and exact.
+Validity (digests) decides acceptance. It uses value equality so that a reversion (Pune → Mumbai → Pune) or a return to a suspended goal makes completed work acceptable again without re-running it (P4).
+One exception. A call that has received a cancellation is never consumed, even if its read set later becomes valid again. The trace already shows the cancellation; consuming the result afterward would make the trace internally inconsistent.
+
+Decision D4 — see register, section 19.
+
+3.4 Generations without a global generation counter
+There is no single global generation counter used for validity. Generations are expressed as facts:
+
+Coarse generation: goal.active. Every piece of goal-bound work includes it in its read set. Replacing the goal changes its value, which invalidates all goal-bound work through the same mechanism as any slot change.
+Fine generation: individual slot and derived facts. A localized correction invalidates only work that read the changed slot.
+Plan revision: goal.<gid>.plan_rev is included in every planner proposal's read set, so two planner outputs computed from the same revision cannot both be accepted.
+Why not a global epoch: a global epoch would invalidate unrelated work on every correction, forcing restarts that the specification penalizes (stale re-runs) and wasting latency. Why not only fine-grained facts: goal replacement must invalidate everything at once, and modelling the goal as a fact achieves that with no second mechanism.
+
+3.5 Identity and relationships
+Goal (goal_id)
+ └─ PlanRevision (goal_id, plan_rev)
+     └─ Step (step_key)                      stable across revisions
+         └─ Call (call_id)                   1..n per step (retry lineage)
+             ├─ read_set → Facts
+             └─ Result → result.<call_id>, derived.<gid>.* → read by downstream steps
+goal_id: g<n>, assigned sequentially per session.
+plan_rev: incremented on each accepted plan for that goal.
+step_key: digest of (goal_id, tool name, binding template). When a new plan revision contains a step with the same step_key whose resolved arguments are unchanged, the existing step, its call, and its result carry over. This is how replanning preserves valid work.
+call_id: <session_prefix>-<counter>, deterministic, never reused (unless policy idempotency_key says otherwise, section 20).
+Downstream steps include upstream result facts in their read sets, so staleness propagates through chains automatically.
+3.6 How an asynchronous result proves it is still relevant
+ResultRouter applies these checks in order. The first check that decides terminates the procedure.
+
+Unknown call_id → log UNMATCHED_RESULT; ignore. (C1, C3)
+Call already terminal (duplicate delivery) → log; ignore. (C1)
+Payload invalid against output schema (if declared) or generic result shape → treat as tool failure of type MALFORMED_RESULT. (C3)
+Call status CANCEL_REQUESTED → status COMPLETED_AFTER_CANCEL; do not consume. If WRITE: effect CONFIRMED, raise reconciliation. (W4)
+Call's goal not active → status RETAINED; store result facts under the suspended goal; do not act. If WRITE: effect CONFIRMED, raise reconciliation. (P2)
+Call's read set invalid → status STALE; retain for audit; do not consume. If WRITE: effect CONFIRMED, raise reconciliation. (P2)
+Otherwise → CONSUMED: write result.<call_id> and mapped derived.* facts; mark step done; if WRITE, effect CONFIRMED; PlanExecutor schedules continuations in the decide phase.
+3.7 How snapshots stay correct
+The snapshot is never stored as a separate object that could drift. SnapshotProjector computes it at the moment of emission, from the current committed facts of the active goal (section 12). Because the emit phase runs after the apply and invalidate phases of the same step, the snapshot always reflects every ingested event (S3).
+
+4. Data model overview
+4.1 Session store contents
+Store	Keyed by	Purpose
+FactStore	key	Section 3.1
+DependencyIndex	fact key → set of dependent object IDs	Section 3; maintained on every read-set registration and release
+GoalRegistry	goal_id	Goal status and history
+PlanStore	(goal_id, plan_rev)	Plans and steps
+CallLedger	call_id	Every tool call ever proposed or emitted
+EffectLedger	fingerprint, and index by lineage	State-modifying effects
+EvidenceStore	obs_id	Frames, clips, and their analyses
+ConflictTable	conflict_id	Open evidence conflicts
+TurnLog	turn_id	User turns
+OutputLedger	utt_id	Utterances emitted and their claims
+ProposalHold	proposal_id	Proposals held during triage
+ClarificationTable	q_id	Pending and resolved questions
+JobTable	job_id	Running and finished worker jobs
+ToolCatalog	tool name	Parsed manifest
+TimerWheel	timer_id	Harness-time timers
+4.2 Goal
+Field	Values and notes
+goal_id	g<n>
+status	ACTIVE, SUSPENDED, COMPLETED, FAILED, ABANDONED
+intent	Fact goal.<gid>.intent
+commit_intent	Fact; true only when the user explicitly asks for the action or confirms it
+created_by_turn, replaced_by	Lineage
+task_state	Last task state (for resume after suspension)
+4.3 Plan and Step
+Field	Notes
+plan_id	(goal_id, plan_rev)
+steps[]	Ordered for display only; execution order comes from after
+step.step_key	Section 3.5
+step.tool	Name in current catalog
+step.kind	READ or WRITE, copied from catalog at plan acceptance
+step.bindings	Per parameter: FACT(key), LITERAL(value), STEP_OUTPUT(step_key, path), FRAME(question_id)
+step.after	Step keys that must be consumed first
+step.output_map	Result path → derived.<gid>.<name>
+step.requires_commit_intent	Always true for WRITE
+step.status	PENDING, READY, CALLED, DONE, FAILED, SKIPPED
+4.4 Call
+Field	Notes
+call_id	Deterministic, unique
+step_key, plan_id, goal_id	Ownership
+tool, kind, args	Canonical args
+fingerprint	Digest of (tool, canonical args)
+read_set	Includes goal.active, catalog.version, every fact used in bindings
+status	Section 7.2
+speculative	Whether issued before commitment of its inputs
+emitted_ts, deadline_ts, cancel_ts, result_ts	Harness time
+attempt, retry_of	Retry lineage
+result_ref	Stored payload
+4.5 Effect
+Field	Notes
+fingerprint	As in Call
+lineage	(goal_id, step_key): the logical action the effect fulfils
+call_ids[]	All attempts
+state	PENDING, CONFIRMED, FAILED, UNKNOWN, CANCELLED_INFERRED, COMPENSATED
+result_summary	For truthful reporting
+4.6 TurnInterpretation (Interpreter output)
+Field	Notes
+turn_id, input_digest	Transcript prefix the interpretation covers
+act	NEW_GOAL, SLOT_UPDATE, ADDITION, CONFIRM, DENY, ANSWER_CLARIFICATION, PROGRESS_QUESTION, BACKCHANNEL, ABORT, RETURN_TO_GOAL, SMALLTALK, UNCLEAR
+intent	Label candidate (mapped by policy intent_label_source)
+slot_deltas[]	{name, scope (goal or session), op (SET, CLEAR), value, evidence_ref?}
+commit_intent	Explicit request to act, or confirmation
+visual_reference	Whether the utterance points at something visible
+ambiguities[]	{target, candidates[]}
+ack_phrase	Short natural phrase describing what is understood; passed through truth checks before use
+resume_goal_id	For RETURN_TO_GOAL
+4.7 Utterance
+Field	Notes
+utt_id, utt_kind	ACK, PROGRESS, HOLD, CLARIFY, FINAL, REPAIR, INFORM
+text	Rendered text
+claims[]	{type ∈ UNDERSTOOD, IN_PROGRESS, RESULT, EFFECT_DONE, EFFECT_FAILED, EFFECT_UNKNOWN, QUESTION; fact_key or call_id}
+read_set	Facts the text mentions
+trigger_event_id	For latency accounting
+emitted_ts	Harness time
+4.8 Observation, Claim, Conflict
+Record	Fields
+Observation	obs_id, modality (FRAME, AUDIO), capture_ts, arrival_ts, payload_ref, analyses[] (question_id, job_id, claims[])
+Claim	name, value, confidence (HIGH, MEDIUM, LOW), obs_id, question_id
+Question	question_id, goal_id, target_names[], mode (AT_UTTERANCE or CURRENT_STATE), anchor_ts, status
+Conflict	conflict_id, name, candidates[] (value, source, confidence), blocks_steps[], status (OPEN, RESOLVED, VOID)
+4.9 Turn and Clarification
+Record	Fields
+Turn	turn_id, opened_ts, closed_ts, chunks[] (ts, text), prefix_digest, is_interruption, during_goal, spec_job_id, interpretation_ref
+Clarification	q_id, goal_id, targets[], utt_id, asked_ts, blocks_steps[], status (PENDING, ANSWERED, VOID), reprompts
+5. Event flow
+5.1 Event classes and ordering priority
+Every event in a step batch is ordered by the tuple (ts, class, seq).
+
+Class	Events	Reducer effect
+0	TOOL_MANIFEST	Parse into new catalog version; quarantine invalid tools
+1	INTERRUPTION	Floor to user; open turn if none; mark turn as interruption; enter triage if a goal is active
+2	TEXT_CHUNK, SYNTHETIC_CHUNK, AUDIO_CLIP, VIDEO_FRAME	Append to turn; run QuickDetector; store evidence
+3	END_OF_TURN	Close turn; compute final digest
+4	TOOL_RESULT	ResultRouter (section 3.6)
+5	WORKER_RESULT	Validate proposal read set; accept, hold, or reject
+6	TIMER_FIRED	Timer-specific handling
+7	EMIT_REJECTED, MALFORMED_INPUT	Fallback handling and logging
+Why this order. At equal timestamps, facts that can invalidate work (manifests, user input) are applied before facts that are subject to invalidation (tool results, worker outputs). Conservative ordering means a result that coincides with a correction is treated as stale rather than consumed and then contradicted. seq breaks remaining ties in queue arrival order, which is deterministic under replay. (T2)
+
+5.2 The kernel step
+Wake on mailbox event or due timer
+
+Drain mailbox and collect due timers
+
+Order batch by ts then class then seq
+
+APPLY reducers mutate facts and ledgers and bump versions
+
+INVALIDATE dependency index marks affected calls jobs holds and utterances
+
+DECIDE task controller then plan executor then commit gate then clarification then perception then fast responder
+
+EMIT gate validates stamps and writes in fixed order
+
+LOG one decision record for the step
+
+Phase	What happens	Rules
+1. Drain	Take every event currently in the mailbox plus timers whose due time ≤ now()	Batching events that arrive close together means decisions are made once, on the latest state
+2. Order	Sort by (ts, class, seq)	Section 5.1
+3. Apply	Run reducers in order; each fact mutation increments the session revision	No emission; no worker dispatch
+4. Invalidate	For every changed fact key, look up dependents; mark calls INVALIDATED_PENDING_CANCEL, abort jobs, drop held proposals and unsent utterances whose read sets are now invalid	Pure marking; decisions come next
+5. Decide	Components run in the fixed order shown; each reads the post-invalidation state and appends intended actions; dispatches jobs	No component sees an action decided later in the same step; order is fixed for determinism
+6. Emit	EmissionGate validates and writes intended actions in the emission order below	Emission is synchronous; there is no buffer in which an action could become stale (K3)
+7. Log	Append the step record	Section 16
+Emission order within a step: CANCEL → SPEAK (ACK, REPAIR, PROGRESS, HOLD, INFORM) → TOOL_CALL → CLARIFY → FINAL.
+
+Cancellations first, because promptness is scored (Interruption Recovery). Acknowledgments next, because latency is measured to the first substantive spoken action. Tool calls next, because their emission time starts the mock latency. Clarifications and final responses last, because they conclude the step's reasoning.
+
+Kernel step budget. Target ≤ 5 ms wall time per step. The only non-trivial in-kernel computations are QuickDetector matching, dependency lookups, schema validation, and template rendering. Exceeding the budget is logged as a performance defect.
+
+5.3 Data and state flow: who reads and writes what
+Component	Reads	Writes (through kernel decisions only)
+Reducers	Event payloads	Facts, turns, evidence, catalog, call and effect statuses
+InvalidationEngine	DependencyIndex	Status marks
+TaskController	Goals, turns, interpretations	Goal status, task state, facts from accepted interpretations
+PlanExecutor, Rebinder, ArgBinder	Plans, facts, catalog	Step statuses, intended tool calls, call ledger entries
+CommitGate	Effect ledger, facts, conflicts, turn state	Effect PENDING entries
+ResultRouter	Call ledger	Result and derived facts, statuses, effects
+SlotResolver	Claims, facts	Accepted claim facts, conflicts
+ClarificationManager	Goals, steps, conflicts, turns	Clarification entries, intended clarifications
+FastResponder	Facts, ledgers, output ledger	Intended utterances
+SnapshotProjector	Committed facts of active goal	Snapshot attachment
+Workers	Their frozen view only	Nothing; they return proposals
+6. State machine
+6.1 Regions
+The agent's control state is split into orthogonal regions, because conversation and task progress change independently.
+
+Region	States	Scope
+Floor	USER_TURN_OPEN, USER_TURN_CLOSED	Session
+Task	IDLE, LISTENING, UNDERSTANDING, CLARIFYING, PLANNING, EXECUTING, RESPONDING, COMPLETED, FAILED, TRIAGE, RECONCILING	Active goal
+Goal lifecycle	ACTIVE, SUSPENDED, COMPLETED, FAILED, ABANDONED	Each goal
+Call lifecycle	Section 7.2	Each call
+Effect lifecycle	Section 7.5	Each fingerprint
+EXECUTING has two flags rather than substates, because both can hold simultaneously: reads_in_flight and write_outcome_pending.
+
+Floor rule. No SPEAK, CLARIFY, or FINAL is emitted while the floor region is USER_TURN_OPEN (policy speak_during_open_turn, default OFF). Talking over the user harms naturalness and usually refers to soon-to-change information.
+
+6.2 Task state diagram
+user content
+
+chunk
+
+end of turn
+
+interpretation accepted
+
+required information missing
+
+no task requested
+
+user content
+
+evidence resolves question
+
+plan accepted
+
+argument unresolvable
+
+no usable tool
+
+result consumed or read retried
+
+plan complete
+
+failure with alternative
+
+write effect conflict
+
+retries exhausted
+
+compensation planned
+
+user decision needed
+
+user informed
+
+final response emitted
+
+user content
+
+user content
+
+new user content
+
+interruption or user content
+
+interruption or user content
+
+interruption or user content
+
+interruption or user content
+
+chunk or result under hold
+
+backchannel or progress question
+
+slot update, addition, replacement, or return
+
+change type ambiguous
+
+abort
+
+Idle
+
+Listening
+
+Understanding
+
+Planning
+
+Clarifying
+
+Executing
+
+Failed
+
+Responding
+
+Reconciling
+
+Completed
+
+Triage
+
+PriorState
+
+PriorState denotes a return to the task state recorded on entry to triage (a history state); it is not a separate state.
+
+6.3 Transitions
+Trigger classes: U user event, T tool event, V virtual-time timer, I internal agent event (worker result or kernel decision), M manifest event.
+
+#	From → To	Trigger	Class	Guard	Actions
+1	IDLE → LISTENING	First chunk, audio clip, or interruption	U	—	Open turn; run QuickDetector; schedule speculative interpretation; if visual cue, schedule speculative perception
+2	LISTENING → LISTENING	Chunk	U	—	Append; QuickDetector; coalesce speculative interpretation (section 11.3)
+3	LISTENING → UNDERSTANDING	End of turn	U	—	Close turn; if a speculative interpretation with matching digest is ready, apply it in the same step and continue to 4, 5, or 6
+4	UNDERSTANDING → PLANNING	Interpretation accepted	I	Act creates or updates a task; required information sufficient to plan	Commit facts; create goal if new; emit ACK; dispatch planner or re-bind existing plan
+5	UNDERSTANDING → CLARIFYING	Interpretation accepted	I	Required value missing and not resolvable by evidence, or ambiguity affects arguments	Create clarification; emit CLARIFY with snapshot if policy allows
+6	UNDERSTANDING → IDLE	Interpretation accepted	I	Act is SMALLTALK or BACKCHANNEL with no active goal	Emit a brief relevant reply if the turn asked something
+7	UNDERSTANDING → TRIAGE	New user content before interpretation completes	U	Goal active	Treat as rapid follow-up; see 23
+8	CLARIFYING → LISTENING	User content	U	—	Open turn; the clarification stays pending until an interpretation answers or voids it
+9	CLARIFYING → PLANNING	Perception or tool result resolves the target	I or T	All targets resolved	Void clarification as ANSWERED_BY_EVIDENCE; continue
+10	CLARIFYING → CLARIFYING	Re-prompt timer	V	clarification_reprompt = ONCE and not yet re-prompted and floor closed	Emit one re-prompt
+11	PLANNING → EXECUTING	Planner proposal or rebind accepted	I	Proposal read set valid	Increment plan_rev; carry over matching steps; PlanExecutor marks ready steps; emit READ calls; route WRITE steps to CommitGate
+12	PLANNING → CLARIFYING	Planner reports unbindable required argument	I	—	As 5
+13	PLANNING → FAILED	Planner reports no usable tool, or needed tool quarantined	I or M	—	Emit INFORM explaining what cannot be done; snapshot
+14	EXECUTING → EXECUTING	Result consumed	T	Section 3.6 passes	Write facts; schedule ready steps; emit PROGRESS if it adds information
+15	EXECUTING → EXECUTING	Read failure or read deadline	T or V	Retries remain	New call with new call_id, retry_of set
+16	EXECUTING → EXECUTING (write pending)	CommitGate admits write	I	Section 7.4	Effect PENDING; emit call
+17	EXECUTING → RESPONDING	All required steps DONE	T or I	—	Build ResponsePlan; dispatch Composer; start compose deadline timer
+18	EXECUTING → PLANNING	Definite failure with a possible alternative	T	Planner allowed to replan (bounded per goal)	Mark step FAILED; dispatch planner with failure context
+19	EXECUTING → RECONCILING	Write COMPLETED_AFTER_CANCEL, STALE, or RETAINED; or write deadline passes with no result	T or V	—	Effect CONFIRMED or UNKNOWN; pause dependent steps
+20	EXECUTING → FAILED	Read retries exhausted with no alternative; write failed definitively	T or V	—	Emit truthful INFORM; snapshot
+21	RECONCILING → EXECUTING / CLARIFYING / RESPONDING	ReconcilePolicy decision	I	Section 7.6	Plan compensation; or ask; or inform
+22	RESPONDING → COMPLETED	FINAL emitted	I	EmissionGate accepted	Goal COMPLETED; goal stays in session for follow-ups
+23	{UNDERSTANDING, PLANNING, EXECUTING, RESPONDING, RECONCILING} → TRIAGE	Interruption signal, or user content while a goal is active	U	—	Record prior state; enable hold mode; mark in-flight calls at risk; apply cancel_anchor = SIGNAL rules if configured; floor → USER_TURN_OPEN
+24	TRIAGE → TRIAGE	Chunk	U	—	QuickDetector; chunk-anchored cancellations (section 8.2); coalesce speculative interpretation
+25	TRIAGE → TRIAGE	Tool result or worker result	T or I	—	Results processed normally (facts may be consumed); resulting emissions except CANCEL are held
+26	TRIAGE → prior state	Interpretation: BACKCHANNEL or PROGRESS_QUESTION	I	—	Re-validate held proposals; release valid ones; answer progress questions from the ledger
+27	TRIAGE → PLANNING	Interpretation: SLOT_UPDATE or ADDITION	I	—	Commit deltas; invalidation cascade; cancel dependents; re-bind if structure unchanged, otherwise dispatch planner
+28	TRIAGE → PLANNING	Interpretation: NEW_GOAL	I	—	Goal replacement (section 8.5)
+29	TRIAGE → PLANNING	Interpretation: RETURN_TO_GOAL	I	Target goal SUSPENDED	Reactivate goal; results whose read sets are valid are reused
+30	TRIAGE → CLARIFYING	Interpretation: UNCLEAR, or ambiguity between update and replacement	I	—	Hold stays for affected work; ask one question
+31	TRIAGE → IDLE	Interpretation: ABORT	I	—	Cancel all in-flight calls of the goal; goal ABANDONED; emit INFORM that reports any effects already confirmed (W4)
+32	Any → RESPONDING	Budget watchdog	Wall (sole exception, section 13.5)	Scenario wall time ≥ threshold	Cancel reads; compose truthful status from committed facts and ledgers; FINAL with snapshot
+33	Any	Manifest update	M	—	New catalog version; plan steps whose tools changed or disappeared become invalid (their read sets include catalog.version and tool digest); in-flight calls remain tracked
+Triage fallback. If interpretation fails for the interrupting turn (worker error after retry), TaskController resolves from QuickDetector signals: no values and no cues → treat as BACKCHANNEL; values or cues present → CLARIFY. This keeps triage from holding indefinitely.
+
+6.4 Goal lifecycle
+Transition	Trigger
+(new) → ACTIVE	Accepted NEW_GOAL
+ACTIVE → SUSPENDED	Replacement by a new goal
+SUSPENDED → ACTIVE	RETURN_TO_GOAL
+ACTIVE → COMPLETED	FINAL emitted
+ACTIVE → FAILED	Transition 13 or 20
+ACTIVE or SUSPENDED → ABANDONED	ABORT, or suspended goal never resumed by scenario end (logged only)
+7. Tool execution model
+7.1 Stages
+Stage	Owner	READ	WRITE
+Request	Planner proposes a step; PlanExecutor finds it ready	Ready when after steps are consumed	Ready when after steps are consumed and commit_intent true
+Call creation	ArgBinder	Bind; validate schema; compute read set	Same; additionally no HYPOTHESIS inputs and no open conflicts
+call_id	PlanExecutor	Deterministic counter	Same
+Admission	— / CommitGate	Emit unless held by triage	CommitGate G1–G9 (section 7.4); effect PENDING written before emission
+Execution	Harness mock	Deadline timer set: emitted_ts + deadline(tool)	Same
+Interruption or cancellation	InvalidationEngine → kernel	CANCEL on invalidation	CANCEL on invalidation per section 8.2; effect stays PENDING until outcome known
+Completion	ResultRouter	Section 3.6	Section 3.6; effect updated in every outcome
+Validation	ResultRouter	Payload shape; relevance	Same
+State update	Reducers	result.*, derived.* facts	Same, plus effect CONFIRMED or FAILED
+Snapshot	SnapshotProjector	At next snapshot-bearing emission	Same
+7.2 Call lifecycle
+read set invalid before admission
+
+triage hold
+
+hold released and read set valid
+
+hold released and read set invalid
+
+commit gate refuses
+
+blocking condition clears
+
+step invalidated
+
+emitted
+
+valid result
+
+result with invalid read set
+
+result for suspended goal
+
+error result
+
+cancel emitted
+
+harness time beyond deadline
+
+no result by deadline under default policy
+
+result arrives
+
+late valid result
+
+late result invalid
+
+retry issued or given up
+
+Proposed
+
+Discarded
+
+Held
+
+Blocked
+
+InFlight
+
+Consumed
+
+Stale
+
+Retained
+
+Failed
+
+CancelRequested
+
+DeadlinePassed
+
+Cancelled
+
+CompletedAfterCancel
+
+Terminal states: Discarded, Consumed, Stale, Retained, Failed, Cancelled, CompletedAfterCancel. A terminal call never changes state again; later results are logged and ignored.
+
+DeadlinePassed for a WRITE never leads to an automatic retry. It sets the effect to UNKNOWN and triggers reconciliation (transition 19).
+
+7.3 Read-only and state-modifying tools compared
+Aspect	READ	WRITE
+Speculation	Permitted by policy (section 11)	Never
+Inputs	May be COMMITTED, CONFIRMED, DERIVED; HYPOTHESIS only if speculative policy allows	COMMITTED, CONFIRMED, or accepted DERIVED only
+Parallelism	Independent reads emitted in the same step	One in flight per lineage
+Triage	New reads held; in-flight reads cancelled only on invalidation	New writes held; in-flight writes cancelled only on invalidation or explicit hold cue
+Retry on error	Up to read_retries (default 2), new call_id each	Only if the error is classified retryable by policy; at most 1
+Retry on deadline	Yes, within read_retries	Never; effect UNKNOWN
+Result after cancel	Logged, ignored	Effect CONFIRMED; reconcile
+Snapshot impact	Derived facts may enter snapshot if mapped to slots	Same
+7.4 CommitGate
+Every condition must hold. The gate is evaluated in the decide phase each step while a WRITE step is ready; a refused step stays Blocked and is re-evaluated when any blocking fact changes.
+
+ID	Condition	Protects
+G1	Tool exists and is USABLE in the current catalog version	O1
+G2	Step's goal is goal.active; call read set valid	P1, P5
+G3	Floor is USER_TURN_CLOSED and task state is not TRIAGE	W1 (no commit while the user may be correcting)
+G4	Every bound argument comes from COMMITTED, CONFIRMED, or accepted DERIVED facts; none HYPOTHESIS; no OPEN conflict on any argument	W3, M2
+G5	goal.<gid>.commit_intent is true	Prevents unrequested state changes
+G6	No effect with the same fingerprint in PENDING, CONFIRMED, or UNKNOWN	W1 (duplicates)
+G7	No effect in the same lineage in PENDING or UNKNOWN; if one is CONFIRMED with different arguments, route to ReconcilePolicy instead of emitting	W1 (double booking), W2
+G8	Arguments validate against the tool schema	O1
+G9	No intended action in the current step with the same step_key and fingerprint	Idempotent proposal handling
+When all hold: write effect PENDING (lineage, fingerprint, call_id) in the decide phase, then emit. If the EmissionGate rejects the call, the effect becomes FAILED with reason LOCAL_REJECT; nothing reached the harness.
+
+Fingerprint. Digest of tool name plus canonical arguments. Canonicalization: keys sorted; strings trimmed and whitespace-collapsed; enum values matched to schema spelling; dates and times in ISO form; numbers normalized. Policy duplicate_key can switch the definition (section 20) once the kit defines a duplicate.
+
+Why commit intent is required. The harness scripts user events. A plan that concludes a booking is useful when the user only asked to search would issue an unrequested state change that no scenario can justify. The cost is that some scenarios may need an explicit confirmation turn; the interpreter treats imperative requests ("book the 6 pm flight") as commit intent, so explicit requests need none.
+
+7.5 Effect lifecycle
+From	To	Trigger
+—	PENDING	CommitGate admits
+PENDING	CONFIRMED	Success result (consumed, stale, retained, or after cancel)
+PENDING	FAILED	Error result; or local emission reject
+PENDING	UNKNOWN	Write deadline passes without result
+PENDING (cancel requested)	CANCELLED_INFERRED	Deadline passes with no result, under cancel_confirmation = NO_RESULT_BY_DEADLINE
+PENDING (cancel requested)	UNKNOWN	Same, under cancel_confirmation = NEVER_ASSUME
+UNKNOWN	CONFIRMED or FAILED	Late result; or a read-only verification tool result
+CONFIRMED	COMPENSATED	Successful compensating call
+G6 and G7 treat PENDING, CONFIRMED, and UNKNOWN as blocking. FAILED and CANCELLED_INFERRED do not block.
+
+7.6 ReconcilePolicy
+Raised when a WRITE effect exists that the current intent does not want (superseded arguments, abandoned goal) or whose outcome is unknown.
+
+Situation	Default resolution
+Effect UNKNOWN; catalog has a read-only tool that can verify it (planner-identified from descriptions)	Plan verification read; resolve from result
+Effect UNKNOWN; no verification tool	INFORM truthfully ("I haven't received confirmation for the booking"); do not re-issue; ask whether to try again (CLARIFY)
+Effect CONFIRMED with superseded arguments; catalog has a modify or cancel tool for the same resource	The user's correction is treated as commit intent for the change; plan modify (preferred, one write) or cancel-then-new
+Effect CONFIRMED with superseded arguments; no compensating tool	INFORM that the earlier action went through and cannot be changed here; CLARIFY whether to proceed with the new one as well
+Effect CONFIRMED for an abandoned goal	INFORM once in the abort response
+Policy reconcile_superseded selects between compensation and asking (section 20).
+
+7.7 Tool catalog handling
+Parsing. Each tool is validated independently. Required: name, parameter schema parseable as JSON Schema subset (types, required, enums, formats), mutability. A tool failing validation is QUARANTINED (not callable) and logged; the rest of the manifest is used.
+
+Mutability. Taken from the declared field (name set by policy mutability_field once the kit is known). Missing or unrecognized → WRITE, mutability_source = DEFAULTED (W5). Description heuristics may upgrade a declared READ to WRITE when the description contains strong mutation verbs (policy mutability_upgrade_heuristic, default ON); they never downgrade.
+
+Duplicate tool names. The first definition in manifest order is kept; later ones are quarantined. Deterministic.
+
+Unseen tools. No component contains a tool name. The Planner receives names, descriptions, and schemas; ArgBinder uses schemas; mutability comes from the catalog. Frame-accepting parameters (image type, frame identifier) are detected from schema and marked frame_param.
+
+Manifest updates. Each manifest event creates a new catalog version. Plan steps and calls include catalog.version and a per-tool digest in their read sets. Steps whose tool changed or disappeared are invalidated. In-flight calls to removed tools stay tracked; their results are processed normally.
+
+7.8 Tool lifecycle sequence (chain: search, then booking after confirmation)
+EmissionGate
+Planner
+Kernel
+Harness
+EmissionGate
+Planner
+Kernel
+Harness
+chunks and end of turn t0 "find flights to Pune on Friday"
+SPEAK ACK "Looking for Friday flights to Pune"
+PLAN job with read set goal, destination, date
+plan proposal step s1 search_flights
+read set valid, accept plan rev 1
+TOOL_CALL c1 search_flights
+result c1 at t1
+match c1, read set valid, consume, derived options
+FINAL "Three flights, the cheapest leaves at 6 am" with snapshot
+chunks and end of turn t2 "book the 6 am one"
+interpretation CONFIRM, commit_intent true, selected flight committed
+PLAN job
+plan rev 2 adds s2 book_flight
+CommitGate G1 to G9 pass, effect PENDING
+SPEAK ACK "Booking the 6 am flight now"
+TOOL_CALL c2 book_flight
+result c2 success
+consume, effect CONFIRMED
+FINAL "Booked, confirmation reference from result" with snapshot
+8. Interruption handling, cancellation propagation, plan invalidation
+8.1 Propagation algorithm
+Triggered in the invalidate phase whenever a fact changes.
+
+Collect changed keys from the apply phase.
+For each key, fetch dependents from DependencyIndex.
+For each dependent, re-evaluate its read set with the validity rule (a changed version with an equal digest is still valid).
+Mark invalid dependents by type:
+Dependent type	Mark	Decide-phase action
+In-flight READ call	INVALIDATED_PENDING_CANCEL	Emit CANCEL this step
+In-flight WRITE call	INVALIDATED_PENDING_CANCEL	Emit CANCEL this step; effect stays PENDING; start reconciliation tracking
+Proposed, held, or blocked call	DISCARDED	None
+Worker job	ABORTED	Signal cancel token; its eventual result is rejected by read set anyway
+Held proposal	Dropped	None
+Unsent utterance	Dropped	FastResponder may produce a replacement
+Plan step	STALE	Rebinder or Planner produces replacement (section 8.4)
+Clarification pending	VOID if its targets changed by other means	None
+Conflict	VOID if a candidate's source fact was retracted or its step removed	None
+Unregister released read sets from the index.
+Cost is proportional to the number of affected dependents, not session size. This is what allows cancellation in the same step as the invalidating fact change.
+
+8.2 When facts change in response to an interruption: cancellation anchors
+The analysis identified an unresolved tension (its section 5.6): cancellation is due within a few milliseconds, but knowing what changed usually requires interpretation. The architecture offers three anchors, selected by policy cancel_anchor. The EOT anchor is always active; the other two add earlier cancellation.
+
+Anchor	Fact change that triggers cancellation	When it fires	Risk
+SIGNAL	On INTERRUPTION, facts hyp.<turn>.at_risk for every user-derived slot are set, invalidating reads that depend on user slots	Same step as the signal	Cancels valid reads on backchannels; re-issue may count as re-run [Q2, Q6]
+CHUNK (default)	QuickDetector writes a HIGH-confidence hypothesis that differs from a slot an in-flight call depends on, and a correction or interruption context exists; the kernel treats that hypothesis as invalidating for in-flight calls (not for committed facts)	Same step as the chunk containing the new value	Misses corrections the detector cannot parse; those are caught at EOT
+EOT (always)	Committed interpretation changes facts	Same step as EOT when speculative interpretation is ready for the final digest; otherwise when the interpreter returns	Late when interpretation was not ready
+Chunk-anchor rule, precisely. For an in-flight call c and slot s in c's read set, cancel c if all hold:
+
+QuickDetector produced candidate value v for s with HIGH confidence (exact schema enum match, unambiguous parsed date or number with a unique compatible slot, or exact match with a value already seen in this session for the same slot type);
+canonical(v) ≠ current value of s;
+the turn is an interruption, or occurs while the goal is active, or contains a correction cue.
+Write hold cue. For in-flight WRITE calls only, policy write_hold_on_wait_cue (default ON) also cancels on an explicit hold or negation cue addressed to the action ("wait", "hold on", "don't book", "stop"). Cancelling a write that should have proceeded is recoverable: once cancellation is confirmed, the gate admits it again; if it completed anyway, the effect is CONFIRMED and nothing is re-issued. Not cancelling a write that should have stopped is not recoverable.
+
+Why speculative interpretation makes the EOT anchor fast. Interpretation of the transcript prefix runs while the user is still speaking. At EOT, if the final digest equals the digest of the ready interpretation, the kernel applies it in the same step, so EOT-anchored cancellation happens with no model latency (section 11.3).
+
+8.3 Hold mode during triage
+On entry to TRIAGE, emissions other than CANCEL are held: new tool calls, speech, clarifications, and final responses produced during triage go to ProposalHold with their read sets. Tool results and worker results continue to be processed, so facts stay current and valid work keeps its results.
+
+On resolution:
+
+Resolution	Held proposals
+Backchannel or progress question	Re-validate; release valid ones in emission order
+Slot update or addition	Re-validate; invalid ones are already dropped by invalidation; release valid reads; speech is regenerated from the new state rather than released
+Goal replacement or return	Drop all held speech; release nothing goal-bound for the old goal
+Abort	Drop all
+Clarify	Keep holds for work that depends on the question's targets; release the rest
+This avoids both failure modes named in the brief: discarding valid work, and emitting work computed before the interruption.
+
+8.4 Replanning: rebind first, plan second
+A localized correction usually leaves plan structure intact. The Rebinder handles it without a model call.
+
+Rebind is used when the interpretation is SLOT_UPDATE, every changed slot is bound via FACT bindings in existing steps, and no step's tool choice depends on the changed value (planner marks steps whose tool selection was value-dependent with structure_depends_on).
+
+Rebind procedure. For each STALE step: resolve bindings against current facts; if the fingerprint equals a CONSUMED call's fingerprint whose read set is now valid (reversion), reuse that result; otherwise create a new call. Downstream steps whose upstream result was invalidated become STALE and are re-bound when the upstream is consumed again. plan_rev increments.
+
+Planner is used when the act is NEW_GOAL, ADDITION, or RETURN_TO_GOAL with changed facts; when a changed value affects tool selection; or when rebind fails validation. The planner receives the current plan and the change set, and the kernel carries over steps with matching step_key and resolved arguments (section 3.5).
+
+Trade-off: rebinding is deterministic and fast but cannot notice that a correction makes a different tool appropriate. structure_depends_on marks limit that risk to cases the planner flagged.
+
+8.5 Goal replacement
+In one step, on acceptance of NEW_GOAL:
+
+Create g_new; set goal.active = g_new. Every goal-bound read set of the old goal becomes invalid.
+Old goal → SUSPENDED; its task state is recorded.
+Invalidation cancels in-flight calls of the old goal. Completed results are RETAINED under the old goal.
+Carry-over: session-scoped facts remain. Goal-scoped slots are copied to g_new only when the interpretation's slot_deltas reference them, or, under policy slot_carryover = NAME_MATCH_USER_STATED, when the new goal's schema has a parameter with the same name and the old value was user-stated (not derived from an old-goal tool result).
+Pending clarifications and conflicts of the old goal → VOID.
+Emit ACK for the new goal; snapshot with new intent at the next snapshot-bearing emission.
+Any WRITE effects of the old goal that are PENDING or CONFIRMED are reported once, truthfully, when relevant (W4).
+Return to a suspended goal. goal.active returns to the old goal_id. Read sets that include it become valid again, so RETAINED results whose other dependencies are unchanged are reused. Cancelled calls are not reused (section 3.3).
+
+8.6 Rapid interruptions
+Each interruption and each chunk is applied in order within the step engine; nothing special is needed for correctness. Three rules prevent wasted work:
+
+Speculative interpretation is coalesced per turn (section 11.3), so intermediate prefixes do not each spawn a model call.
+A proposal computed for an intermediate state is rejected by read-set validation and never emitted.
+The planner is not dispatched while the floor is open during triage unless plan_during_open_turn is ON (default OFF); rebinding, which is cheap, may run.
+8.7 Interruption sequence: correction during an in-flight read
+EmissionGate
+Interpreter
+QuickDetector
+Kernel
+Harness
+EmissionGate
+Interpreter
+QuickDetector
+Kernel
+Harness
+c1 search_flights destination Pune in flight
+INTERRUPTION t2
+enter Triage, hold mode, prior state Executing
+chunk "actually make it Mumbai" t3
+detect on chunk
+destination Mumbai HIGH, correction cue
+hypothesis differs from slot in c1 read set
+CANCEL c1 in same step as t3
+speculative INTERPRET on prefix
+SLOT_UPDATE destination Mumbai, digest d1
+END_OF_TURN t4, final digest d1
+digests match, commit slot, rebind step s1
+SPEAK ACK "Mumbai instead, searching now"
+TOOL_CALL c3 search_flights destination Mumbai
+late result c1
+c1 CancelRequested, record CompletedAfterCancel, not consumed
+result c3
+consume
+FINAL grounded in c3 with snapshot destination Mumbai
+8.8 Interruption sequence: correction during an in-flight write
+EmissionGate
+EffectLedger
+Kernel
+Harness
+EmissionGate
+EffectLedger
+Kernel
+Harness
+b1 book_flight for the 6 pm flight in flight, effect PENDING
+alt
+[catalog offers modify or cancel for bookings]
+[no compensating tool]
+alt
+[no result for b1 by deadline]
+[b1 success arrives after cancel]
+INTERRUPTION and chunk "wait, the 8 pm one"
+CANCEL b1 via chunk anchor and hold cue
+END_OF_TURN
+commit selected flight 8 pm, lineage has b1 PENDING, gate blocks b2
+b1 CANCELLED_INFERRED
+gate re-evaluated, G1 to G9 pass for b2
+SPEAK ACK "Switching to the 8 pm flight"
+TOOL_CALL b2 book_flight 8 pm
+result b1 success
+b1 CONFIRMED, reconcile
+TOOL_CALL m1 modify booking to 8 pm
+SPEAK INFORM "The 6 pm booking had already gone through"
+CLARIFY "Should I also book the 8 pm flight?"
+9. Fast path and slow path behavior
+9.1 Behavior after each trigger
+Trigger	Same-step kernel actions (fast path and coordination)	Slow-path dispatch	Emitted in the same step	Never
+User starts speaking (first chunk or audio clip after a closed turn; no active goal)	Open turn; floor → USER_TURN_OPEN; QuickDetector on content	Speculative INTERPRET on prefix; speculative VISION if visual cue and frames exist; ASR if audio-only mode	Nothing	Speaking over the user
+User speaks while a goal is active (with or without interruption signal)	As above plus transition 23: record prior state, hold mode, anchor rules	Same	CANCEL for calls invalidated by anchor rules	Emitting held work
+Partial transcript chunk	Append; update prefix digest; QuickDetector; write HIGH hypotheses; chunk-anchor cancellations; perception trigger check	Coalesced speculative INTERPRET; speculative PLAN if interpretation of an earlier prefix gave a NEW_GOAL with HIGH confidence and no active goal	CANCEL only	Tool calls from hypotheses unless spec_reads allows; speech
+End of turn	Close turn; floor → USER_TURN_CLOSED; if a ready interpretation matches the final digest, apply it (transitions 4–6 or 26–31)	If no match: INTERPRET on final transcript (non-speculative); after acceptance: rebind or PLAN	If interpretation applied: CANCEL for newly invalidated calls, ACK (or CLARIFY), READ calls from a rebind or promoted speculative plan. If not yet interpreted: ACK from QuickDetector only under the ACK rules below	Writes from a turn not yet interpreted
+Interruption signal	Transition 23; SIGNAL-anchor rules if configured; drop unsent utterances	None new; running jobs continue and their proposals will be held	CANCEL only	Any speech
+Tool result	ResultRouter; PlanExecutor schedules ready steps; CommitGate for ready writes; reconciliation check	COMPOSE when plan completes; PLAN when failure with alternative	PROGRESS if the result changes what the user knows; next READ calls; admitted WRITE with ACK; nothing if in triage (held)	Narrating stale or retained results
+New video frame	Store observation; PerceptionScheduler relevance check (section 10.4)	VISION only if a question is open and relevant, or watch mode applies	CANCEL if an accepted claim is superseded and dependent calls exist	Analyzing every frame; speaking about frames nobody asked about
+New audio clip	Store; in audio-only mode schedule ASR; in transcript-primary mode store only	ASR per mode	Nothing	Treating a clip that duplicates text as a second request
+Worker result	Validate read set; accept, hold, or reject; apply accepted proposal	Follow-on jobs	Actions caused by the accepted proposal	Emitting from rejected proposals
+Hold timer (no ledger transition for hold_after_ms while EXECUTING and floor closed)	UtteranceBudget check	None	At most one HOLD per step and max_holds_per_goal per goal, naming the actual in-flight step	Content-free repetition
+9.2 QuickDetector specification
+Deterministic, schema-aware, high precision. It is allowed to miss; it is not allowed to guess.
+
+Inputs. Current chunk; turn text so far; current catalog; current slot facts; values seen this session (from user statements and tool results, grouped by slot name); scenario reference date if known (policy reference_date_source).
+
+Extractors.
+
+Extractor	HIGH confidence when
+Enum values	Exact (case-insensitive) match with an enum value of a parameter of a tool relevant to the active goal
+Dates and times	Absolute dates and times parse unambiguously; weekday and relative-day expressions only when a reference date is known
+Numbers	Explicit numeral or number word adjacent to a unit or noun matching exactly one numeric parameter
+Session entities	Exact match with a value previously seen for a slot name, and only one slot name has that value type
+Cues	Lexicons: correction ("actually", "no,", "I mean", "instead", "make it", "change it to", "not … but"); hold ("wait", "hold on", "stop", "don't"); abort ("never mind", "forget it", "cancel everything"); backchannel ("ok", "okay", "mm-hmm", "uh-huh", "yeah", "right", "go on", "sure"); visual ("this", "that one", "here", "look", "see", "screen", "light", "shows")
+Outputs. ChunkSignals{values[(slot, value, confidence)], cues[], backchannel_only (bool), visual_reference (bool)}. Only HIGH values produce hypotheses that can drive cancellation or acknowledgments; MEDIUM and LOW values are discarded.
+
+Lexicons are English by assumption; they are configuration, not code.
+
+9.3 FastResponder and utterance rules
+Utterance kinds and what each may claim
+
+Kind	When	May claim	Must not
+ACK	Once per closed user turn that starts or changes a task	UNDERSTOOD facts (committed, or HIGH hypotheses phrased as understanding); IN_PROGRESS for calls actually emitted in the same step	Results; effects; values not in its read set
+PROGRESS	A consumed result changes what the user can know, or a write is emitted	RESULT facts consumed; IN_PROGRESS for in-flight calls	Completion of the goal; effects not CONFIRMED
+HOLD	Hold timer	IN_PROGRESS of a named in-flight call	New facts
+CLARIFY	ClarificationManager decision	QUESTION about targets	Asking about a target that has an ingested answer
+REPAIR	A prior utterance's claim became false (e.g., value spoken in an ACK changed) and the user has not already been told	UNDERSTOOD of new value	Blame; long explanation
+INFORM	Reconciliation, failure, quarantine, abort with effects	EFFECT_* and failure facts	Speculation about causes
+FINAL	Composer output passes validation, or template fallback	RESULT, EFFECT_DONE, EFFECT_FAILED facts in the ResponsePlan	Anything outside the ResponsePlan
+ACK rules at end of turn when no interpretation is ready. Emit a content-bearing ACK only if QuickDetector produced at least one HIGH value and the goal intent is known (active goal, or a speculative interpretation of an earlier prefix gave a HIGH-confidence intent). Otherwise emit nothing and let the interpretation's ACK go out when it arrives. Under clock Model B this costs no latency; under Model A it trades a few hundred milliseconds for truthfulness.
+
+UtteranceBudget defaults (harness time; section 20)
+
+Rule	Default
+No speech while floor open	ON
+Minimum gap between non-final utterances	1500 ms
+One ACK per closed user turn	ON
+HOLD after no ledger transition	2500 ms
+Max HOLD per in-flight step / per goal	1 / 2
+PROGRESS only on user-visible information change	ON
+Suppress PROGRESS if FINAL will be emitted in the same step	ON
+Phrasing. Templates per kind, parameterized by facts. Variation is chosen deterministically (digest of session ID and utterance counter modulo template count) to avoid verbatim repetition while keeping replays identical. When the interpretation supplies ack_phrase, it is used after the truth checks in section 15.3.
+
+9.4 Slow-path jobs
+Job	Input view	Output	Validation on return	Concurrency
+INTERPRET	Transcript prefix; active goal intent and slots; suspended goals summary; pending clarification; catalog summary; recent utterances	TurnInterpretation	Structured schema; slot names exist in relevant tool schemas or session scope; read set valid; digest equals current prefix digest (or is a prefix of it, for coalescing)	One per turn; coalesced
+PLAN	Goal intent; committed facts; catalog (names, descriptions, schemas, mutability); current plan; change set; failure context	Plan	Tools exist and USABLE; bindings reference existing facts or earlier steps; WRITE steps flagged; acyclic; read set valid	One per goal; newest wins
+COMPOSE	ResponsePlan (facts with IDs, effects, open questions)	Text	Truth checks (section 15.3)	One per goal
+VISION	Frame bytes; question targets and descriptions	Claims	Claim names in question targets; confidence band present	Max vision_concurrency (default 1); coalesced per question
+ASR	WAV bytes; clip ts	Segments with offsets	Non-empty; offsets within clip	Max asr_concurrency (default 1); FIFO
+Model settings. Temperature 0 or lowest available; structured output mode; bounded output length; transport timeout in wall time (a transport timeout produces FAILED, never a decision about the harness). Worker failures are retried once, then the kernel uses the documented fallback (template response, detector-based triage, or clarification).
+
+9.5 ClarificationManager
+Ask when (any):
+
+A required parameter of a ready step has no binding source, and evidence cannot supply it;
+An OPEN conflict affects arguments of a ready step, and both candidates are MEDIUM or higher;
+The interpretation reports an ambiguity whose resolution changes arguments or intent;
+A perception target needed by a step is only LOW confidence.
+Do not ask when: the target has a value in an ingested user event (including the current open turn after it closes); the ambiguity affects only phrasing; the question would duplicate a pending one.
+
+One question at a time, targeting the item that blocks the most ready steps. The clarification blocks only steps that depend on its targets; unrelated reads continue.
+
+Unanswered clarifications. Policy clarification_reprompt (default ONCE, after clarify_reprompt_ms = 6000 harness ms with floor closed and no user input). Policy unanswered_clarification (default WAIT) never proceeds with a write.
+
+10. Multimodal architecture
+10.1 Scope decisions
+Included: aligning frames to utterances; question-driven frame analysis; claims with ordinal confidence; conflicts with user statements; ASR when the scenario gives only audio.
+
+Deliberately excluded until the kit shows a need: continuous video understanding, object tracking, prosody or emotion analysis, speaker diarization, non-speech sound classification, ASR on audio that already has a transcript. Each adds latency and failure modes without a stated scoring benefit.
+
+10.2 Entry by modality
+Modality	Entry	Becomes	Content path
+Text chunk	Ingress	Turn chunk (class 2)	TurnManager → QuickDetector → Interpreter
+Audio clip, audio_mode = TRANSCRIPT_PRIMARY	Ingress	Observation (stored)	Not analyzed; text chunks carry content
+Audio clip, audio_mode = AUDIO_ONLY	Ingress	Observation + ASR job	ASR segments → SYNTHETIC_CHUNK events with ts = clip capture ts + segment offset, class 2; end of turn from harness marker, or from ASR end-of-utterance if policy asr_closes_turn is ON
+Audio clip, audio_mode = AUTO (default until Q8 is answered)	Ingress	Observation + ASR job	ASR segments are held for dedupe_window_ms; if text chunks covering the same capture window arrive, ASR output is discarded; otherwise released as synthetic chunks
+Video frame	Ingress	Observation (stored)	Analyzed only on demand (section 10.4)
+Hesitations and self-repairs in ASR output are preserved verbatim; the Interpreter resolves them. Stripping disfluencies would remove exactly the evidence accessibility scenarios test.
+
+10.3 Evidence representation and time
+Each observation carries capture_ts (harness timestamp of the event, treated as capture time [Assumption]) and arrival_ts (step in which it was ingested). Each analysis records the job's completion step. Decisions use capture time for alignment and completion for freshness.
+
+Alignment (correlation). A question created from an utterance has anchor_ts = timestamp of the chunk containing the visual reference (or end of turn if none).
+
+AT_UTTERANCE questions ("what does this light mean") use the latest frame with capture_ts ≤ anchor_ts; if none, the earliest frame after it within align_window_ms (default 1000).
+CURRENT_STATE questions ("the light keeps blinking", or a plan step that needs the device's present state) use the latest frame, and may re-analyze newer frames (watch mode).
+The Interpreter sets the mode through visual_reference plus tense cues; the default is AT_UTTERANCE.
+
+Freshness. A claim for a CURRENT_STATE question is fresh while no newer analyzed frame for the same question contradicts it. A frame gap (no frames for gap_ms, default 3000) does not invalidate a claim, but a CURRENT_STATE question with a gap longer than gap_ms before a WRITE step triggers a request for a fresh view instead of assuming persistence.
+
+10.4 Perception scheduling
+A VISION job runs only when one of these holds.
+
+Trigger	Question	Speculative
+QuickDetector visual_reference in an open turn and frames exist	Generic: device identity and salient visible state	Yes (internal only)
+A ready or planned step has a required argument whose binding is FRAME(question_id), or a missing required argument the planner marked visual_candidate	Targeted: the argument names and descriptions	No
+Watch mode: a CURRENT_STATE question has an accepted claim and a dependent call is in flight, and a newer frame arrives	Same question	No
+Tool-side vision. If the relevant tool has a frame_param, the kernel binds the aligned frame's identifier and performs no agent-side analysis for that argument (policy vision_mode = AUTO prefers this). This removes a slow worker from the critical path when the mock environment supports it [Q9].
+
+Coalescing. At most one running VISION job per question. A newer frame for a running question is remembered as latest_pending. When the job completes: AT_UTTERANCE questions ignore latest_pending; CURRENT_STATE questions analyze latest_pending once if watch mode applies.
+
+Cancellation. A VISION job's read set includes goal.active and the question's target facts. Goal replacement or a correction that changes the targets aborts the job through ordinary invalidation. There is no harness action for internal cancellation; the job's cancel token is signalled and any returned proposal is rejected.
+
+10.5 Confidence, conflicts, and relevance
+Confidence bands. The VisionAnalyzer returns HIGH, MEDIUM, or LOW per claim (verbalized by the model and mapped; treated as ordinal, not calibrated probability).
+
+Band	Use in reads	Use in writes	Clarify
+HIGH	Accept as DERIVED fact	Accept	No
+MEDIUM	Accept as DERIVED fact; utterances hedge ("it looks like")	Block (G4)	If a write needs it
+LOW	Do not accept	Block	If any ready step needs it
+Conflict rules (SlotResolver).
+
+Situation	Resolution
+User-stated value and claim agree	Accept; provenance lists both
+User-stated value vs. claim LOW	User value stands; no conflict
+User-stated value vs. claim MEDIUM or HIGH, different	Open conflict; blocks steps using the slot; CLARIFY naming both values
+Two claims from frames for a CURRENT_STATE question differ	Newer claim supersedes only after stability_k consecutive analyzed frames agree (default 2), or one HIGH claim replaces a previous MEDIUM or LOW claim
+Superseding claim changes a slot used by in-flight calls	Ordinary invalidation cancels them
+Goal changes or target slot corrected by user	Conflicts on old targets become VOID
+Relevance. Evidence is always stored; relevance is decided only by questions. Frames with no open question are never analyzed, so evidence that becomes irrelevant after an interruption costs nothing. Retained observations can serve a later question (for example, a return to a suspended troubleshooting goal).
+
+10.6 Multimodal sequence: conflict, then an interruption that changes the visual question
+EmissionGate
+VisionAnalyzer
+Kernel
+Harness
+EmissionGate
+VisionAnalyzer
+Kernel
+Harness
+frames f1 and f2 stored, not analyzed
+chunk "the light on my Tab A keeps blinking" t5
+visual cue, CURRENT_STATE question q1, latest frame f2
+speculative VISION q1 on f2
+END_OF_TURN t6
+SPEAK ACK "Let me check what that blinking light means"
+device Tab S9 HIGH, indicator amber blinking HIGH
+user said Tab A, claim HIGH differs, open conflict, block manual_lookup
+CLARIFY "The camera shows a Tab S9. Is that the device you mean?"
+INTERRUPTION and chunk "sorry, it's the charger that's blinking" t8
+triage, interpretation retargets question to charger
+q1 conflict VOID, q1 claims retained, new question q2 AT_UTTERANCE
+VISION q2 on frame aligned to t8
+charger indicator red solid MEDIUM
+TOOL_CALL c7 manual_lookup charger indicator red solid
+result c7
+FINAL hedged "It looks like a solid red light, which the manual says means" with snapshot
+11. Speculative execution
+11.1 Classes
+Class	What	Default	Visible in trace	Invalidation	Promotion
+Speculative reasoning: interpretation	INTERPRET on transcript prefixes	ON	No	Prefix digest differs from final digest in a way not covered by the interpretation	Final digest equals job digest → apply at EOT in the same step
+Speculative reasoning: planning	PLAN from a HIGH-confidence speculative interpretation with no active goal	ON	No	Committed interpretation differs in intent or in any fact the plan read	All read-set facts equal after commit (validity rule) → accept without re-planning
+Speculative multimodal processing	VISION on visual-cue frames before EOT; ASR on clips in AUTO mode	ON	No	Question voided or retargeted; goal changes	Question remains after EOT → claims used
+Safe speculative reads, after EOT	READ steps independent of a pending clarification's targets; independent READ steps in parallel	ON (spec_reads = AFTER_EOT_INDEPENDENT)	Yes	Read-set invalidation → CANCEL	Consumed normally
+Safe speculative reads, before EOT	READ calls from HIGH hypotheses during an open turn	OFF (spec_reads = PARTIAL_HIGH_CONF enables)	Yes	Committed value differs → CANCEL	Hypothesis equals committed value → call keeps running; read set re-registered on committed fact
+Pre-fetching likely next reads	Reads for a step the user has not requested yet	OFF	Yes	User chooses differently → CANCEL	Consumed if later requested
+Speculative speech	ACK from HIGH hypotheses at EOT before interpretation	Limited (section 9.3)	Yes	Committed value differs → REPAIR	—
+Speculative snapshot values	Hypotheses in snapshots	Never	—	—	—
+Unsafe speculative state changes	Any WRITE before commit intent and committed arguments; reservation or hold tools unless declared READ	Never	—	—	—
+11.2 Why these defaults
+Internal speculation risks only compute. Visible speculation also risks trace penalties that the kit has not defined [Q6]. The defaults therefore take every internal speculation and only those visible speculations whose inputs are already committed. The two OFF settings are the first to enable if the kit shows extra read calls are not penalized.
+
+11.3 Speculative interpretation coalescing
+On a chunk: if no INTERPRET job is running for the turn, dispatch one on the current prefix. If one is running, record that the prefix has grown.
+When a job completes: if the prefix has grown and the turn is still open, dispatch one new job on the latest prefix.
+At EOT: if the running or completed job's digest equals the final digest, wait for or apply it. Otherwise, abort a running job and dispatch a non-speculative job on the final transcript.
+This bounds model calls per turn to roughly (turn duration ÷ interpretation latency) + 1 while keeping at most one job in flight.
+
+11.4 Promotion rule for hypothesis-based work
+Work that read hyp.<turn>.<name> records the hypothesis value's digest. When the turn's interpretation commits slot.<gid>.<name>, the kernel re-registers such work against the committed fact if and only if the digests are equal. Otherwise the work is invalid and handled by section 8.1.
+
+12. State snapshot generation
+12.1 Projection
+Snapshot = project(active goal):
+
+intent: value of goal.<gid>.intent, mapped through policy intent_label_source [Q5].
+slots: every slot.<gid>.<name> with status COMMITTED, CONFIRMED, or accepted DERIVED; plus session.<name> facts mapped into the goal's parameter names when the goal's tools declare those names. Values are canonical and cast to the schema type of the corresponding tool parameter.
+Excluded: HYPOTHESIS facts, MEDIUM or LOW claims not accepted, slots with OPEN conflicts (reported with their user-stated value if one exists, otherwise omitted) [Assumption], suspended goals' slots.
+CLEAR deltas remove the slot rather than setting null, unless the schema requires explicit nulls (codec setting).
+The projection is computed in the emit phase from current state; nothing is cached (S3).
+
+12.2 When snapshots are emitted
+Policy snapshot_carrier [Q5]:
+
+Setting	Behavior
+FINAL_ONLY	Snapshot attached to FINAL actions only
+ANY_SPOKEN (default if the schema permits a snapshot on non-final actions)	Attached to the first SPEAK, CLARIFY, INFORM, or FINAL emitted after the committed projection changed since the last emitted snapshot
+STANDALONE	Separate snapshot action emitted in the same step as the change, if the protocol defines one
+A correction therefore produces an updated snapshot no later than the acknowledgment of that correction, which is the behavior Interruption Recovery rewards ("updated state snapshots").
+
+12.3 Validation
+EmissionGate checks: intent present and non-empty; slot names belong to the active goal's parameter names or declared session names; types match; no duplicate keys; projection revision is not lower than the last emitted snapshot's revision (monotonicity guard; a violation indicates a kernel defect and is logged, and the current projection is re-computed).
+
+13. Virtual clock
+13.1 Three times, kept apart
+Time	Source	Used for	Never used for
+Logical event time	Harness timestamps on events; ClockPort.now() for internal events and emissions	Ordering, timers, deadlines, alignment, staleness, latency	—
+Execution time	Monotonic wall clock, read only by telemetry and the budget watchdog	Performance telemetry; 120 s cap protection	Any correctness decision
+Measured latency	Computed from logical timestamps in the trace	Scoring estimates and tuning	Runtime decisions
+13.2 ClockPort implementations
+Model [Q1]	now()	wake_at(t)	busy(flag)
+A — coupled	Harness-provided current time if exposed; otherwise harness time of last event plus scaled monotonic elapsed time since that event (the only permitted derivation)	Schedules a wake-up of the kernel loop at the wall moment corresponding to t	No-op
+B — stepped	Harness current virtual time	No wall waiting; timers fire when harness time advances past them	Reports busy while mailbox non-empty or any non-speculative job running; speculative jobs do not hold the clock (policy spec_blocks_clock = OFF)
+C — agent-stamped	Harness clock read	As A or B	As A or B
+A wake-up hint may use an asynchronous wait internally. That wait only decides when the kernel next looks at the clock; what happens is decided by now() and event timestamps. This is the difference between permitted scheduling and forbidden sleep-based correctness.
+
+13.3 Timers
+Timer	Default	Purpose
+deadline(tool)	Read 6000 ms, write 12000 ms; per-tool overrides from kit mock latencies	Timeouts, cancel inference
+hold_after_ms	2500	HOLD utterance
+min_gap_ms	1500	Pacing
+clarify_reprompt_ms	6000	Re-prompt
+compose_deadline_ms	1500	Template fallback if Composer is slow
+dedupe_window_ms	800	AUTO audio mode
+All are harness-time timers in the TimerWheel. Under Model B they fire only as harness time advances, which is the intended semantics: no wall-clock timer can cause a retry while virtual time stands still.
+
+13.4 Banned APIs in core modules
+time.time, time.monotonic, time.sleep, datetime.now, asyncio.sleep (except inside ClockPort implementations), and loop.time are banned in kernel, store, tool, perception, and conversation packages. Enforced by a static check in CI. Telemetry and the watchdog import a separate, explicitly named module.
+
+13.5 The single wall-clock decision
+The budget watchdog triggers transition 32 at watchdog_s (default 105 s) of scenario wall time. It exists because the 120 s cap is a wall-clock constraint [Spec G§6], and forfeiting the final response and snapshot costs more than an early truthful summary. It is logged distinctly and excluded from determinism tests.
+
+13.6 Latency accounting
+LatencyMeter computes, for each trigger event, the harness-time difference to the first emitted utterance whose kind is in substantive_kinds (default ACK with at least one UNDERSTOOD claim, PROGRESS, CLARIFY, REPAIR, INFORM, FINAL; HOLD excluded) [Q4]. It reports the metric against every candidate trigger (first chunk, end of turn, interruption signal) until the kit fixes the definition.
+
+13.7 Determinism
+Kernel decisions depend only on the ordered event batch and state: deterministic by construction.
+Worker outputs are the nondeterministic inputs. Replayer records them per job digest and substitutes recordings in tests.
+Under Model A, batch composition depends on arrival timing. TimingSweeper (section 16.5) tests correctness across compositions rather than assuming one.
+14. Concurrency model
+14.1 What runs concurrently
+Unit	Mechanism	Count
+Ingress	Async task	1
+Kernel step engine	Async task; each step fully synchronous	1
+LLM jobs (INTERPRET, PLAN, COMPOSE)	Async tasks using ModelGateway	≤ 1 per kind per turn or goal, plus coalescing
+VISION, ASR	Process pool (or thread pool if the inference library releases the GIL)	vision_concurrency, asr_concurrency
+Harness tool execution	External; the agent keeps no task per call	Unbounded
+Timers	Data in TimerWheel; one wake-up hint	—
+Tool calls need no agent-side tasks because results arrive as ordinary input events. This removes a whole class of races between call tasks and the kernel.
+
+14.2 What is serialized
+Everything that reads-then-writes session state or emits: reducers, invalidation, all decide-phase components, and emission. Serialization is by construction (single kernel task, synchronous step), not by locks.
+
+14.3 Coordination primitives
+Primitive	Where	Why
+Mailbox (async queue)	Ingress and workers → kernel	Single entry point; the only cross-task channel into state
+Thread-safe loop callback	Pool workers → mailbox	Moving results from pool threads or processes onto the event loop
+Cancel tokens	Kernel → workers	Cooperative abort of jobs
+Immutable job views	Kernel → workers	Workers never see mutable state; no read locks
+No locks on session state. A lock would be both unnecessary (single writer) and harmful (a worker holding it would stall ingestion).
+
+14.4 Cancellability
+Cancellable	How	Consequence
+Worker jobs	Cancel token; async task cancellation; pool results ignored	Compute waste only
+Held proposals, unsent utterances, proposed calls	Dropped in invalidation	None visible
+In-flight READ calls	CANCEL action	Visible; scored as prompt cancellation
+In-flight WRITE calls	CANCEL action as a request	Effect may still happen; reconciliation handles it
+Not safely cancellable	Why	Mitigation
+Actions already written to the output queue	Permanent in the trace	Emission happens only after invalidation in the same step (K3)
+Completed WRITE effects	Side effect exists	Effect ledger, compensation, truthful INFORM
+A kernel step in progress	Atomic by design	Steps are short (≤ 5 ms target)
+14.5 State mutation coordination
+Workers return proposals with read sets. In the step that ingests the result, the kernel runs the validity rule. Valid → apply (and dispatch follow-on work). Invalid → reject and, if the job kind is still needed, re-dispatch with a fresh view. This is optimistic concurrency control: no waiting for coordination, and conflicts resolved at commit.
+
+14.6 Stale detection
+All stale detection reduces to the validity rule over read sets (section 3.3), applied to: proposals (on worker result), calls (on tool result), held proposals (on triage resolution), blocked writes (on gate re-evaluation), and pending utterances (in invalidation).
+
+14.7 Simultaneous events
+Ordered by (ts, class, seq) within a batch (section 5.1), then applied sequentially, then decided once. Two events with identical ts and class keep queue arrival order.
+
+14.8 Synchronization deliberately avoided
+The kernel never awaits a worker. A step never waits for interpretation, planning, perception, or a tool.
+Emission is synchronous inside the step; no second queue sits between decision and harness.
+Speculative jobs do not hold the virtual clock under Model B.
+Reads are not serialized behind writes; only writes in the same lineage are.
+15. Protocol validation
+15.1 Inbound
+Check	On failure
+JSON decodes; event type known	MALFORMED_INPUT; dropped; logged
+Required fields per type present and typed	Same
+Timestamps present and numeric	Same; if missing on a harness event, use last known ts and log TS_MISSING [Assumption]
+Tool result references a known call	Section 3.6 step 1
+Manifest per-tool validity	Quarantine individual tools
+Binary payloads (WAV, PNG) decode	Observation marked UNREADABLE; never analyzed
+15.2 Outbound (EmissionGate)
+Check	Applies to
+Schema-valid against codec model; serializes to well-formed JSON	All
+call_id unique in session	TOOL_CALL
+Tool exists and is USABLE in current catalog; arguments validate against schema; no undeclared arguments	TOOL_CALL
+WRITE only if a PENDING effect was created in this step for this call_id	TOOL_CALL
+Target call_id issued, in INFLIGHT or DEADLINE_PASSED or INVALIDATED_PENDING_CANCEL, and not previously cancelled	CANCEL
+Read set valid at emission	All except CANCEL
+Snapshot validation (section 12.3)	Snapshot-bearing actions
+Non-empty text within length bound	Speech kinds
+Truth checks (section 15.3)	Speech kinds
+Emission order within step (section 5.2)	Batch
+On rejection: the action is not written. EMIT_REJECTED carries the reason. Fallbacks: speech → template of the same kind; FINAL → template FINAL from the ResponsePlan; TOOL_CALL → step FAILED with LOCAL_REJECT and replanning; CANCEL → logged only (a cancel that cannot be validly emitted usually means the call is already terminal).
+
+15.3 Truth checks for speech
+Every claim in claims[] resolves to a fact, call, or effect whose state supports it: RESULT → CONSUMED result fact of the active goal; EFFECT_DONE → CONFIRMED effect; IN_PROGRESS → call INFLIGHT; UNDERSTOOD → COMMITTED, CONFIRMED, or HIGH hypothesis of the current turn.
+Completion wording (configurable lexicon: "booked", "created", "confirmed", "cancelled", "done", "submitted", "reserved", "here are", "I found") is permitted only if a supporting RESULT or EFFECT_DONE claim is present.
+Every number, time, date, code, and proper noun in generated text (Composer output or ack_phrase) must match, after normalization, a value in the utterance's claims or the ResponsePlan. Templates are built to satisfy this by construction.
+No reference to facts of non-active goals except in INFORM about reconciliation or abort.
+Checks 2 and 3 are heuristics against model-generated text; the template fallback always exists, so a false rejection costs naturalness, never truthfulness.
+
+16. Observability model
+16.1 Correlation identifiers
+scenario_id, step_no, event_id, turn_id, goal_id, plan_id, step_key, call_id, job_id, utt_id, question_id, conflict_id, effect fingerprint. Every record carries every identifier that applies.
+
+16.2 Decision log record (one per kernel step)
+Field	Content
+step_no, now_ts, wall_ms (telemetry)	—
+batch[]	Ordered events with ts, class, seq, type
+fact_changes[]	key, old digest → new digest, new ver, cause
+invalidations[]	Dependent ID, type, failing keys
+transitions[]	Region, from, to, transition number (section 6.3)
+decisions[]	Component, rule ID, inputs summary, outcome (e.g., CommitGate:G7:BLOCKED)
+jobs[]	Dispatched, aborted, accepted, rejected (with failing keys)
+actions[]	Intended actions and EmitReport results
+holds[]	Added, released, dropped
+step_duration_ms	Telemetry
+The harness trace shows what happened; the decision log shows why. Every harness-visible action links to a step_no and rule ID.
+
+16.3 Metrics
+Latency per trigger type (section 13.6); cancel delay (harness ms from the invalidating event to CANCEL); count of calls consumed, stale, retained, completed-after-cancel; duplicate-fingerprint blocks by G6 and G7; held proposals released vs dropped; utterances per goal by kind; truth-check rejections; speculative job hit rate (promoted ÷ dispatched); kernel step duration percentiles; worker latency per kind.
+
+16.4 TraceChecker
+Runs on the harness trace plus decision log after each local scenario run. Rules map to invariants (section 17). Example rules:
+
+Every call whose read set was invalidated at step n has a CANCEL in step n (P3).
+No two TOOL_CALLs for WRITE tools share a fingerprint unless the first effect is FAILED or CANCELLED_INFERRED (W1).
+No emitted action has a read set invalid at its emission step (P1).
+Every snapshot equals the projection of committed facts at its step (S3).
+No speech between an INTERRUPTION and the next END_OF_TURN (floor rule).
+No result of a CANCEL_REQUESTED call appears in any later utterance claim (P2).
+Every CANCEL targets an issued, non-terminal call (C1).
+No core-module wall-clock calls (static, K5).
+16.5 Replay and timing sweeps
+Replayer: feeds a recorded input stream and recorded worker outputs; the decision log must be byte-identical across runs under Model B semantics.
+TimingSweeper: for each scenario, generates variants that shift tool results and worker completions relative to user events within bounds (before, equal to, after each interruption), and asserts TraceChecker rules on each variant. Correctness must hold across the sweep, not at one timing.
+Adversarial generator: produces the failure classes in section 15 of the analysis from templates (correction before and after result, write interrupted, reversion, rapid triple correction, backchannel interruption, goal switch and return, unknown write outcome, quarantined tool, conflicting frame).
+17. Invariants and their enforcement
+17.1 Kernel invariants (new)
+K1. A kernel step never awaits.
+K2. Only reducers and kernel decisions mutate session state; workers receive immutable views.
+K3. Emission happens in the same step as, and after, invalidation; no buffer exists between decision and output queue.
+K4. Every proposal is validated against its read set in the step that ingests it.
+K5. No core module reads the wall clock; the watchdog is the sole wall-clock decision.
+K6. Every harness-visible action has a decision log record naming the rule that produced it.
+17.2 Enforcement map
+Invariant (analysis §14)	Enforced by	Checked by
+T1 harness time only	ClockPort; banned-API check	Static check; Replayer
+T2 ordered application	Batch ordering (ts, class, seq)	Replayer determinism
+T3 ingestion never blocked	K1; workers off-loop	Step-duration metric
+S1 single writer	K2	Code structure review; static import rules
+S2 localized versions	Per-key versions; rebind	TraceChecker (unchanged slots keep ver)
+S3 snapshot currency	Projection at emit (section 12)	TraceChecker
+S4 intent, execution, world separate	FactStore, CallLedger, EffectLedger	Reconciliation tests
+S5 context kept on goal change	Suspension, retention, carry-over rules	Goal switch-and-return tests
+P1 emission-time generation check	Gate read-set check; K3	TraceChecker
+P2 stale results inert	ResultRouter steps 4–6	TraceChecker
+P3 cancellation of invalidated calls	Invalidation → CANCEL same step; anchors	TraceChecker cancel-delay rule
+P4 no re-execution of valid work	Value-digest validity; step carry-over; rebind; holds	Metric: re-issued fingerprints with valid prior results
+P5 no superseded arguments	ArgBinder binds from current facts; gate read-set check	TraceChecker
+W1 at most once	CommitGate G6, G7, G9; write-ahead effect	TraceChecker duplicate rule
+W2 unknown outcome blocks	Effect UNKNOWN in G6, G7	Unknown-outcome tests
+W3 no speculative writes	G3, G4, G5	TraceChecker (no write before EOT of the committing turn)
+W4 no false undo claims	Effect states; truth checks	TraceChecker claim rule
+W5 unknown mutability → write	Catalog defaulting	Manifest tests
+O1 valid payloads	EmissionGate	TraceChecker schema pass
+O2 claims supported	Truth checks	TraceChecker
+O3 no content-free repetition	UtteranceBudget; template variation	Utterance metrics
+O4 no superseded references after interruption	Read sets on utterances; hold drop	TraceChecker
+O5 clarification only when needed	ClarificationManager rules	Scenario tests
+M1 capture-time alignment	Question anchors; alignment rules	Deixis tests
+M2 conflicts resolved before commit	G4; conflict table	Conflict tests
+M3 perception obeys P1, P2	Read sets on VISION proposals	TraceChecker
+C1 call_id matching	Ledger; ResultRouter	TraceChecker
+C2 session isolation	Fresh store per scenario; no module-level mutable state	Cross-scenario leak test
+C3 no fatal input	Inbound validation; contained worker failures; top-level step exception guard	Fuzz tests
+18. Failure handling model
+Component	Failure mode	Detection	Recovery	Criterion protected
+Ingress / codec	Malformed event	Decode or schema failure	Drop, log MALFORMED_INPUT, continue	Safety (C3)
+Ingress / codec	Missing timestamp	Field check	Use last ts; log	Determinism
+ClockPort	Clock model misconfigured (e.g., Model A semantics under a stepped harness)	Latency metric anomalies in local runs; harness-time not advancing while wall time does	Configuration fix; correctness unaffected by design	Latency
+Kernel step	Exception in a component	Top-level guard per component call	Log; skip that component's decisions for this step; mark step degraded; continue next step	C3
+Kernel step	Step over budget	Duration metric	Log; profile; no runtime change	Latency
+Interpreter	Model error, timeout, invalid structure	WorkerResult FAILED or schema fail	Retry once; then detector-based fallback (triage fallback, section 6.3; or CLARIFY for new goals)	Task Completion, Recovery
+Interpreter	Wrong act (slot update read as new goal, or reverse)	Not detectable at runtime directly; later user correction	Normal correction path; replacement retains old goal so a return is cheap	Task Completion
+Planner	Invalid plan (unknown tool, cyclic, bad bindings)	Validation	Retry once with error context; then FAILED with truthful INFORM	Task Completion, Safety
+Planner	Stale plan	Read-set rejection	Re-dispatch with fresh view	Recovery
+Composer	Slow	compose_deadline_ms	Template FINAL	Latency, naturalness
+Composer	Ungrounded text	Truth checks	Template FINAL	Quality (truthfulness)
+Rebinder	Binding invalid after correction	ArgBinder validation	Escalate to planner	Task Completion
+ToolCatalog	Malformed tool	Per-tool validation	Quarantine; plan without it; INFORM if needed	Safety
+ToolCatalog	Missing mutability	Field check	Default WRITE	Safety (W5)
+ToolCatalog	Unseen tool	— (normal)	Schema-driven planning and binding	Task Completion
+ToolCatalog	Manifest changes mid-scenario	New version event	Invalidate dependent steps; keep in-flight tracking	Task Completion, Safety
+PlanExecutor	Required argument unresolvable	ArgBinder	CLARIFY	Task Completion
+CommitGate	Blocked indefinitely (e.g., unknown effect)	Blocked-step age in harness time	Reconciliation (section 7.6)	Safety, Task Completion
+ResultRouter	Stale result	Section 3.6	Record; inert; reconcile if write	Recovery
+ResultRouter	Result after cancel	Status CANCEL_REQUESTED	Record; reconcile if write	Recovery, Safety
+ResultRouter	Out-of-order results	call_id matching; after joins	None needed	Task Completion
+ResultRouter	Duplicate delivery	Terminal status	Ignore	Safety
+ResultRouter	Unknown call_id	Ledger miss	Ignore; log	C3
+Tool (harness)	Read error	Error result	Retry up to limit; then replan or FAILED	Task Completion
+Tool (harness)	Read deadline	Timer	Retry up to limit	Task Completion
+Tool (harness)	Write error	Error result	Retry once only if retryable class; otherwise INFORM; replan if alternative	Safety, Task Completion
+Tool (harness)	Write deadline	Timer	Effect UNKNOWN; reconcile; never blind retry	Safety
+Tool (harness)	Malformed result	Payload validation	Treat as tool failure of type MALFORMED_RESULT	C3
+InvalidationEngine	Missed dependency (a binding not registered)	TraceChecker rule P1 or P3 in tests	Fix in development; runtime backstop: gate read-set check at emission	Recovery
+TurnManager / QuickDetector	False HIGH value causing a needless cancel	EOT interpretation disagrees	Read: re-issue call if still needed (logged as DETECTOR_FALSE_CANCEL); write: gate re-admits after cancel inferred	Recovery, Latency
+TurnManager	Rapid interruptions	— (normal)	Coalescing; read-set rejection of intermediate work	Recovery
+TurnManager	Partial slot update (user changes one of several slots, or states half a value)	Interpretation delta contains only some slots, or a value is incomplete	Apply only complete deltas; incomplete values → CLARIFY targeted at that slot; other slots untouched	Task Completion
+TaskController	Goal replacement misclassified	Later user correction	Suspension makes return cheap	Task Completion
+TaskController	Triage without interpretation	Interpreter failure	Triage fallback	Recovery
+PerceptionScheduler	Vision error or timeout	WorkerResult	Retry once on the same frame; then treat as LOW (clarify if needed)	Task Completion
+SlotResolver	Multimodal conflict	Conflict rules	CLARIFY; block dependent steps	Task Completion, Safety
+SlotResolver	Flapping claims across frames	Stability rule	Require stability_k agreement	Recovery
+Evidence	Frame gap before a write needing current state	gap_ms	Ask for a fresh view	Safety
+SpeechRecognizer	ASR error	WorkerResult	Retry once; then CLARIFY ("I didn't catch that")	Task Completion
+SpeechRecognizer	ASR and text both present (AUTO mode)	Dedupe window	Prefer text	Task Completion
+FastResponder	Would repeat content	UtteranceBudget	Suppress	Quality
+FastResponder	Earlier ACK now false	Read-set invalidation of a spoken utterance	REPAIR once	Quality
+EmissionGate	Rejected action	EmitReport	Kind-specific fallback (section 15.2)	Safety
+Budget watchdog	Wall time near cap	Watchdog	Transition 32	Task Completion
+Model gateway	Network unavailable (if hosted models are unreachable in evaluation)	Transport failure at setup check	Fall back to local models configured in setup hook (policy model_backend)	All
+19. Decision register
+Each decision lists the problem solved, invariants protected, scoring criteria affected (TC Task Completion, IR Interruption Recovery, RL Response Latency, SP Safety & Protocol, QM quality multiplier, MM multimodal), and the latency/correctness trade-off.
+
+#	Decision	Problem solved	Invariants	Criteria	Trade-off
+D1	Single-writer kernel with one mailbox	Logical races between perception, reasoning, tools, and speech	S1, K2, T2	IR, SP	All state changes wait for the kernel step; steps are milliseconds, so latency cost is negligible; removes locks entirely
+D2	Batch-then-decide step with (ts, class, seq) ordering	Nondeterministic handling of close or simultaneous events; decisions on half-applied state	T2, S3	IR, TC	Decisions wait for the whole batch (microseconds); invalidating events applied before invalidatable ones, which is conservative
+D3	Optimistic concurrency: proposals carry read sets validated at commit	Stale reasoning emitting actions; need for locks	P1, K4	IR, SP	Some wasted work when proposals are rejected; no waiting on coordination
+D4	Versions for change detection, value digests for validity	Fine-grained invalidation that still reuses work after reversions or goal return	P4, S2	IR, RL	Digest computation per fact change (cheap); a cancelled call is never reused even if valid again, trading occasional re-issue for trace consistency
+D5	Goal identity as a fact (goal.active) instead of a separate epoch	Two invalidation mechanisms that could disagree	P2, S5	IR	None significant; one mechanism covers both scales
+D6	Synchronous emission inside the step, after invalidation	Actions going stale in an output buffer	K3, P1	IR, SP	Emission cost is in the step; negligible
+D7	Fast path as deterministic in-kernel reflexes, no model on the fast path	Latency within a few hundred milliseconds; truthful acknowledgments	O2, T3	RL, QM	Templates are less natural than generated speech; mitigated by validated ack_phrase and deterministic variation
+D8	QuickDetector: high-precision, schema-aware extraction per chunk	Cancellation within the grace period without model latency	P3	IR	Misses corrections it cannot parse (caught at EOT, later); false cancels possible but bounded by HIGH-only rule
+D9	Speculative interpretation on transcript prefixes, promoted by digest at EOT	EOT-anchored interpretation and cancellation without model latency	P3, P1	RL, IR	Extra model calls per turn, bounded by coalescing
+D10	Rebind localized corrections without the planner; planner for structural change	Latency and restarts on slot corrections	P4, S2	IR, RL	Rebind cannot notice that a new value warrants a different tool; limited by structure_depends_on
+D11	Hold mode during triage instead of discard or immediate emission	Choosing between wasting valid work and emitting stale work	P1, P4, O4	IR, QM	Held work is delayed until the interrupting turn is understood
+D12	CommitGate with write-ahead effect ledger, fingerprints, lineage, commit intent, closed floor	Duplicates, double booking, unrequested writes, writes during corrections	W1–W3	SP, TC	Writes wait for end of turn and committed facts; some scenarios may need a confirmation turn
+D13	ReconcilePolicy for effects that cannot be withdrawn	Silent divergence between intent and world after cancel races	W4, S4	SP, QM, TC	Extra turns or compensating calls in rare races
+D14	Tool results are events; no agent task per call	Races between call tasks and state; cancellation complexity	C1, K1	IR, SP	None
+D15	Harness-time ClockPort; timers in TimerWheel; wall clock banned except watchdog	Sleep-based correctness; spurious retries under stepped clocks; nondeterminism	T1, K5, W2	IR, SP, RL	Requires adapter work per clock model
+D16	Adapters and PolicyRegistry for every kit-dependent question	Redesign risk when the kit arrives	—	All	Some defaults will be wrong initially; changing them is configuration
+D17	Fail-safe catalog: per-tool validation, quarantine, unknown mutability defaults to write	Unseen and malformed tools	W5, C3	SP, TC	Defaulted tools lose speculation and parallel retries (latency)
+D18	Question-driven, coalesced perception with tool-side vision preferred	Perception latency and compute on irrelevant frames	M1, M3, T3	MM, RL	Frames are not pre-analyzed without a cue; a missed cue delays perception until planning asks
+D19	Claims with ordinal confidence bands; user statements win over LOW claims; conflicts block writes and trigger clarification	Silent choice between conflicting evidence	M2	MM, TC, SP	One extra turn when evidence conflicts
+D20	Capture-time alignment with AT_UTTERANCE and CURRENT_STATE questions	Deictic references answered from the wrong frame	M1	MM, TC	Mode choice can be wrong; default AT_UTTERANCE is the conservative reading of "this"
+D21	Grounded ResponsePlan, truth checks, template fallback	False completion claims; invented details	O2	TC, QM	Occasional template output when generated text fails checks
+D22	UtteranceBudget and ledger-driven narration; no speech during open user turns	Excessive fillers; talking over users; narrating cancelled work	O3, O4	QM, RL	Acknowledgment waits for end of turn; if the latency trigger is the first chunk, latency suffers (policy knob)
+D23	Snapshot as projection at emission; carrier policy	Snapshot drift; stale snapshots after corrections	S3	TC, IR, SP	None
+D24	Retry policy by mutability and outcome certainty	Duplicates from blind retries; stalls from no retries	W1, W2	SP, TC	Unknown write outcomes require reconciliation turns
+D25	Goal suspension with retained results and explicit carry-over	Losing context on goal change; restarts on return	S5, P4	TC, IR	Memory for retained results (session-scoped, small)
+D26	Decision log per step, TraceChecker, TimingSweeper	Invisible failure causes; timing-dependent bugs that pass one ordering	K6	All (development)	Logging overhead in the step; kept to structured appends
+D27	Deterministic IDs and template variation	Replay differences; brittle comparisons	T2	SP	None
+20. Policy registry
+Settings that the kit is expected to determine are marked with the question they depend on. Defaults are chosen to be safe if the answer is unfavorable.
+
+Policy	Default	Alternatives	Depends on
+clock_model	A	B, C	Q1
+action_timestamping	HARNESS_ON_RECEIPT	AGENT_STAMPED	Q1
+spec_blocks_clock	OFF	ON	Q1
+cancel_anchor	CHUNK (EOT always on)	SIGNAL	Q2
+cancel_confirmation	NO_RESULT_BY_DEADLINE	EXPLICIT_ACK, NEVER_ASSUME	Q2
+write_hold_on_wait_cue	ON	OFF	Q2
+duplicate_key	TOOL_AND_ARGS	CALL_ID, TOOL_IN_GOAL	Q3
+idempotency_key	NONE	Reuse call_id on retry; named argument	Q3
+write_retry	RETRYABLE_ERRORS_ONCE	NEVER	Q3
+read_retries	2	0–3	Fault types
+latency_trigger (measurement)	ALL_CANDIDATES	EOT, FIRST_CHUNK, INTERRUPTION	Q4
+substantive_kinds	ACK with content, PROGRESS, CLARIFY, REPAIR, INFORM, FINAL	Include HOLD	Q4
+speak_during_open_turn	OFF	ON	Q4
+snapshot_carrier	ANY_SPOKEN if schema permits, else FINAL_ONLY	STANDALONE	Q5
+intent_label_source	INTERPRETER_LABEL mapped to kit vocabulary	PRIMARY_TOOL_NAME	Q5
+slot_carryover	NAME_MATCH_USER_STATED	INTERPRETER_ONLY	Q5
+spec_reads	AFTER_EOT_INDEPENDENT	OFF, PARTIAL_HIGH_CONF	Q6
+prefetch_reads	OFF	ON	Q6
+clarification_reprompt	ONCE	NEVER	Q7
+unanswered_clarification	WAIT	PROCEED_READS	Q7
+audio_mode	AUTO	TRANSCRIPT_PRIMARY, AUDIO_ONLY	Q8
+asr_closes_turn	OFF	ON	Q8
+vision_mode	AUTO (tool frame parameter preferred)	AGENT_VISION	Q9
+mutability_field	From kit; missing → WRITE	—	Q10
+mutability_upgrade_heuristic	ON	OFF	Q10
+chunk_semantics	APPEND	REVISABLE (turn text replaced, digest recomputed)	Q11
+model_backend	HOSTED with LOCAL fallback check at setup	LOCAL	Q14
+reference_date_source	SCENARIO_FIELD if present, else NONE (relative dates → clarify or planner resolution without detector cancellation)	FIRST_EVENT_DATE	Q15
+watchdog_s	105	—	Q15
+reconcile_superseded	COMPENSATE_IF_TOOL_ELSE_ASK	ALWAYS_ASK	—
+plan_during_open_turn	OFF	ON	—
+Budgets and timers	Section 9.3, 13.3	—	Mock latencies
+Confidence and stability	Bands HIGH/MEDIUM/LOW; stability_k 2; align_window_ms 1000; gap_ms 3000	—	Visual scenarios
+Concurrency caps	vision 1, asr 1	—	Hardware
+21. Implementation handoff
+21.1 Package boundaries
+Package	Contents	May import
+adapters	Ingress, ProtocolCodec, ClockPort implementations, EmissionGate, output writer	model, policy
+model	Immutable records: events, actions, proposals, facts, calls, effects, observations	Nothing
+policy	PolicyRegistry and defaults	model
+store	FactStore, DependencyIndex, ledgers, evidence, holds, goals, catalog	model
+kernel	StepEngine, reducers, invalidation, TaskController, TurnManager, QuickDetector, PlanExecutor, Rebinder, ArgBinder, CommitGate, ResultRouter, Retry and Reconcile policies, ClarificationManager, PerceptionScheduler, SlotResolver, FastResponder, UtteranceBudget, SnapshotProjector, JobScheduler, TimerWheel	model, store, policy, adapters (ClockPort and EmissionGate interfaces only)
+workers	Interpreter, Planner, Composer, VisionAnalyzer, SpeechRecognizer, ModelGateway, prompt and schema definitions	model, policy
+observability	DecisionLog writer, metrics, telemetry clock, watchdog	model
+testing	Fake harness (Model A and B), Replayer, TraceChecker, TimingSweeper, adversarial scenario generator	Everything
+kernel must not import workers; it dispatches jobs by kind through JobScheduler. workers must not import store or kernel.
+
+21.2 Build order and acceptance gates
+Stage	Build	Gate before moving on
+1	model, policy, ProtocolCodec (provisional schema), fake harness for Models A and B, DecisionLog, TraceChecker skeleton	Fake harness replays a scripted scenario and records a trace
+2	StepEngine, FactStore, DependencyIndex, TimerWheel, ClockPort	Determinism: identical decision logs across 100 replays under Model B
+3	ToolCatalog, ArgBinder, CallLedger, ResultRouter, CommitGate, EffectLedger, retry and reconcile	Scripted (model-free) plans pass: stale result, cancel-after-complete, unknown write outcome, duplicate delivery, quarantined tool
+4	TurnManager, QuickDetector, FastResponder, UtteranceBudget, SnapshotProjector, EmissionGate truth checks	Chunk-anchored cancel in the same step; no speech during open turns; snapshot rule passes
+5	Interpreter, Planner, ModelGateway, Rebinder, triage, goal replacement, ClarificationManager	Analysis failure classes 1–15 pass TraceChecker across TimingSweeper variants
+6	Composer, ResponsePlan, template fallback	Zero truth-check violations in emitted text across the suite
+7	EvidenceStore, PerceptionScheduler, SlotResolver, VisionAnalyzer, SpeechRecognizer	Analysis failure classes 16–19 pass
+8	Kit integration: codec to real schema, policy settings from Appendix A answers, deadlines from mock latencies	Public suite passes; TraceChecker clean; sweeps clean
+Stages 1–4 contain no model calls and establish every safety and recovery mechanism before any model can stress them. This ordering tests the coordination layer on its own terms, which is where most of the score is decided.

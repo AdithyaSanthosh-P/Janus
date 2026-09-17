@@ -1,0 +1,634 @@
+Theme 05: Interruptible Real-Time Agents — Pre-Architecture Problem Analysis
+Samsung PRISM Generative AI Hackathon, 3rd Edition. This document decomposes the problem and the evaluation contract. It proposes no architecture and contains no code.
+
+0. Sources, labels, and limits
+Sources
+
+G — Theme 05: Interruptible Real-Time Agents, guide v1.0.0 (3 pages). Cited as G§1–G§6.
+D — Samsung PRISM Generative AI Hackathon 3rd Edition deck (Theme 05 slide, format, timeline, submission slides).
+Labels used throughout
+
+[Spec] — stated in G or D.
+[Inference] — follows from the spec but is not stated.
+[Assumption] — a choice made where the spec is silent. Must be verified.
+[Open] — unresolved, and the answer changes the design.
+Limits. The evaluation kit (harness, message schemas, public scenarios) is released only after registration [Spec G§4]. Everything below about payload formats, clock semantics, and score aggregation is therefore conditional. Appendix A lists the questions the kit must answer, ranked by how much each answer changes the design.
+
+Discrepancies between the documents
+
+The Theme 05 slide in D lists "Full-duplex: begin retrieving before the utterance ends" and "Corpus provided; voice input may be simulated from transcripts." Both bullets are word-for-word identical to the Theme 04 (Streaming Live RAG) slide. G mentions no corpus; the only document-like resource in G is "manuals," reached through a mock "frame-grounded manual lookup" tool [Spec G§4]. The corpus bullet is probably a copy error [Inference]. The "begin work before the utterance ends" idea is consistent with G's stated focus on speculative execution [Spec G§6].
+D lists "multimodal outputs" as a tech focus. G's output contract contains no image or audio outputs, and voice synthesis tuning is out of scope [Spec G§6]. Outputs are treated here as structured text actions, including "spoken" ones [Assumption].
+D's Round 1 rubric (functionality 30%, technical depth 25%, innovation 20%, relevance 15%, presentation 10%) is separate from G's per-scenario harness scoring. Neither document says how the two combine [Open].
+1. Problem decomposition
+1.1 What the problem actually is
+G§1 states it as a concurrency and state-consistency problem: perception, reasoning, tool execution, and speech run concurrently on a unified timeline.
+
+Restated operationally: the agent consumes a timestamped stream of events it does not control and emits a timestamped stream of actions. Some of its actions cause further events (tool results) to arrive later. Each scenario is scored "strictly on trace logs" [Spec G§5]. The grader never sees what the agent believed. It sees only what the agent emitted, and when.
+
+Three consequences follow.
+
+A correct action that is late is scored as late. A fast action based on superseded information is scored as wrong.
+Reasoning quality counts only through visible effects: tool calls, arguments, cancellations, snapshots, and spoken text.
+Every emitted action is permanent in the trace. A tool call cannot be retracted; it can only be cancelled, and the cancellation is a second trace entry.
+1.2 Why listen → think → speak is inadequate
+A half-duplex agent holds an implicit lock: while thinking or speaking, it does not consume input. Five failures follow from that lock.
+
+Silence during work. Time to first spoken action equals reasoning time plus tool latency. This hits Response Latency directly.
+Blindness during work. A correction that arrives mid-reasoning is not seen until the cycle ends. The agent finishes the old plan and may issue tool calls with superseded arguments. This hits Interruption Recovery and, for bookings, Safety.
+No partial preservation. When the correction is finally processed, the easy recovery is to restart. D names this as the failure mode ("throw everything away and start over"). Re-running valid work wastes latency and plausibly counts as a stale re-run [Inference].
+Blocking tool calls. If the agent awaits each result, it cannot cancel, because cancelling requires the agent to act while the call is outstanding. G requires non-blocking calls [Spec G§3.1].
+Turn equals transaction. Half-duplex assumes one user turn maps to one plan. In full-duplex, one plan can span several user turns and one user turn can touch several plans.
+A faster model addresses only the first failure, and only partly. A zero-latency model still fails the other four if the agent waits on tools or stops reading input while tools run. Tool latency is set by the mock environment [Spec G§4], not by the agent.
+
+1.3 What "full-duplex" implies technically
+Input consumption never stops. Event ingestion proceeds independently of reasoning, perception, tool execution, and speech.
+Overlap in both directions. The agent may emit while the user is mid-utterance; the user may produce events while the agent is mid-response.
+Many units of work in flight. Several tool calls, one or more reasoning tasks, perception jobs, and pending utterances can coexist.
+Any in-flight work can become obsolete at any moment, and the agent must be able to identify which work and act on it.
+Order is defined by harness timestamps, not by the order in which internal tasks finish.
+The harness supplies an explicit interruption signal [Spec G§3.1]. The agent therefore does not need to detect barge-in from audio. It does need to decide what the interruption means, which the signal alone does not say.
+
+1.4 The user interrupts while the agent is reasoning
+At time t_i the interruption signal arrives. At t_i the agent knows only that the user has taken the floor. The content follows in text chunks (or audio), ending with an end-of-turn marker. The interruption may turn out to be a slot correction, a goal change, an addition ("also add a meal"), a progress question, a hesitation or backchannel ("uh", "okay"), or a full abort ("never mind").
+
+What must happen:
+
+The reasoning already underway must not emit actions derived from the pre-interruption context once the interruption has been ingested, unless it is established that the new input does not invalidate them. A check at the start of reasoning is insufficient; the check must happen at the moment of emission.
+Speech that was about to be emitted and may now be wrong must be held.
+In-flight tool calls pose a dilemma. Whether to cancel depends on content not yet known, yet cancellation must happen "within few ms grace period" [Spec G§3.2]. Section 5.6 analyses this tension; it is the most consequential open question in the theme.
+The new plan must be computed from the pre-interruption state plus the new input, not from the new input alone.
+1.5 The user changes a slot
+Example: "Actually, make it Thursday." G calls this a localized slot correction [Spec G§3.2, objective 3].
+
+Only the changed slot changes. Other slots keep their values and provenance.
+Work that depended on the old value becomes invalid: in-flight calls that used it (cancel), completed results derived from it (stop using), downstream plan steps (re-plan), and spoken statements that mentioned it (may need a correction).
+Work that did not depend on it remains valid and should not be re-run.
+The snapshot must be updated [Spec G§5].
+If a state-modifying action already completed with the old value, the world now differs from what the user wants. The agent cannot pretend otherwise (section 6.2, case D).
+This is only possible if the agent knows, for every call and result, which slot values it was computed from.
+
+1.6 The user changes the entire goal
+Example: "Forget the flight. I need to raise a ticket about my phone."
+
+The active intent changes, and so does the snapshot's intent.
+All in-flight work belonging to the old goal is invalid and must be cancelled.
+Some slots belong only to the old goal (destination). Others are session facts that may carry over (name, device model, a booking reference). D requires handling goal changes "without loosing the relevant session context" [Spec D]. Neither document defines which slots carry over [Open]. Deciding relevance is a reasoning step, not a wipe.
+The old goal may return ("okay, back to the flight"). Whether suspended goal state must be retained is unspecified. Retaining it is cheap, and discarding it loses context D explicitly values [Inference].
+Late results for the old goal must not be spoken or used for the new goal.
+Distinguishing a slot change from a goal change is itself a classification made under uncertainty, sometimes from partial text. Misreading a slot change as a goal change discards valid work (stale re-runs, latency). Misreading a goal change as a slot change carries the wrong context forward (task completion).
+
+1.7 Why stale asynchronous results are dangerous
+A tool result answers the question as it stood when the call was made. After invalidation, it answers a question the user no longer has. The damage takes four forms.
+
+Wrong grounding. The agent speaks Pune flights after the user said Mumbai. This hits Task Completion (grounding) and the quality multiplier (truthfulness).
+Wrong state. A stale search result populates a derived value (a flight ID) that later feeds a booking. This can produce a state-modifying call with wrong arguments.
+Wrong continuation. In a chained plan, completing step 1 automatically triggers step 2. A stale step 1 produces a stale re-run of step 2, or a wrong commit.
+Engineered timing. Mock latencies are deterministic [Spec G§4] and the hidden set tests "adversarial timing" [Spec G§4]. Scenario authors can place a correction just before a known result arrival. This is very likely a deliberate test class [Inference].
+A stale result is not always useless: if the user later reverts to the original value, a read-only result could be reused. Reuse is an optimization, never a correctness requirement.
+
+1.8 Why duplicate state-changing calls are dangerous
+Repeating a read-only call costs latency. Repeating a state-modifying call creates a second booking, a second ticket, or a second charge. G names "without double-booking" as a use case [Spec G§2], and Safety & Protocol requires "zero duplicate state-changing calls" [Spec G§5]. "Zero" suggests a binary criterion [Inference].
+
+Duplicates arise from coordination failures, not from a defect in any single component:
+
+A retry after a timeout when the first attempt had in fact succeeded.
+A re-plan after an interruption that re-issues a commit already sent.
+Two reasoning tasks, one for the old context and one for the new, both reaching the commit step.
+A late result triggering a continuation that the re-plan also triggered.
+A language model re-emitting a call because its context still shows the step as pending.
+None of these is fixed by a better model.
+
+What counts as a duplicate is unspecified [Open]: same tool and same arguments, same call_id, or same tool within a goal? A second booking with different arguments after a genuine correction is presumably not a duplicate. A retry after an explicit failure result is presumably not one either. Both need confirmation from the kit.
+
+1.9 Why cancellation and snapshots are central
+Cancellation is the only way the trace can show that an in-flight call is no longer wanted. Without an emitted cancellation, the grader cannot distinguish "the agent noticed and ignored the result" from "the agent never noticed." Discarding a result internally is invisible.
+
+The snapshot is the only way the trace can show what the agent believes the user wants. Snapshots appear in three scoring categories: accuracy in Task Completion, updates in Interruption Recovery, and validity in Safety & Protocol [Spec G§5]. Those categories carry 85% of the weight.
+
+Together, cancellations and snapshots are the agent's externalized belief. A cancellation says "I no longer want this." A snapshot says "this is what I now understand." An agent that recovers correctly inside but fails to externalize both is scored as if it had not recovered.
+
+1.10 What "keep the conversation alive while thinking" requires
+A path that produces a relevant utterance within a few hundred milliseconds of user input [Spec G§1], regardless of what the slow path is doing.
+That utterance must be substantive [Spec G§5], must not claim completion falsely [Spec G§3.2], must not be an excessive filler [Spec G§3.2], and must be truthful and relevant [Spec G§5, quality multiplier].
+It must reflect current state. Narrating progress on a cancelled call is a false statement.
+It must know what has already been said, so that it does not repeat itself.
+It must know what is actually in flight; progress narration requires access to the tool-call ledger.
+It must not pre-empt the slow path's answer with a guess.
+"Keeping the conversation alive" is therefore not a timer that plays "one moment, please." It is a reader of the same session state the coordination layer maintains, with strict limits on what it may assert. D's phrasing, "without loosing on logical depth," means responsiveness must not be bought by making the slow path shallower.
+
+What counts as "substantive" is unspecified [Open]. A reasonable reading is that content-bearing acknowledgments ("Looking at Thursday flights to Mumbai") count and content-free sounds ("hmm", "one sec") may not [Inference].
+
+2. Official requirement matrix
+ID	Requirement	Source	Interpretation	Ambiguity
+R1	Agent communicates over two asynchronous queues: timestamped input events, output actions	[Spec G§3]	The agent is a stream processor, not a request/response service	Message schema unknown [Open]
+R2	Inputs: transcribed text chunks with end-of-turn markers, raw audio clips (WAV), video frames (PNG), interruption signals, asynchronous tool results, scenario tool manifests	[Spec G§3.1]	All arrive on one queue in timestamp order [Assumption]	Are chunks append-only or revisable? Do audio scenarios include transcripts? When do manifests arrive? [Open]
+R3	Outputs: spoken fillers, non-blocking tool calls with explicit call_id, cancellations, clarification requests, final responses carrying State Snapshots (intent and slot values)	[Spec G§3.1]	Snapshots accompany at least final responses; "explicit call_id" suggests the agent assigns IDs [Inference]	Whether snapshots may or must accompany other actions; no "stop speaking" action is listed [Open]
+R4	Fast path maintains responsiveness within a few hundred milliseconds (acknowledgment, clarification, progress narration)	[Spec G§1]	Target for first spoken action	Which clock measures it [Open]
+R5	Slow path executes asynchronous tools, multimodal processing, complex reasoning	[Spec G§1]	—	—
+R6	Coordination layer handles non-blocking execution, call cancellation, state snapshot updates, idempotency for state-modifying actions	[Spec G§1]	Snapshot ownership sits with coordination, not reasoning [Inference]	—
+R7	Floor management: meaningful responses quickly, no false completion claims, no excessive fillers	[Spec G§3.2 (1)]	—	"Excessive" undefined [Open]
+R8	Interruption recovery: cancel superseded in-flight calls within a few-ms grace period, update snapshots, re-plan cleanly	[Spec G§3.2 (2)]	—	Grace measured from which event [Open]
+R9	Session slot tracking across multi-turn interactions; localized slot corrections	[Spec G§3.2 (3)]	Corrections change one slot, not the whole frame	—
+R10	Schema-driven tools: parse dynamic definitions (read-only vs state-modifying) from manifests; strictly avoid duplicate state-changing calls	[Spec G§3.2 (4)]	Mutability is declared in the manifest [Inference]	Field name and format [Open]
+R11	Multimodal grounding: process raw audio and frames behind conversational acknowledgments; clarify ambiguous perceptions	[Spec G§3.2 (5)]	Perception runs on the slow path while the fast path holds the floor	Whether perception is agent-side or delegated to a mock tool [Open]
+R12	Protocol compliance: well-formed JSON with valid snapshots and identifiers	[Spec G§3.2 (6)]	—	Schema unknown [Open]
+R13	Virtual Clock Streaming Harness: deterministic event replay, async mock tool responses, complete event/action trace logging	[Spec G§4]	—	Clock semantics [Open]
+R14	Mock environment: deterministic latency and fault injection for flight search, booking, ticket creation, frame-grounded manual lookups	[Spec G§4]	Four named domains; hidden set may add more ("unseen tools")	Fault types [Open]
+R15	Public suite: 9 scenarios (50% text, 30% audio, 20% visual) covering interruptions, chained calls, retries, clarifications, unseen tools	[Spec G§4]	Roughly 4–5 text, 3 audio, 2 visual [Inference]	—
+R16	Hidden set: ~60 scenarios, same distribution, edge cases and adversarial timing	[Spec G§4]	—	—
+R17	Each scenario scored 0–100 strictly on trace logs; weights 40/35/15/10	[Spec G§5]	—	Sub-criterion formulas [Open]
+R18	Quality multiplier 0.80×–1.20× for transcript naturalness, truthfulness, relevance	[Spec G§5]	Multiplies the scenario score [Inference]	Who or what judges [Open]
+R19	Hidden scores use 1.5× multiplier for multimodal scenarios	[Spec G§5]	—	"Multimodal" = audio and visual, or visual only? Aggregation formula? [Open]
+R20	Python 3.10–3.12; 120 s wall-clock cap per scenario; 300 s setup/warm-up hook	[Spec G§6]	Model loading belongs in the setup hook [Inference]	Hardware, network access [Open]
+R21	Session-scoped memory only; no cross-session caching	[Spec G§6, D]	State must not leak between scenarios run in one process [Inference]	Whether artifacts built during setup (e.g., manual indices) count as caching [Open]
+R22	Out of scope: wake-word detection, voice synthesis tuning, UI design	[Spec G§6, D]	—	—
+R23	Focus: async event-loop orchestration, speculative execution, latency hiding, multimodal intent grounding	[Spec G§6]	—	—
+R24	Keep the conversation alive without losing depth; recover from interruptions while driving toward the end goal; handle goal changes without losing relevant context; build a safe, reliable harness around the agent	[Spec D, Theme 05]	—	—
+R25	Submission: public or shared GitHub repo, README with reproducible setup, Docker files, release tag PRISM_GENAI_HACKATHON_Y2026 on the judged commit, demo video ≤5 min, PPT/PDF named CollegeName_TeamName, one submission via Google Form by 25 Sep 2026 23:59; non-compliance means disqualification	[Spec D]	Everything referenced must exist in the tagged commit	—
+R26	Timeline: registration closes 16 Sep; submission 25 Sep; top 15 announced 9 Oct; final demo 15 Oct; results 24 Oct; dates tentative	[Spec D]	The kit arrives after 16 Sep, leaving roughly nine days of work against the real harness [Inference]	—
+3. Evaluation matrix
+3.1 Task Completion — 40%
+Aspect	Analysis
+Evaluated [Spec]	Correct tool execution; valid argument extraction; state snapshot accuracy; proper final response grounding
+Good score	Correct tools, in dependency order, with arguments equal to the current intended values in the manifest's format; chained calls use prior results correctly; final snapshot matches expected intent and slots; final response contains only facts present in valid results
+Failure	Wrong or missing tool; arguments from superseded values; arguments with wrong types or formats; calls to tools not in the manifest; invented details in the response; snapshot missing a slot or holding an old value; a clarification the scenario never answers, so the task never completes
+Traces that matter	Tool call records (name, arguments, timestamps); tool results; final response text; snapshots
+Architectural implications	Arguments must be normalized to the manifest schema; every fact in a response must be traceable to a result; the clarification policy must be calibrated rather than reflexive
+Likely hidden failure modes [Inference]	Relative expressions ("day after tomorrow") that need a scenario reference date rather than the system clock; slot values available only from a frame or audio; unseen tools with unfamiliar schemas; step-2 arguments derived from step-1 results; fault-injected failures that make completion require a retry
+3.2 Interruption Recovery — 35%
+Aspect	Analysis
+Evaluated [Spec]	Prompt cancellation of invalidated calls; absence of stale re-runs; updated state snapshots
+Good score	Every in-flight call invalidated by an event receives a cancellation within the grace period; no later call repeats superseded arguments; unaffected completed work is not repeated; a snapshot reflecting the correction is emitted
+Failure	Missing cancellation; late cancellation; re-issuing the old call; restarting the whole chain; snapshot still showing the old value; cancelling a call_id that was never issued
+"Stale re-run" — two readings	(a) re-executing a superseded call with old arguments; (b) re-executing work that remained valid, as in a full restart. D's criticism of "throw everything away and start over" supports (b) as well as (a) [Inference]. Design for both
+Traces that matter	Interruption timestamps; correction content timestamps; cancellation timestamps and call_ids; subsequent calls; snapshot sequence
+Architectural implications	Invalidation must be fast, which requires dependency information recorded when work is created; per-call status tracking; generation checks at emission
+Likely hidden failure modes [Inference]	Interruption just before a result arrives; just after (cancel after completion); two corrections in quick succession; correction back to the original value; backchannel-only interruption; interruption during a state-modifying call; goal change during a chain; interruption while a clarification is pending
+Over-cancellation (cancelling calls that remained valid) may not be penalized directly, but it is usually followed by a re-issue, which may register as a stale re-run or an extra call [Inference].
+
+3.3 Response Latency — 15%
+Aspect	Analysis
+Evaluated [Spec]	Time to first substantive spoken action following user input or interruption
+Good score	A content-bearing acknowledgment within a few hundred milliseconds of the trigger, in harness time
+Failure	Silence until tool results arrive; only content-free fillers (if they do not count); a fast utterance based on a guess that later needs retracting, which costs truthfulness
+Trigger definition	For interruptions, probably the interruption signal. For ordinary input, probably the end-of-turn marker, possibly the first chunk [Open]
+Traces that matter	Input event timestamps against spoken action timestamps
+Architectural implications	A responder that does not wait for full planning; no blocking compute on the ingestion path; models warmed in the setup hook
+Likely hidden failure modes [Inference]	Long multi-chunk utterances; interruptions during slow reasoning; audio or visual scenarios where perception precedes any possible content
+3.4 Safety & Protocol — 10%
+Aspect	Analysis
+Evaluated [Spec]	Zero duplicate state-changing calls; structured schema adherence; valid state payloads
+Good score	Every payload parses and validates; call_ids unique; cancellations reference issued IDs; each intended state change issued exactly once
+Failure	Malformed JSON (typically raw model output passed through); missing fields; reused call_ids; arguments violating manifest types; snapshots with undeclared slot names or wrong types; a double booking
+Architectural implications	A validation gate on every outgoing action; a single commit gate and ledger for state-modifying calls
+Likely hidden failure modes [Inference]	Timeouts injected on state-modifying tools; unusual manifest schemas; interruptions during a commit
+A duplicate booking will almost certainly also damage Task Completion and Interruption Recovery [Inference]. The effective weight of safety failures is larger than 10%.
+
+3.5 Quality multiplier (0.80×–1.20×)
+The multiplier covers naturalness, truthfulness, and relevance [Spec G§5]. If it multiplies the scenario score [Inference], its leverage is large. At a base score of 80, the multiplier moves the result between 64 and 96, a 32-point range. The entire Response Latency category is worth at most 15 points. Truthful, relevant, non-repetitive speech is therefore worth more than latency at typical score levels.
+
+Likely penalties: repeated fillers (naturalness), false progress or completion claims (truthfulness), talking about a superseded goal (relevance), rigid templates (naturalness). A templated fast path is quick but may cost naturalness; that trade-off should be measured, not assumed.
+
+3.6 Multimodal 1.5× weighting, public vs hidden, determinism
+If hidden-set scores are combined as a weighted mean and "multimodal" means audio plus visual [Inference], non-text scenarios carry (0.5 × 1.5) / (0.5 + 0.75) = 60% of the hidden score, although they are half the scenarios. If "multimodal" means visual only, visual scenarios carry (0.2 × 1.5) / (0.8 + 0.3) ≈ 27%. Either way, the public suite (unweighted, about two visual scenarios) under-represents multimodal importance. Tuning on public text scenarios optimizes the least-weighted part of the hidden score.
+
+Nine public scenarios cannot represent ~60 hidden ones designed around edge cases and adversarial timing [Spec G§4]. The public suite is best treated as a format specification and smoke test, not as a test set.
+
+Deterministic replay makes scoring reproducible only if the agent is deterministic too. Sampling, network latency, and machine load all introduce variance. Correctness must not depend on internal timing (section 5).
+
+4. Event taxonomy
+4.1 Input events
+Event	Source	Purpose	Timing significance	Can arrive concurrently	Can invalidate prior work	Changes session state	Ordering requirement
+Text chunk	Harness (scripted user)	Incremental user words	Starts user input; partial content enables speculation; plausible latency trigger	Yes — during tool execution, agent speech, audio, frames	Yes, once interpreted (correction, goal change)	Yes, after interpretation (slots, intent)	Chunks within a turn must be applied in order
+End-of-turn marker	Harness	Declares the user's utterance complete	Commits the utterance; plausible latency trigger; natural safe point for commits	Yes	Indirectly: finalizes an interpretation that may invalidate speculation on partials	Turn state	Must follow its chunks; ties with interruption signals need a deterministic rule
+Raw audio clip (WAV)	Harness	User speech or other sound	May carry content absent from text; may arrive after the matching text; ASR (if required) adds delay	Yes	Yes	Yes, if it is the only carrier of content	Must be associated with the correct turn by timestamp
+Video frame (PNG)	Harness	Visual evidence	Freshness matters; later frames can supersede earlier ones; gaps possible	Yes	Yes (different device, changed indicator)	Evidence store; possibly slots (device model, error code)	Ordered by timestamp; "latest" is not always "relevant" (see 10.2)
+Interruption signal	Harness	User takes the floor	Plausible anchor for latency and cancellation grace	Yes	Potentially all in-flight work; actual invalidation depends on the content that follows	Floor state; pending speech	Must be applied before any later-timestamped result or emission is acted on
+Asynchronous tool result	Mock environment, in response to an agent call	Success, failure, or data	Arrival ≈ call emission time + deterministic latency [Inference]; may arrive after cancellation; may carry an injected fault	Yes, many	Cannot change user intent, but can invalidate a plan (failure, unexpected data)	Tool ledger; evidence; derived values	Matched by call_id; may arrive out of order; checked against call status and dependency currency
+Tool manifest	Harness	Available tools, schemas, mutability	Must be known before the first call; mid-scenario updates possible [Open]	Possibly	Yes, if a tool is removed or changed	Tool catalogue	Must be applied before planning uses it
+4.2 Output actions
+Action	Purpose	Timing significance	Can be emitted concurrently with other work	Can invalidate prior work	Changes session state	Ordering requirement
+Spoken filler	Hold the floor, signal progress	Counts toward latency only if substantive [Open]; excess penalized [Spec]	Yes, while tools are in flight	No	Output ledger	Must not follow the final response for the same request; must not narrate cancelled work
+Tool call with call_id	Request work	Emission time starts the mock latency; determines result arrival	Yes, many	A new call may supersede older ones	Ledger: in flight	Arguments must reflect state at emission; state-modifying calls must pass the commit check
+Cancellation	Withdraw an in-flight call	Must fall within the grace period of the invalidating event [Spec]	Yes	Makes invalidation visible	Call status → cancel requested	Must reference an issued call_id; whether it must precede the replacement call is [Open]
+Clarification request	Resolve missing or ambiguous information	Hands the floor to the user; if the script never answers, the task stalls [Inference]	Yes, with in-flight read-only work	Makes in-flight work provisional	Pending-question state	Must not ask about something the user already supplied in an ingested event
+Final response with State Snapshot	Complete the request; externalize belief	End of a task; grounding checked	Should not overlap pending calls it depends on	Closes the plan	Snapshot ledger	Must follow the results it cites; must reflect every event ingested before emission
+4.3 Internal events (not in the contract, but required for reasoning about it)
+Agent-side timeouts for tool calls, measured in harness time.
+Plan invalidation, when a dependency changes.
+Generation increments, when intent or plan is superseded.
+Perception completions (ASR or vision results produced inside the agent).
+These never appear in the trace directly. Each must produce a visible counterpart (a cancellation, a snapshot, a repair utterance) when it changes what the user should see.
+
+5. Virtual-clock implications
+5.1 What the spec says and does not say
+G specifies deterministic event replay, asynchronous mock tool responses with deterministic latency, complete trace logging [Spec G§4], and a 120 s wall-clock cap per scenario [Spec G§6]. It does not say how the agent's own compute time maps onto virtual time. This is the single most consequential unknown.
+
+5.2 Three candidate clock models [Open]
+Model	Mechanism	What latency measures	Consequences
+A — Coupled	Virtual time advances with wall time (possibly scaled); events are released at their timestamps; actions are stamped on receipt	Model speed and structural responsiveness	Model and ASR latency hit the latency score and the cancellation grace directly; whether a result arrives before or after a scripted interruption depends on how fast the agent emitted the call, so traces vary between runs
+B — Stepped	Virtual time advances to the next event only when the agent is idle or yields; agent compute costs no virtual time	Structural responsiveness only: did the agent respond to the triggering event itself, or wait for a later one?	Ordering is fully deterministic; "within a few ms" means "in the same processing step as the invalidating event"; any wait for another event is expensive
+C — Agent-stamped	The agent reads a harness clock and stamps its own actions	Whatever the stamps say	Wall-clock stamps are simply wrong; the harness may validate stamps
+Hybrids are possible, for example a frozen clock during an agent step up to a compute budget.
+
+The design target that survives all three models: correctness must not depend on the clock model. Latency optimizations may depend on it.
+
+A detail specific to Model B: the harness must know when the agent is idle. An agent that keeps background tasks running indefinitely (continuous speculation, a polling loop) may stall the harness or trigger the wall-clock cap [Inference]. "Idle" must be well defined.
+
+5.3 Where virtual time matters
+Ordering of all events and actions.
+Latency measurement.
+The cancellation deadline.
+Tool result arrival times (emission time plus mock latency).
+Agent-side tool timeouts. Under Model B, a wall-clock timeout can fire while virtual time has not moved, triggering a spurious retry and possibly a duplicate state-changing call.
+Filler cadence ("say something if nothing has happened for X ms").
+Resolution of relative dates, which needs the scenario's reference date, not the host date [Open].
+Evidence freshness (frame age).
+5.4 Where actual execution time matters
+The 120 s cap per scenario, under every model.
+The 300 s setup hook, which bounds model loading.
+Under Model A, every millisecond of inference.
+Ingestion responsiveness: a blocked event loop delays processing of interruptions under Model A and may delay harness progress under Model B.
+5.5 How latency should be measured internally
+Latency is the difference between the harness timestamp of the first substantive spoken action and the harness timestamp of its trigger. Until the kit fixes the trigger definition, internal measurement should record latency against every candidate trigger: first chunk, end-of-turn marker, and interruption signal.
+
+5.6 Cancellation timing and the grace-period tension
+Deciding that a call is invalidated usually requires interpreting language. Interpretation by a language model takes hundreds of milliseconds under Model A. "A few ms" is below any model's latency. Under Model A, meeting the grace period therefore implies one of three things:
+
+Cancellation without a model. A cheap deterministic check detects that incoming content touches a slot an in-flight call depends on. Fast, but error-prone.
+Conservative cancellation on the interruption signal, before the content is known. This meets the deadline but cancels calls that were still valid, which then need re-issuing and may register as stale re-runs or extra calls. For state-modifying calls it may be the correct policy anyway.
+A later anchor. The grader may measure grace from the end of the correction, or from some other event.
+This cannot be resolved without the kit. Under Model B the tension largely disappears: the agent cancels in the same step in which it processes the invalidating event.
+
+5.7 Why time.sleep()-based correctness is dangerous
+time.sleep() blocks the event loop. Nothing is ingested and nothing is cancelled while it runs.
+asyncio.sleep() and wall-clock timers measure wall time. Under Model B, wall time passes while virtual time does not, so timers fire at the wrong virtual moments. Under a scaled Model A, they are mis-scaled.
+A sleep used "to let results settle" encodes an assumption about mock latency. Adversarial timing exists to break exactly such assumptions.
+Sleeps make behavior depend on machine load, so two replays of the same scenario can produce different traces and failures become irreproducible.
+The rule: every timing decision reads the harness clock and is expressed as "at or after virtual time T" or "on event E."
+
+5.8 Consequences for testing
+Agent determinism. Deterministic decoding where possible (temperature 0 reduces but does not guarantee determinism with hosted APIs); recorded model outputs for regression replay.
+Timing sweeps. Inject synthetic compute delays so that each scenario is replayed with the result arriving before, at, and after each interruption. The agent should pass across the sweep, not at one point on it.
+Invariant checking, not transcript matching. A trace checker that asserts the invariants in section 14 is a better oracle than an exact expected transcript.
+Local grader early. Because the grader reads only traces, a local approximation of the scoring rules should exist before most agent logic does.
+Evaluation environment. Whether hosted model APIs are reachable from the evaluation environment, and on what hardware local models would run, is unspecified [Open]. The answer determines whether Model A latency is dominated by the network or by local inference.
+6. State model requirements
+6.1 Categories of state
+Category	Contents	Why it is required	Anchor
+Tool catalogue	Tools, parameter schemas, mutability, catalogue version	Argument validation; safety classification; unseen tools	[Spec G§3.2 (4)]
+Turn and floor	Chunks of the current user turn; end-of-turn status; interruption status; pending agent speech; pending clarification	Floor management; deciding when interpretation is final	[Spec G§3.2 (1)]
+Goal and intent	Active intent; goal generation number; suspended goals	Snapshot intent; goal changes without context loss	[Spec G§3.1, D]
+Slots	Per slot: value, normalized value, provenance (event, timestamp, modality), status (hypothesized from partial / stated / confirmed / derived from tool / derived from perception), version, scope (goal or session)	Localized corrections; dependency tracking; carry-over decisions	[Spec G§3.2 (3)]
+Plan	Steps; dependencies of each step on slot versions and prior results; plan generation	Clean re-planning; preserving valid work	[Spec G§1, G§3.2 (2)]
+Tool-call ledger	call_id, tool, arguments, mutability, dependencies captured at emission, plan generation, status, emission time, result time, result	Cancellation; stale-result detection; progress narration	[Spec G§1, G§5]
+Effect ledger	State-modifying effects that are confirmed, failed, or of unknown outcome	Zero duplicates; truthful reporting	[Spec G§5]
+Evidence store	Observations from audio, frames, and tool results, with capture time, arrival time, validity, supersession, ambiguity	Multimodal grounding; clarification	[Spec G§3.2 (5)]
+Output ledger	Utterances emitted, the claims each made (in progress, completed, facts), filler history	No false claims; no repetition; repair after corrections	[Spec G§3.2 (1), G§5]
+Snapshot ledger	Last emitted snapshot and its timestamp	Detecting when an update is owed	[Spec G§5]
+Clock	Last ingested harness timestamp; pending agent timers in harness time	Section 5	[Spec G§4]
+6.2 Three states that must not be conflated
+Intent state — what the user currently wants. This is what the snapshot reports.
+Execution state — what the agent has in flight or has finished. This is the tool-call ledger.
+World state — which side effects exist. This is the effect ledger.
+A correction changes intent state immediately, changes execution state only through emitted cancellations, and changes world state not at all. When the three disagree, the disagreement must be visible to reasoning and communicated truthfully. Most recovery bugs come from treating these as one state.
+
+6.3 Required behavior in specific situations
+A. A slot changes. Create a new version of that slot only. Find everything that depends on the old version. In-flight calls: cancel. Completed results: mark stale; keep them in case the value reverts. Plan: re-plan from the earliest affected step. Utterances that mentioned the old value: a correction may be owed. Snapshot: update. If a state-modifying effect already committed with the old value: reconcile (inform the user, ask, or use a compensating tool if the manifest offers one). Never silently issue a second commit.
+
+B. The goal changes. Increment the goal generation. Cancel in-flight calls of the old goal unless their results provably serve the new goal. Decide slot carry-over explicitly. Suspend the old goal rather than delete it. Stop narrating the old goal. Void clarifications that belonged to it. Emit a snapshot with the new intent.
+
+C. A tool finishes after its plan was invalidated. Record the result in the ledger for accounting and possible reuse. Do not speak it as current, update active slots from it, or trigger continuations from it. If the tool was state-modifying, record the effect: the world has changed, and that creates an obligation to reconcile.
+
+D. A cancellation arrives after the tool has completed. For a read-only tool, drop the result. For a state-modifying tool, the effect happened and the cancellation did not undo it. The snapshot reports intent; the effect ledger reports the world; no utterance may claim the cancellation succeeded. Whether the harness suppresses results of cancelled calls, delivers them, or sends a "too late" notice is unspecified [Open]; all three must be handled.
+
+E. Two results arrive in an unexpected order. Match results by call_id, never by arrival order. When two calls asked the same question under different generations, only the current generation's result is authoritative, whichever arrives first. For parallel independent calls, a join waits for all required inputs. "Last arrival wins" is never a valid rule.
+
+F. A state-modifying tool is retried. Retry only when the outcome is known to be failure. When the outcome is unknown (timeout, no result), first try to establish it, for example through a read-only lookup if the manifest offers one [Inference], or tell the user. If a retry is unavoidable, reuse an idempotency key if the protocol provides one [Open]. Never retry because a wall-clock timer fired. An "attempted, outcome unknown" entry in the effect ledger blocks automatic re-issue.
+
+G. Several interruptions arrive rapidly. Apply them in timestamp order, incrementing the generation each time. Do not start expensive work for an intermediate generation if a later event has already been ingested; coalesce. Cancel calls from every superseded generation. Suppress fast acknowledgments that were superseded before emission. Never emit a snapshot for generation k after generation k+1 has been ingested.
+
+A subtle case: reversion. The user says A, then B, then A again. Tracking by version says the original call is stale; tracking by value says it is valid again. If the original call was already cancelled, it is gone either way. If its result arrived and was retained, reuse by value is safe for read-only tools and unsafe to assume for state-modifying ones.
+
+7. Concurrency and race conditions
+Nature of the concurrency. A Python asyncio program runs on one thread, so pure asyncio code has no memory races. It does have logical races: between an event's arrival and an emission computed before it, and across any await between a check and an action. True parallelism appears if models run in threads or processes. Under clock Model A, the agent's own compute time changes which interleaving occurs.
+
+Each race below lists the triggering sequence, the incorrect behavior, the invariant that prevents it (numbered as in section 14), the scoring categories affected, and the conceptual requirement.
+
+Race 1 — Result after invalidation. Trigger: search(destination=Pune) emitted → user corrects to Mumbai → Pune result arrives. Wrong: Pune flights spoken or used for booking. Invariant: P2. Affects: Task Completion, Interruption Recovery, quality. Requires: results checked against current dependencies before use.
+
+Race 2 — Cancellation crosses completion. Trigger: result produced at t; cancellation emitted at t + ε, or both in transit simultaneously. Wrong: agent assumes cancellation succeeded and ignores that a result (or effect) exists; or crashes on a result for a cancelled call. Invariant: W4, C1. Affects: Interruption Recovery, Safety, quality. Requires: a "completed after cancel" status with defined handling for each mutability class.
+
+Race 3 — Correction during an in-flight commit. Trigger: book(date=Tue) emitted → user says "Wednesday" → booking completes or is cancelled. Wrong: a second booking issued for Wednesday while Tuesday stands (double booking); or the user told nothing about Tuesday. Invariant: W1, W4, S4. Affects: Safety, Task Completion, Interruption Recovery. Requires: commits deferred until slots are committed; reconciliation when a commit cannot be withdrawn.
+
+Race 4 — Barge-in during agent speech. Trigger: agent streaming a final response → interruption signal → remaining response content still queued. Wrong: the rest of a now-superseded response is emitted. Invariant: P1, O4. Affects: Interruption Recovery, quality. Requires: pending speech is subject to the same generation check as any other action.
+
+Race 5 — Reasoning completes after interruption. Trigger: model call started with old context → interruption and correction ingested → model returns a plan with tool calls. Wrong: calls from the old plan emitted. Invariant: P1. Affects: Interruption Recovery, Safety. Requires: generation check at emission, not at reasoning start.
+
+Race 6 — Rapid successive interruptions. Trigger: A → B → C within a short window; plans for A and B partially started; results for A and B arrive after C. Wrong: B's plan completes and overwrites C; calls issued for B after C arrived; snapshot flickers backward. Invariant: T2, P1, S3. Affects: Interruption Recovery, Task Completion. Requires: last-ingested-event-wins semantics; coalescing of superseded work.
+
+Race 7 — Out-of-order results in a chain or parallel branch. Trigger: two searches emitted; the second returns first; step 3 depends on both. Wrong: step 3 proceeds with one input; results assigned to the wrong branch. Invariant: C1, P2. Affects: Task Completion. Requires: explicit joins and call_id matching.
+
+Race 8 — Timeout, retry, late original. Trigger: commit emitted → agent timeout fires → retry emitted → original result arrives. Wrong: two effects; or the second result treated as confirmation of a single effect. Invariant: W2, T1. Affects: Safety, Task Completion. Requires: unknown-outcome state; harness-time timeouts; no blind retries of commits.
+
+Race 9 — Premature commit on partial transcript. Trigger: chunks "book the 6 pm flight to Delhi" arrive; end-of-turn not yet received; next chunk "…no, just check prices." Wrong: booking emitted before the turn ends. Invariant: W1, W3. Affects: Safety, Task Completion. Requires: commits gated on end-of-turn and committed interpretation.
+
+Race 10 — Check-then-act across an await. Trigger: agent verifies the plan is current → awaits (validation, formatting, model call) → correction ingested during the await → action emitted. Wrong: stale action passes a check that was true when made. Invariant: P1. Affects: Interruption Recovery, Safety. Requires: the currency check and the emission must be atomic with respect to event ingestion.
+
+Race 11 — Same-timestamp events. Trigger: end-of-turn marker and interruption signal, or a tool result and a correction, share a timestamp. Wrong: nondeterministic handling; different traces per run. Invariant: T2. Affects: all. Requires: a deterministic tie-break, most defensibly queue order [Assumption].
+
+Race 12 — Evidence arrives after a decision. Trigger: user says "my Galaxy S22" → lookup emitted → frame arrives showing a different model. Wrong: evidence ignored, or the lookup silently replaced without telling the user. Invariant: M2, P3. Affects: Task Completion, quality. Requires: late evidence re-checked against decisions that depended on the contradicted value.
+
+Race 13 — Filler after completion or cancellation. Trigger: slow path emits final response → a fast-path filler scheduled earlier fires. Wrong: "Still checking…" after the answer; progress narration about cancelled work. Invariant: O2, O3. Affects: quality, Floor management. Requires: fast-path output derived from ledger state at emission time.
+
+Race 14 — Clarification overtaken by the user. Trigger: agent asks "Which date?" → user had already said "Friday" in a chunk ingested just before the question was emitted. Wrong: redundant question; the user's answer to a different question parsed as the date. Invariant: O5, P1. Affects: quality, Task Completion. Requires: clarifications subject to generation checks like any other action.
+
+Race 15 — Goal switch with late old-goal results and a return. Trigger: flight search in flight → "raise a support ticket instead" → flight result arrives → "okay, back to the flight." Wrong: flight result spoken during ticket creation; or discarded and the search re-run when the user returns, although its dependencies are unchanged. Invariant: P2, P4, S5. Affects: Interruption Recovery, Task Completion. Requires: suspended goals retain their results with dependency information.
+
+Race 16 — Manifest after first input. Trigger: user speaks before the manifest arrives, or a manifest update arrives mid-plan. Wrong: calls to undeclared tools; arguments that no longer match a changed schema. Invariant: W5, O1. Affects: Safety, Task Completion. Requires: planning gated on the current catalogue version.
+
+Race 17 — Snapshot lag. Trigger: correction ingested → final response composed from earlier state → emitted with an old snapshot. Wrong: snapshot contradicts the last ingested user event. Invariant: S3. Affects: Task Completion, Interruption Recovery. Requires: snapshots generated from current state at emission, not at composition.
+
+Race 18 — Non-invalidating interruption. Trigger: interruption signal carrying only "mm-hmm" during a valid search. Wrong: search cancelled and re-issued, adding latency and a possible stale re-run. Invariant: P4. Affects: Interruption Recovery, Response Latency. Requires: a policy that distinguishes floor-taking from invalidation. Under a strict grace anchor this conflicts with conservative cancellation (section 5.6).
+
+Race 19 — Event-loop starvation. Trigger: synchronous model, ASR, or vision call on the event loop → interruption arrives. Wrong: interruption processed late; cancellation misses the grace period; latency blown. Invariant: T3. Affects: Interruption Recovery, Response Latency. Requires: all heavy compute off the ingestion path.
+
+Race 20 — Duplicate or unknown deliveries. Trigger: fault injection delivers a result twice, or a result with an unknown call_id. Wrong: continuation triggered twice; a duplicate commit downstream; a crash. Invariant: C1, C3. Affects: Safety, Task Completion. Requires: idempotent result handling keyed by call_id.
+
+8. Tool semantics
+8.1 Dynamic manifests and unseen tools
+Manifests are scenario-specific inputs [Spec G§3.1], and the public suite includes "unseen tools" [Spec G§4]. Any logic that names the four mock domains (flight search, booking, ticket creation, manual lookup) will pass public scenarios and fail hidden ones [Inference]. Planning must work from each tool's description and parameter schema, and mutability must come from the manifest.
+
+8.2 Read-only versus state-modifying
+Property	Read-only	State-modifying
+May be speculated	Yes, with trace-visibility caveats (section 12)	Never
+Meaning of cancellation	Withdraws a question; cheap	Attempts to prevent an effect; may be too late
+Repeat cost	Latency	A second effect; Safety failure
+Retry after known failure	Generally safe	Safe only if failure is certain
+Retry after unknown outcome	Safe	Unsafe without outcome confirmation or an idempotency key
+Stale result	Discard; possible reuse	Effect exists; must reconcile
+When to emit	As soon as arguments are sufficiently likely	Only when intent and arguments are committed
+Unknown mutability	—	Treat the tool as state-modifying
+The last row reflects asymmetric costs. Misclassifying a read-only tool as state-modifying costs latency. The reverse costs a duplicate or unwanted effect.
+
+8.3 Tool-call lifecycle
+invalidated before emission
+
+emitted with call_id
+
+success result
+
+error result
+
+cancellation emitted
+
+harness-time timeout
+
+no result or acknowledgment
+
+result arrives anyway
+
+late success
+
+late error
+
+dependencies current
+
+dependencies invalidated
+
+failure handled
+
+Planned
+
+Discarded
+
+InFlight
+
+Completed
+
+Failed
+
+CancelRequested
+
+OutcomeUnknown
+
+Cancelled
+
+CompletedAfterCancel
+
+Consumed
+
+Stale
+
+How the agent learns that a cancellation took effect (an acknowledgment, the absence of a result, or nothing at all) is unspecified [Open].
+
+8.4 call_id
+Unique within the session. Never reused, unless the protocol explicitly defines reuse for retries [Open].
+The only key for matching results and cancellations. Arrival order is irrelevant.
+Internal bookkeeping (generation, dependencies) belongs in the ledger; the ID format itself may be constrained by the schema [Open].
+A result with an unknown call_id is logged and ignored, never fatal.
+A second result for the same call_id is ignored idempotently.
+8.5 Retries and fault injection
+The mock environment injects faults [Spec G§4]; their kinds are unspecified [Open]. Plausible faults are error results, delays long enough to look like timeouts, and possibly malformed or duplicated results [Inference]. Retry policy must depend on mutability and on whether failure is known or merely suspected. Retries must be bounded so the scenario finishes well inside 120 s.
+
+8.6 Malformed manifests
+Missing mutability: treat as state-modifying.
+Invalid or unusual schema: either mark the tool unusable or validate conservatively; never guess types into a call.
+Duplicate tool names or unknown types: do not crash; choose a deterministic, documented behavior.
+A tool not in the current manifest is never called.
+If a request cannot be served because of a manifest defect, the user is told plainly. A clarification question cannot fix a manifest.
+8.7 Argument extraction
+Arguments are validated against the schema before emission: required parameters present, types and enums respected, formats (dates, codes) normalized, no undeclared parameters. A missing required value leads to inference from evidence if the evidence is unambiguous, and to a clarification otherwise.
+
+9. Fast path, slow path, coordination layer
+9.1 Responsibilities
+Component	Should	Should not
+Fast path [Spec G§1: acknowledgment, clarification, progress narration]	Acknowledge within a few hundred ms with content reflecting what is understood; confirm receipt of corrections; narrate progress of work actually in flight; ask for clearly missing required values; yield the floor on interruption	Claim completion or results; state facts not in session state; issue state-modifying calls; narrate cancelled work; repeat content-free fillers; speak over an imminent slow-path answer
+Slow path [Spec G§1: tools, multimodal, reasoning]	Interpret utterances fully (slot vs goal change); plan; select tools; extract arguments; run perception; compose grounded responses	Emit directly to the output queue; mutate session state directly; block ingestion; keep working for a superseded generation
+Coordination layer [Spec G§1: non-blocking execution, cancellation, snapshots, idempotency]	Own all state mutation and emission ordering; maintain ledgers; apply invalidation; emit cancellations; gate state-modifying calls; validate payloads; emit snapshots when state changes; check generation at emission	Perform slow reasoning inline; read the wall clock
+9.2 Tensions to manage
+Speed against truth. A faster acknowledgment echoes a less certain interpretation. "Mumbai, got it" is useful when right and costly when the user was asking whether Mumbai is cheaper.
+Presence against excess. Each additional utterance should add information: a new stage, a new result, a confirmation. When nothing new has happened, silence may score better than a third filler.
+Two interpreters. If the fast path interprets cheaply and the slow path interprets carefully, they will sometimes disagree, and the fast path's statement will need repair. Assertive echoes should be limited to interpretations with low ambiguity.
+Two speakers. Fast-path and slow-path utterances about the same moment must be ordered and de-duplicated.
+9.3 What counts as a false completion claim
+"I've booked it" before a success result for the booking call.
+"Cancelled" when the cancellation outcome is unknown or the effect already committed.
+"Here are your options" before any results exist.
+Past-tense narration of work still in flight.
+Any result detail (price, time, reference number) not present in a current, valid result.
+10. Multimodal analysis
+10.1 Evidence has three times
+Each observation has a capture time (when the user spoke or the camera saw), an arrival time (when the event reached the agent), and a processing completion time (when ASR or vision finished). Interpretation always lags capture. Decisions must reason about capture time; freshness checks use arrival and completion times.
+
+G requires audio and frames to be processed "behind conversational acknowledgments" [Spec G§3.2 (5)]. This creates a tension with the latency criterion: for an audio-only utterance, a content-bearing acknowledgment is impossible before the content is recognized [Inference].
+
+10.2 Failure classes
+Failure class	What goes wrong	Required behavior
+Partial transcript updates	Acting on words the user is about to revise; if chunks can be revised rather than appended, stale text persists [Open]	Treat partial interpretations as hypotheses; commit only at end of turn
+Transcript and audio timing	Text for an utterance and the WAV for the same speech arrive at different times or cover different spans	Align by capture time; do not treat them as two requests
+Audio after text	Text already acted on; audio arrives later, adding nothing or contradicting	Duplicate content is absorbed; contradictions are handled as corrections or conflicts
+Audio-only content	Content exists only in WAV; ASR latency precedes interpretation	Perception on the slow path; a truthful non-specific acknowledgment meanwhile
+Non-speech audio	Noise, silence, a device beep that is itself troubleshooting evidence [Inference]	Classify as evidence, not as an utterance
+Stale frames	The latest frame predates a change the user describes	Check frame age against the question's time
+Frame gaps	Missing frames; state assumed unchanged	No interpolation; request a new view if the gap matters
+Visual evidence after reasoning began	Plan built without the frame	Re-check decisions that depend on what the frame shows
+Text contradicts vision	User names one model; the frame shows another	Clarify; never silently pick
+Ambiguous visual evidence	Low-confidence reading	Clarify [Spec G§3.2 (5)]
+Evidence irrelevant after interruption	Perception for an abandoned question still running	Deactivate, retain with timestamps, do not narrate
+Obsolete processing	Compute spent on superseded perception delays other work	Stop or de-prioritize internally; apply generation checks to its results
+Deictic reference	"This light," "that one" refers to what was visible when spoken, not the latest frame	Resolve against the frame nearest the utterance's capture time
+Frame volume	Processing every frame is infeasible	Select frames by relevance to the current question
+Delegated perception	The manual-lookup tool may take a frame reference as an argument rather than requiring agent-side vision [Open]	Determine from the manifest; this changes where perception latency sits
+11. Multimodal and interruption interaction
+The user interrupts while visual processing runs. The perception result carries the generation and capture time under which it started. On completion it is checked against current state. If the goal changed and the evidence is irrelevant, it is stored but not acted on. If only an unrelated slot changed, it remains valid and must not be recomputed. Downstream calls waiting on it are cancelled only if they depend on an invalidated value.
+
+A new frame invalidates an earlier frame. Supersession applies to claims, not frames. "What is the light doing now?" is answered by the latest valid frame. "What was on the screen when I said that?" is answered by the aligned frame. If a new frame changes a reading on which an in-flight lookup depends (a different error code), the lookup is invalid and must be cancelled. A single noisy frame should not cause cancellation; requiring stable evidence across frames prevents flapping but adds latency. That trade-off must be measured.
+
+A transcript correction arrives while vision is underway. The correction may change the visual question itself ("not the router, the modem"). The router analysis becomes obsolete, its results are not spoken, and a new analysis starts. Frames already received remain in the evidence store and may be re-examined for the new question.
+
+Audio contradicts the current interpretation. The audio may contain a self-repair or hesitation missing from the text, or recognition may disagree with the provided transcript. Which source is authoritative is unspecified [Open]. If the conflict affects arguments of a state-modifying call, the commit is blocked until the conflict is resolved, by clarification if necessary. For read-only work, the agent can proceed on the best reading and remain open to correction.
+
+The user changes goals before multimodal reasoning completes. The result is not used for the new goal unless its relevance is established. The evidence is retained with timestamps in case the old goal returns. Nothing about the abandoned analysis is narrated.
+
+Ordering rule. Because perception is slow, an interruption is often ingested after a perception job's input was captured but before the job finishes. The outcome is interpreted against the state current at completion, using its capture time to decide what it can speak to.
+
+12. Speculative execution and latency hiding
+Speculation means doing work before knowing it will be needed or valid. It pays when the bet is usually right and a wrong bet is cheap to undo.
+
+12.1 Candidate speculations
+Candidate	Safe to speculate	Invalidation	Stale handling	Latency gain	Correctness risk	Trace risk
+Interpretation and plan drafting on partial transcripts (internal)	Yes	Final interpretation differs from the hypothesis	Drop the draft	High: planning overlaps the user's speech	None if never emitted	None
+Perception on frames and audio as they arrive (internal)	Yes	Question changes; newer evidence	Keep evidence, drop conclusions	High in visual/audio scenarios	Low	None
+Response skeletons prepared before results (internal)	Yes	Results or intent change	Drop	Medium	Low	None
+Read-only call on a partial utterance	Effects are safe	Final arguments differ	Cancel; discard result	High: tool latency overlaps speech	Low	Visible calls with possibly wrong arguments and extra cancellations; may count against "correct tool execution" [Open]
+Read-only call while clarifying an unrelated detail	Yes	Clarification answer changes a dependency	Cancel; discard	Medium	Low	Low
+Pre-fetching a likely next read-only step	Effects are safe	User chooses differently	Cancel or ignore	Medium	Low	Extra calls in the trace [Open]
+Parallel issue of independent read-only calls	Yes	Per-call dependencies	Per call	Medium	Low if independence is real	Low
+Acknowledgment echoing a partial interpretation	Conditionally	Interpretation changes	A repair utterance is owed	High (latency score)	Truthfulness if wrong	Visible
+Snapshot containing hypothesized slot values	Risky	Hypothesis revised	A new snapshot	Low	Snapshot accuracy if checked at every emission	Visible
+State-modifying call	Never	—	An effect cannot be discarded	—	Duplicate or unwanted effect	Safety failure
+"Hold" or "reserve" actions	Never, unless the manifest marks them read-only	—	—	—	They modify state	—
+Model warm-up in the setup hook	Not speculation; permitted [Spec G§6]	—	—	High for the first response	None	None
+12.2 How invalidation works
+Speculative work records the assumptions it rests on: which partial text, which hypothesized slot values, which evidence. When the committed interpretation arrives, each assumption is compared. If all hold, the work is promoted and not re-run. If any fails, visible work is cancelled and internal work is dropped.
+
+12.3 Effect on latency and correctness
+Speculation moves latency earlier at the cost of wasted work when wrong. Internal speculation risks only compute (and, under clock Model A, contention with other work). Visible speculation additionally risks trace penalties that are not yet known. Until the kit clarifies whether extra read-only calls are penalized, internal speculation is the dominant strategy [Inference].
+
+12.4 Latency hiding
+Latency hiding is the fast path's job: a substantive acknowledgment, then progress narration tied to real ledger transitions ("found three flights, checking seat availability"), while the slow path works. It is honest only if each statement corresponds to an actual state change.
+
+13. Safety and protocol implications
+Validation gate. Every emitted payload is well-formed JSON with all required fields and correct types. call_ids are unique. Cancellations reference issued call_ids; whether cancelling an already-completed call is a protocol error is [Open]. Snapshot slot names and types follow the manifest [Assumption].
+No raw model output. Model output is parsed and validated before emission. If validation fails, it is repaired or replaced; a malformed payload is never emitted.
+Single commit gate. All state-modifying calls pass one check against intent currency, argument completeness, and the effect ledger.
+Fail-safe defaults. Unknown mutability means state-modifying. An unknown call_id is ignored. A malformed input event is logged and ignored.
+Crash containment. A crash forfeits the rest of the scenario, including the final snapshot. An exception in any task must not terminate the agent.
+Time budget. Retries and reasoning are bounded so a final response and snapshot are emitted well before the 120 s cap. How scenario end is signaled is [Open].
+Session isolation. All session state starts empty for each scenario and nothing derived from user interaction persists between scenarios [Spec G§6]. Loaded model weights are not session data [Inference]; indices built from manuals during setup are [Open].
+Truthfulness. Every claim in speech is backed by a ledger entry at the moment of emission.
+14. Core invariants
+These are derived from the requirements above. Any architecture that violates one of them fails a scored criterion under some event ordering.
+
+Time and ordering
+T1. Logical time is harness time. No correctness decision reads the wall clock.
+T2. Events are applied to session state in harness timestamp order, with a deterministic tie-break. The order in which internal tasks finish never changes the outcome of applying events.
+T3. Event ingestion is never blocked by reasoning, perception, tool waits, or speech.
+Session state
+S1. Session state has one writer. Other components propose changes; they do not apply them.
+S2. Every slot value carries provenance and a version. A correction to one slot changes only that slot and values explicitly derived from it.
+S3. A snapshot emitted at harness time t reflects every user event ingested before t.
+S4. Intent, execution, and world state are tracked separately. A correction changes intent immediately, execution only through emitted cancellations, and world state never by assertion.
+S5. A goal change deactivates goal-specific state and decides carry-over explicitly. It does not erase session context.
+Plans and results
+P1. Every action produced by reasoning is checked against the current generation at the moment of emission. An action computed under a superseded generation is not emitted.
+P2. An asynchronous result (tool or perception) whose dependencies are no longer current never mutates active state, never triggers a continuation, and is never presented as current.
+P3. Every in-flight call whose dependencies are invalidated receives a cancellation within the grace period of the invalidating event.
+P4. Work whose dependencies are unchanged is not re-executed.
+P5. A call is never issued with arguments belonging to a superseded state.
+State-modifying actions
+W1. Each intended state-modifying effect is issued at most once. Issuance requires the current generation, end-of-turn-committed arguments that pass validation, and no equivalent entry in the effect ledger, whether its outcome is known or unknown.
+W2. A state-modifying call with unknown outcome blocks re-issue of an equivalent call until the outcome is resolved.
+W3. State-modifying calls are never speculative.
+W4. Cancelling a state-modifying call is never reported as undoing it unless the undo is confirmed.
+W5. A tool of unknown mutability is treated as state-modifying.
+Output
+O1. Every emitted payload is well-formed and schema-valid. Nothing produced by a model reaches the output queue unvalidated.
+O2. No utterance claims completion, results, or progress that the ledger does not support at the moment of emission.
+O3. Every utterance adds information relative to earlier ones; content-free fillers are bounded.
+O4. After an interruption, no utterance refers to a superseded goal or value as current.
+O5. Clarification is requested only when a required value is missing or evidence conflicts in a way that affects arguments, and never about something the user supplied in an already-ingested event.
+Multimodal
+M1. Observations are timestamped by capture time. Deictic references resolve to evidence aligned with the utterance.
+M2. Conflicting evidence that affects a state-modifying argument is resolved before the commit.
+M3. Perception results obey P1 and P2 exactly as tool results do.
+Identity and robustness
+C1. call_ids are unique within a session. Results and cancellations are matched by call_id; unmatched ones are ignored, never fatal.
+C2. Session state starts empty in every scenario. Nothing derived from interaction persists across scenarios.
+C3. No input, however malformed or unexpected, terminates the agent.
+15. Likely hidden-test failure classes
+All entries are [Inference] from the stated mechanics: deterministic latency, fault injection, adversarial timing, the named public scenario themes, and the modality distribution.
+
+#	Class	Example sequence	What breaks	Categories
+1	Correction just before result arrival	search(Pune) → "Mumbai" → Pune result	Stale grounding; missing cancellation	IR, TC
+2	Correction just after result arrival	search(Pune) → result → "Mumbai"	Cancelling a completed call; failing to re-plan	IR
+3	Correction during a commit	book(Tue) in flight → "Wednesday"	Double booking; silent mismatch	Safety, TC, IR
+4	Reversion to the original value	Pune → Mumbai → Pune	Unnecessary re-runs; version/value confusion	IR, Latency
+5	Rapid multi-correction	Three corrections within one tool latency	Intermediate plans leak; snapshot regresses	IR, TC
+6	Goal switch and return	Flight → ticket → flight	Lost context; stale results spoken; full restart	TC, IR
+7	Non-invalidating interruption	"Mm-hmm" during search	Needless cancel and re-run	IR, Latency
+8	Self-repair within one utterance	"Tuesday — uh, I mean Wednesday" before end of turn	Commit or call on the repaired value	TC, Safety
+9	Timeout on a commit that succeeded	book → long delay → late success	Retry creates a duplicate	Safety
+10	Injected errors	Read-only failure needing retry; commit failure needing truthful report	Endless retries; false success claim	TC, quality
+11	Chained and parallel calls, out of order	Two searches, reversed arrival, dependent step	Wrong join; premature step	TC
+12	Unseen tool	Unfamiliar name and schema, mutability only in manifest	Hardcoded tools fail; misclassified mutability	TC, Safety
+13	Edge-case manifest	Missing fields, unusual types	Crash; guessed arguments	Safety
+14	Clarification calibration	Required slot missing vs. all information given	Missing a needed question; asking an unneeded one	TC, quality
+15	Clarification pre-empted	User supplies the answer before the question lands	Redundant question; misparsed reply	quality, TC
+16	Audio-specific timing	Audio-only request; audio after text; hesitation in audio	Latency; double counting; missed repair	Latency, TC
+17	Frame staleness and deixis	"This light" with several frames; gaps	Wrong frame grounds the lookup	TC
+18	Text–vision conflict or ambiguity	Spoken model differs from visible label; blurry frame	Silent choice instead of clarification	TC, quality
+19	Interruption during perception	Correction while frame analysis runs	Obsolete analysis spoken or re-run needlessly	IR
+20	Long slow path	Chained calls with long mock latency	Silence, or repetitive fillers	Latency, quality
+21	False completion narration	Past tense before results	Truthfulness	quality, Floor
+22	Relative temporal expressions	"Next Friday"	Host date used instead of scenario date	TC
+23	Budget exhaustion	Repeated faults push toward 120 s	No final response or snapshot	TC
+24	Simultaneous events	Result and correction at the same timestamp	Nondeterministic handling	All
+IR = Interruption Recovery; TC = Task Completion.
+
+16. Architectural principles
+These constrain any architecture without choosing one.
+
+Build a stream processor, not a turn-taker. The unit of design is the event, not the conversational turn.
+Separate deciding from emitting. Reasoning proposes; a guarded emitter checks currency at the moment of emission.
+Record dependencies when work is created. Invalidation must be a lookup, not a reasoning step; this is the only way to approach a few-ms grace period without clock Model B.
+One writer of session state, many readers.
+Design around the commit point. Reads are cheap to repeat and cheap to cancel; writes are costly to repeat and may be impossible to cancel. Everything before a commit can be speculative and parallel; the commit is gated and happens once.
+Harness time is the only time.
+The trace is the product. Every internal recovery needs a visible counterpart: a cancellation, a snapshot, or a repair utterance.
+Say only what the ledger supports.
+Prefer invisible speculation to visible speculation until the kit shows how extra calls are scored.
+Generalize from the manifest, not from the public scenarios.
+Allocate effort by score leverage. Multimodal scenarios likely carry the majority or a large minority of hidden weight; the quality multiplier outweighs latency at typical scores; recovery carries 35%. Do not trade truth for milliseconds.
+Fail safe and fail soft. Unknown means conservative. Exceptions are contained.
+Test invariants, not transcripts. A trace checker for section 14 plus timing sweeps is the primary test instrument.
+Be deterministic wherever possible, so that harness determinism yields reproducible results.
+Invalidate by dependency, not by reset. Context is preserved unless something it depends on changed.
+Appendix A — Questions for the evaluation kit, ranked by design impact
+Clock model. Does agent compute advance virtual time? Who timestamps actions: the harness on receipt, or the agent? (Section 5.2)
+Cancellation semantics. From which event is the grace period measured? Are results of cancelled calls suppressed, delivered, or replaced by a "too late" notice? Can a state-modifying call be cancelled at all?
+Duplicate definition. What makes two state-changing calls duplicates? Is a retry after failure a duplicate? Can a call_id be reused as an idempotency key?
+Latency trigger and "substantive." Is the trigger the first chunk, the end-of-turn marker, or the interruption signal? Does a content-free filler count?
+Snapshot contract. Schema, intent vocabulary (where do intent labels come from?), and when snapshots are expected or allowed (final responses only, or with every action).
+Extra calls. Are speculative or unnecessary read-only calls penalized?
+Script reactivity. Are user events a fixed script, or do they respond to clarifications and agent speech?
+Audio. Are transcripts provided for audio scenarios, or is ASR required? How do WAV clips relate in time to text chunks?
+Vision. Does the manual-lookup tool take a frame reference, or must the agent read frames itself?
+Manifest format. How is mutability declared? Can manifests change mid-scenario?
+Text chunks. Append-only or revisable?
+Multimodal weighting. Does 1.5× apply to audio and visual, or visual only? How are scenario scores aggregated?
+Quality multiplier. Who or what judges naturalness, truthfulness, and relevance?
+Evaluation environment. Network access (hosted model APIs), hardware (GPU availability), Docker constraints.
+Scenario lifecycle. How is scenario end signaled? Is there a yield or stop-speaking action? What reference date applies to relative dates?
+Setup artifacts. Do indices or embeddings built in the setup hook violate "no cross-session caching"?
