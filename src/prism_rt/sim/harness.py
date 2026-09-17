@@ -24,9 +24,11 @@ from prism_rt.ids import IdGenerator
 from prism_rt.kernel.step import Kernel, StepReport
 from prism_rt.model.actions import Action, ToolCallBody
 from prism_rt.model.events import Envelope
-from prism_rt.model.types import ActionType
+from prism_rt.model.types import ActionType, JobKind
 from prism_rt.observability.decision_log import DecisionLogger
 from prism_rt.store.session import SessionStore
+from prism_rt.workers.gateway import ModelGateway, ScriptedProvider
+from prism_rt.workers.runner import ScriptedRunner
 
 
 class MockToolRegistry:
@@ -74,14 +76,26 @@ class RunLog:
 
 
 class SimHarness:
-    def __init__(self, config: Config, *, seed: int = 0, tools: dict | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        *,
+        seed: int = 0,
+        tools: dict | None = None,
+        provider: ScriptedProvider | None = None,
+        worker_latency_us: dict[JobKind, int] | None = None,
+    ) -> None:
         self.config = config
         self.clock = SteppedClock()
         self.store = SessionStore.new(config, IdGenerator(seed))
         self.codec = HarnessCodec()
         self.writer = BufferOutputWriter(self.codec)
         self.log = DecisionLogger()
-        self.kernel = Kernel(config, self.store, self.clock, self.writer, log=self.log)
+        self.provider = provider if provider is not None else ScriptedProvider()
+        self.gateway = ModelGateway(self.provider)
+        default_latency = {JobKind.INTERPRET: 50_000, JobKind.PLAN: 50_000, JobKind.COMPOSE: 50_000}
+        self.runner = ScriptedRunner(self.gateway, latency_us_by_kind=worker_latency_us or default_latency)
+        self.kernel = Kernel(config, self.store, self.clock, self.writer, runner=self.runner, log=self.log)
         self.mock_tools = MockToolRegistry(tools)
         self._seq = 0
         self.run_log = RunLog()
@@ -98,6 +112,7 @@ class SimHarness:
                 raw = {**raw, "ts_us": ts_us}
             envelopes.extend(self.codec.decode(raw, seq=self._next_seq()))
         envelopes.extend(self._due_tool_result_envelopes(ts_us))
+        envelopes.extend(self._due_worker_result_envelopes(ts_us))
 
         report = self.kernel.step(envelopes, inject=inject)
         self._register_new_calls(report)
@@ -116,6 +131,22 @@ class SimHarness:
                 "ts_us": now_us,
                 "type": "tool_result",
                 "payload": {"call_id": call_id, "status": status, "result": response, "error": error},
+            }
+            envelopes.extend(self.codec.decode(raw, seq=self._next_seq()))
+        return envelopes
+
+    def _due_worker_result_envelopes(self, now_us: int) -> list[Envelope]:
+        envelopes: list[Envelope] = []
+        for result in self.runner.poll_results(now_us):
+            raw = {
+                "ts_us": now_us,
+                "type": "worker_result",
+                "payload": {
+                    "job_id": result.job_id,
+                    "kind": result.kind,
+                    "status": result.status,
+                    "proposal": result.proposal,
+                },
             }
             envelopes.extend(self.codec.decode(raw, seq=self._next_seq()))
         return envelopes
