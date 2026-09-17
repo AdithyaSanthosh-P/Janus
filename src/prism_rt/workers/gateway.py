@@ -2,18 +2,20 @@
 actual model. Workers call `gateway.complete_json(kind, prompt, schema)`
 and never see which provider answered.
 
-`ScriptedProvider` is what every V1 test uses (§8.3: "All tests use
-ScriptedProvider — no LLM calls"). `AnthropicProvider` is a real,
-optional provider for the live validation pass mentioned in
-`docs/sonnet_implementation_plan.md` §12 Day 7 ("Live LLM validation
-(optional, if API key available)") — it is not exercised by anything in
-this repository's test suite (no network access / API key in this
-environment), so treat it as unverified until run against a live key.
+`ScriptedProvider` is what every test uses (§8.3: "All tests use
+ScriptedProvider — no LLM calls"). `AnthropicProvider` and `GeminiProvider`
+are real, optional providers for live validation (§12 Day 7: "Live LLM
+validation (optional, if API key available)") — neither is exercised by
+this repository's test suite (deliberately: no live LLM calls in tests),
+so treat them as separate from, and never required for, grading. Live use
+is `demo/run_v1_live_demo.py`, not `tests/`.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import urllib.request
 from typing import Any, Callable, Protocol
 
 
@@ -66,6 +68,48 @@ class AnthropicProvider:
             messages=[{"role": "user", "content": prompt}],
         )
         text = "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
+        return json.loads(text)
+
+
+class GeminiProvider:
+    """Live provider using the Gemini API (free tier: gemini-3.6-flash).
+    Uses the raw REST endpoint via stdlib `urllib` — no new dependency
+    needed, matching `AnthropicProvider`'s pattern of an optional,
+    undeclared-in-pyproject SDK for live-only providers, except here
+    there's no SDK to import at all.
+
+    Uses `generationConfig.responseMimeType: application/json` (guarantees
+    valid JSON syntax) plus an instruction describing the target schema in
+    the prompt — the same instruction-based enforcement `AnthropicProvider`
+    uses, not Gemini's native `responseSchema` (that requires translating
+    this project's plain JSON Schema, which uses `["string", "null"]`-style
+    type unions for nullable fields, into Gemini's OpenAPI-subset schema
+    format — unnecessary complexity for what this needs to do)."""
+
+    def __init__(self, model: str = "gemini-3.6-flash", api_key: str | None = None) -> None:
+        self._model = model
+        self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        if not self._api_key:
+            raise RuntimeError("GeminiProvider requires GEMINI_API_KEY (env var or api_key=)")
+
+    def complete_json(self, kind: str, prompt: str, schema: dict) -> dict:
+        instruction = (
+            "Respond with ONLY a single JSON object matching this schema, no prose, "
+            f"no markdown fences: {json.dumps(schema)}"
+        )
+        body = {
+            "contents": [{"parts": [{"text": f"{instruction}\n\n{prompt}"}]}],
+            "generationConfig": {"responseMimeType": "application/json"},
+        }
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        text = result["candidates"][0]["content"]["parts"][0]["text"]
         return json.loads(text)
 
 
