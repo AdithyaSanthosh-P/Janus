@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-This is a **pre-code** hackathon repository (Samsung PRISM GenAI Hackathon, Theme 05, deadline 25 Sep 2026). As of now the repo contains only planning documents (`docs/`, `guidelines/`) and `currentStatus.md` — no `src/`, `tests/`, or `pyproject.toml` exist yet, and git has no commits. Every future session should treat `currentStatus.md` as the live handoff record and update it after meaningful work (it says so explicitly — follow that rule).
+This project is called **Janus** (`pyproject.toml` distribution name `janus`; the Python package import path is `prism_rt` — a naming mismatch left in place deliberately, not a leftover to "fix"). It's a hackathon entry for the Samsung PRISM GenAI Hackathon, Theme 05 (deadline 25 Sep 2026). V0 and V1 are implemented, tested, and frozen (git tags `v0-skeleton`, `v1-text-agent`/`release/v1`); V2 is next. Every future session should treat `currentStatus.md` as the live handoff record and update it after meaningful work (it says so explicitly — follow that rule).
 
 **Read `currentStatus.md` first, every session.** It names the read order for the other docs, the current implementation state, and the next task. Do not re-derive that from scratch — it is kept up to date for exactly this purpose.
 
@@ -52,17 +52,21 @@ Build in strict stages; each version must be independently runnable/submittable 
 
 Rules: never break a frozen version's interfaces (guard new behavior behind `Config` flags); the highest frozen version/tag is always the emergency-submission fallback; final submission needs git tag `PRISM_GENAI_HACKATHON_Y2026` on the judged commit. Stop conditions (when to halt a version and fall back) are in `docs/sonnet_implementation_plan.md` §13.
 
-## Commands (once the toolchain exists — see `docs/sonnet_implementation_plan.md` §12 for build order)
+## Commands
 
-Per the plan, this will be a Python project (`pyproject.toml`, deps: pydantic, pyyaml, pytest, pytest-asyncio) targeting **Python 3.10–3.12** — do not use 3.11+-only features (`ExceptionGroup`, `TaskGroup`, `Self`) since the Docker target is 3.11 but must also run on 3.10/3.12.
+Python project (`pyproject.toml`, deps: pydantic, PyYAML, pytest, pytest-asyncio) targeting **Python 3.10–3.12** — do not use 3.11+-only features (`ExceptionGroup`, `TaskGroup`, `Self`) since the Docker target is 3.11 but must also run on 3.10/3.12. Dev venv on this machine runs 3.14 (no 3.10–3.12 interpreter was available), so target-version compatibility is unverified beyond static syntax avoidance.
 
 ```bash
-pytest                          # full suite
-pytest tests/test_v0.py -v      # single version's scenario tests
-docker build .                  # must build and run all tests from a clean checkout
+source .venv/bin/activate                     # venv already has all deps installed
+python -m pytest tests/ -v                    # full suite (23 tests: 8 V0 + 15 V1)
+python -m pytest tests/test_v1.py -v           # single version's scenario tests
+PYTHONPATH=src:. python demo/run_v1_demo.py    # interactive demo with real spoken output
+docker build .                                 # V4 scope — no Dockerfile yet
 ```
 
-Tests are deterministic by construction: `SteppedClock` (no real sleeps), `ScriptedProvider` (no live LLM calls), `MockToolRegistry`, and a seeded `IdGenerator`. `TraceChecker` runs after every test against the decision log; replay identity (two runs of the same input → byte-identical decision log) is a required check, not optional. Never claim untested work is verified — use "NOT VERIFIED" until tests actually pass.
+Note `pyproject.toml`'s `pythonpath = ["src", "."]` — both the `prism_rt` package under `src/` and the top-level `config/` package need to be importable; scripts run outside pytest need `PYTHONPATH=src:.` set the same way.
+
+Tests are deterministic by construction: `SteppedClock` (no real sleeps), `ScriptedProvider` (no live LLM calls), `MockToolRegistry`/`ScriptedRunner` (mock tool and worker-job results, both withheld until a configured latency passes so nothing ever resolves in the same step it was dispatched), and a seeded `IdGenerator`. `TraceChecker` (`sim/checker.py`) runs after every test against the decision log; replay identity (multiple runs of the same input → byte-identical decision log) is a required check, not optional. Never claim untested work is verified — use "NOT VERIFIED" until tests actually pass. Note: `TraceChecker` itself has had real false-positive bugs (see `currentStatus.md`) — if a check fails, verify whether the checker's assumption is wrong before assuming the kernel is.
 
 ## Session hygiene
 

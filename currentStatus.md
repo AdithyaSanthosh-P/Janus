@@ -2,6 +2,8 @@
 
 ## What We Are Building
 
+**Project name: Janus** (`pyproject.toml` distribution name `janus`; the Python package import path stays `prism_rt` — renaming that across the whole codebase wasn't worth the risk this close to the deadline, so `import prism_rt` is correct and intentional, not a leftover).
+
 Samsung PRISM Theme 05: **Interruptible Real-Time Agents** — a full-duplex conversational agent scored on Task Completion (40%), Interruption Recovery (35%), Response Latency (15%), Safety & Protocol (10%). Deadline: **25 Sep 2026**.
 
 Architecture: single-writer kernel processing timestamped events in deterministic batches, with async LLM workers, versioned fact store, read-set validation, and same-step cancellation.
