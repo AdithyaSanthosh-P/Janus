@@ -47,6 +47,9 @@ class Config:
     evidence_lease_ms: int = 4000  # CURRENT_STATE claim staleness timeout (simplified: flat timeout, not frame-count based)
     asr_enabled: bool = False  # not implemented
 
+    # V4 Hardening feature flags
+    reference_bound_identifiers: bool = False  # V4: C10 — see kernel/executor.py
+
     # Observability
     log_decisions: bool = True
     record_trace: bool = True

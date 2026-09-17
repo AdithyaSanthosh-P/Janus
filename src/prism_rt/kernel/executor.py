@@ -15,6 +15,7 @@ call for the same step_key with `attempt` incremented.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from prism_rt.kernel.interpret_apply import active_goal_id
@@ -30,6 +31,23 @@ from prism_rt.model.types import (
     TaskState,
     fingerprint_for,
 )
+
+# V4 / C10 (docs/theme05_implementation_blueprint.md §5.5): a WRITE
+# parameter is identifier-like if the schema marks it (enum, format=uuid)
+# or its name looks like one. Scope trim: the blueprint's fourth criterion
+# ("a value for p appeared as a field value in any consumed result this
+# session") would need scanning arbitrary nested result shapes for a
+# matching field name and isn't implemented — the first three already
+# cover every identifier-like parameter this project's own tools use.
+_IDENTIFIER_NAME_RE = re.compile(r"(_id|_code|_number|_ref|_reference)$|^id$")
+
+
+def _is_identifier_param(param: str, prop_schema: dict) -> bool:
+    if prop_schema.get("enum") is not None:
+        return True
+    if prop_schema.get("format") == "uuid":
+        return True
+    return bool(_IDENTIFIER_NAME_RE.search(param))
 
 
 @dataclass(frozen=True)
@@ -150,6 +168,12 @@ class PlanExecutor:
         read_keys: list[str] = ["goal.active", "catalog.version"]
         for param, binding in step.bindings.items():
             if binding.kind == BindingKind.LITERAL:
+                if store.config.reference_bound_identifiers and step.kind == StepKind.WRITE:
+                    prop_schema = self._param_schema(store, step.tool, param)
+                    if _is_identifier_param(param, prop_schema) and not self._identifier_origin_ok(
+                        store, binding, binding.value, None
+                    ):
+                        return None, f"identifier.{step.tool}.{param}"
                 args[param] = binding.value
                 continue
 
@@ -177,6 +201,12 @@ class PlanExecutor:
                 fact = store.facts.get(key)
                 if fact is None or fact.status in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS):
                     return None, key
+                if store.config.reference_bound_identifiers and step.kind == StepKind.WRITE:
+                    prop_schema = self._param_schema(store, step.tool, param)
+                    if _is_identifier_param(param, prop_schema) and not self._identifier_origin_ok(
+                        store, binding, fact.value, fact
+                    ):
+                        return None, f"identifier.{step.tool}.{param}"
                 args[param] = fact.value
                 read_keys.append(key)
                 continue
@@ -242,6 +272,29 @@ class PlanExecutor:
 
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return BindResult(args=args, read_set=read_set), None
+
+    def _param_schema(self, store, tool: str, param: str) -> dict:
+        spec = store.catalog.get(tool)
+        if spec is None:
+            return {}
+        return (spec.params_schema.get("properties") or {}).get(param) or {}
+
+    def _identifier_origin_ok(self, store, binding, value, fact) -> bool:
+        """C10: an identifier argument must come from a consumed read
+        result (`step_output` — always acceptable, checked by the caller
+        before this path is reached), a tool-derived fact (V2
+        `derived.*`/`output_map`, `provenance.source == "tool"`), a
+        user-stated fact (`provenance.source == "user"`), or a literal that
+        matches verbatim text the user actually said. A perception-sourced
+        fact (V3) is deliberately *not* accepted — booking against a vision
+        guess is exactly what this rule exists to prevent."""
+        if binding.kind == BindingKind.FACT:
+            return fact is not None and fact.provenance.source in ("user", "tool")
+        if binding.kind == BindingKind.LITERAL:
+            if not isinstance(value, str) or not value:
+                return False
+            return any(value in " ".join(c.text for c in turn.chunks) for turn in store.turn_log.all())
+        return False
 
     def _find_step(self, store, goal_id: str, step_key: str):
         plan = store.plans.current(goal_id)
