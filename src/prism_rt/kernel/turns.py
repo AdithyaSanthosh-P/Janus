@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from prism_rt.canonical import compute_digest, normalize_value
 from prism_rt.kernel.detector import QuickDetector
-from prism_rt.kernel.interpret_apply import active_goal_id
-from prism_rt.model.types import FactStatus, FloorState, GoalStatus, Provenance, TaskState, Turn
+from prism_rt.kernel.interpret_apply import active_goal_id, apply_interpretation
+from prism_rt.kernel.proposals import parse_interpretation
+from prism_rt.model.types import FactStatus, FloorState, GoalStatus, JobKind, Provenance, TaskState, Turn
 from prism_rt.store.session import StoreTxn
 
 
@@ -174,6 +175,20 @@ class TurnManager:
             ):
                 return
 
+        # Phase 6 (docs/prompt 2.txt §11.3): if a speculative INTERPRET
+        # job already resolved against exactly this turn's final prefix
+        # digest, apply it now, in this same EOT step — zero additional
+        # model latency. Otherwise, if a matching job is still in flight,
+        # mark this turn as waiting for it rather than dispatching a
+        # second (redundant) job; kernel/reducers.py._apply_worker_result
+        # applies it directly when it resolves. Either way, no fresh
+        # (non-speculative) INTERPRET job goes out.
+        if txn.store.config.speculative_interpretation_enabled:
+            if self._try_promote_speculative(txn, turn, now_us, step_no, event_id=event_id):
+                return
+            if self._mark_eot_waiting_if_matching_job_in_flight(txn, turn, now_us, step_no, event_id=event_id):
+                return
+
         txn.facts.set(
             "session.pending_interpretation_turn",
             turn.turn_id,
@@ -181,6 +196,44 @@ class TurnManager:
             Provenance(source="user", event_id=event_id, turn_id=turn.turn_id, step_no=step_no, ts_us=now_us),
             rule="turns.eot",
         )
+
+    def _try_promote_speculative(self, txn: StoreTxn, turn: Turn, now_us: int, step_no: int, *, event_id: str) -> bool:
+        prefix_fact = txn.facts.get(f"turn.{turn.turn_id}.prefix")
+        cached_digest = txn.facts.get(f"spec_interpret.{turn.turn_id}.digest")
+        if (
+            prefix_fact is None
+            or cached_digest is None
+            or cached_digest.status == FactStatus.RETRACTED
+            or cached_digest.value != prefix_fact.value
+        ):
+            return False  # no cache, or the user kept talking past the cached prefix
+        proposal_fact = txn.facts.get(f"spec_interpret.{turn.turn_id}.proposal")
+        if proposal_fact is None or proposal_fact.status == FactStatus.RETRACTED:
+            return False
+        try:
+            interp = parse_interpretation(proposal_fact.value, turn_id=turn.turn_id, input_digest="")
+        except (KeyError, ValueError):
+            return False
+        apply_interpretation(interp, txn, now_us, step_no, event_id=event_id)
+        return True
+
+    def _mark_eot_waiting_if_matching_job_in_flight(
+        self, txn: StoreTxn, turn: Turn, now_us: int, step_no: int, *, event_id: str
+    ) -> bool:
+        running = txn.store.jobs.running_by_kind_turn(JobKind.INTERPRET, turn.turn_id)
+        if not running:
+            return False
+        job = running[0]
+        if not txn.facts.is_valid(job.read_set).is_valid:
+            return False  # the in-flight job was dispatched against an older, now-superseded prefix
+        txn.facts.set(
+            f"spec_interpret.{turn.turn_id}.eot_waiting",
+            True,
+            FactStatus.COMMITTED,
+            Provenance(source="system", event_id=event_id, turn_id=turn.turn_id, step_no=step_no, ts_us=now_us),
+            rule="speculation.eot_waiting",
+        )
+        return True
 
     def on_interruption(self, ts_us: int, txn: StoreTxn, *, active_goal_id: str | None) -> Turn:
         """Open turn if none (§5.1 class 1); an already-open turn simply

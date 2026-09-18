@@ -21,7 +21,7 @@ pip install -e ".[dev]"
 ## Running the tests
 
 ```bash
-python -m pytest tests/ -v                 # full suite (98 tests: V0-V4 + post-V4 Phase A + Phase 2 + Phase 3 + Phase 4 + Phase 5)
+python -m pytest tests/ -v                 # full suite (106 tests: V0-V4 + post-V4 Phase A + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6)
 python -m pytest tests/test_v3.py -v        # a single version's scenarios
 ```
 
@@ -63,6 +63,7 @@ Built in strict, independently-submittable stages — each frozen with a git tag
 | `v7-live-multimodal` | `release/v7` | Real image/audio bytes flow to the live model (`Provider.complete_json`'s `media` param, `workers/runner.py`'s `blob_resolver`) instead of by-reference IDs. Verified against the live Gemini API. |
 | `v8-chunk-anchor` | `release/v8` | CHUNK cancellation anchor: a HIGH-confidence slot correction cancels an in-flight call in the same step the chunk arrives, not at end-of-turn (`kernel/detector.py.detect_values`, `kernel/turns.py._detect_chunk_anchor`, `StoreTxn.mark_chunk_anchor`). |
 | `v9-task-completion` | `release/v9` | C2 response frames (`kernel/frames.py.FrameScheduler`) — a deterministic, kernel-rendered FINAL grounded in the real tool result, no COMPOSE round-trip — and C9 commit-last ordering (`kernel/executor.py._commit_last_blocked`) — a write waits for unrelated plan reads to settle first. |
+| `v10-response-latency` | `release/v10` | Speculative interpretation (`kernel/task.py._speculative_interpret`, `kernel/turns.py._try_promote_speculative`) — an INTERPRET job runs on the transcript prefix while the user is still speaking, applied at EOT with zero additional model latency when the digest matches — and content-bearing ACK. Measured 300,000µs → 0µs TTFS(EOT) on a T-06-shaped scenario. |
 
 Every later version's new behavior is gated behind an explicit `Config` flag defaulting to the prior version's behavior — disabling V2's/V3's/V4's flags reproduces the earlier version exactly, and every frozen tag's own tests still pass unmodified on `main`.
 

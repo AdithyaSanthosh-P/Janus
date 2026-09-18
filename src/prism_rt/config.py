@@ -78,6 +78,16 @@ class Config:
     # the fallback whenever no valid frame is available.
     frame_rendering_enabled: bool = False
 
+    # Phase 6 (docs/prompt 2.txt §11.3): speculative interpretation
+    # coalescing. While a turn is open, at most one INTERPRET job runs
+    # speculatively per turn (a growing prefix does not spawn a second
+    # job — it just makes the completed one stale, dispatching a fresh
+    # one against the latest prefix). At EOT, if the running or completed
+    # job's prefix digest equals the final digest, its result is applied
+    # in the same step as EOT — zero additional model latency — instead
+    # of dispatching a non-speculative job and waiting for it.
+    speculative_interpretation_enabled: bool = False
+
     # Observability
     log_decisions: bool = True
     record_trace: bool = True

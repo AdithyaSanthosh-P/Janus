@@ -146,6 +146,13 @@ class FactStore:
             if fact.status in (FactStatus.COMMITTED, FactStatus.DERIVED)
         }
 
+    def by_prefix(self, prefix: str) -> dict[str, Fact]:
+        """Every fact (any status, including HYPOTHESIS) whose key starts
+        with `prefix` — for a caller that needs to enumerate a family of
+        dynamically-named keys (e.g. `hyp.<turn>.*`) that
+        `snapshot_committed` deliberately excludes."""
+        return {key: fact for key, fact in self._facts.items() if key.startswith(prefix)}
+
     def all_derived(self) -> list[Fact]:
         """V2: facts carrying a `derivation_read_set` — candidates for
         transitive retraction when what they were derived from goes stale

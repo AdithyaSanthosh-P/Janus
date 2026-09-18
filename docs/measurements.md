@@ -11,9 +11,15 @@ All numbers on this page were produced by actually running this repository's own
 | V2 | Robust recovery (I-04, I-04-chain, I-05, I-10..I-15, S-04, S-10, R-05, T-05) + replay identity | 13 | 13/13 passing |
 | V3 | Multimodal (N-05, M-03, M-06, M-07, M-08) + replay identity | 6 | 6/6 passing |
 | V4 | Timing sweeps (I-03 x5, I-14 x5, R-05 x5) + C10 (x3) | 18 | 18/18 passing |
-| **Total** | | **60** | **60/60 passing** |
+| Phase A | Integration surface: format-variant dialects, watchdog salvage (T-07), real async entry point | 13 | 13/13 passing |
+| Phase 2 | Audio/ASR (N-06, M-01, M-10) + replay identity | 5 | 5/5 passing |
+| Phase 3 | Live multimodal blob-resolution plumbing (deterministic; live-API verification done separately, see below) | 4 | 4/4 passing |
+| Phase 4 | Chunk-anchored cancellation, I-02, revert-safety, no-active-goal inertness + replay identity | 5 | 5/5 passing |
+| Phase 5 | C9 commit-last ordering (N-02b) + C2 response frames + replay identity | 11 | 11/11 passing |
+| Phase 6 | Speculative interpretation coalescing/promotion + content-bearing ACK + replay identity | 8 | 8/8 passing |
+| **Total** | | **106** | **106/106 passing** |
 
-Reproduce: `source .venv/bin/activate && python -m pytest tests/ -v`. Every test also runs `TraceChecker` (P1/P3/W1/S3 invariants, plus the static no-wall-clock scan over `kernel/` and `store/`); 0 violations across all 60 tests. Full-suite wall time: **0.26s** on this machine's dev environment (Python 3.14), **0.40s** inside the V4 Docker image (Python 3.11, `docker run --rm janus`) — both cold, no cache warm-up between runs.
+Reproduce: `source .venv/bin/activate && python -m pytest tests/ -v`. Every test also runs `TraceChecker` (P1/P3/W1/S3 invariants, plus the static no-wall-clock scan over `kernel/` and `store/`); 0 violations across all 106 tests. Full-suite wall time: **0.56s** on this machine's dev environment (Python 3.14), verified passing (106/106) inside the Docker image (Python 3.11, `docker run --rm janus`) as of the Phase 6 freeze.
 
 ## Per-step kernel latency
 
@@ -41,6 +47,7 @@ The hackathon's hidden evaluation kit — the actual scoring harness this projec
 | V1 vs V2 settle barrier | `settle_barrier_enabled` | `test_i14_correction_within_settle_window_blocks_the_original_booking`: a write is never emitted for a value the user corrected within `settle_ms` (300ms default) of speaking it — vs. the write going out immediately and needing post-hoc reconciliation, with the flag off. |
 | V0-V2 vs V3 multimodal | `vision_enabled` | `test_m06_conflicting_visual_text`: a vision-perceived value that disagrees with what the user said opens a conflict and blocks the step with a specific CLARIFY — vs. the slot binding simply being absent (a generic "what should X be" clarify, or nothing at all if unrelated), with the flag off. |
 | V0-V3 vs V4 identifier binding | `reference_bound_identifiers` | `test_c10_model_literal_identifier_refused`: a WRITE call with a model-invented identifier argument is refused and the plan blocks pending a resolving read/clarification — vs. the call being admitted and potentially acting on a fabricated identifier, with the flag off. |
+| Phase 5 vs Phase 6 speculative interpretation | `speculative_interpretation_enabled` | Real benchmark (`SimHarness`, INTERPRET latency 300ms, chunk spacing 150ms — the same numbers `docs/theme05_implementation_blueprint.md`'s T-06 scenario uses), measuring TTFS(EOT): time from the `end_of_turn` event to the first substantive SPEAK/FINAL/CLARIFY action. **Flag off: 300,000 µs** (the full INTERPRET round-trip happens only after EOT). **Flag on: 0 µs** (the speculative job resolved and was promoted while the turn was still open, so EOT itself triggers the plan dispatch and ACK in the same step) — a **100% reduction**, meeting T-06's acceptance bar ("TTFS(EOT) ≤ 1 ms when... promotion"). This specific number depends on the turn lasting long enough for the speculative job to resolve before EOT (here: 4 × 150ms ≥ 300ms); a turn shorter than the model's own latency falls back to the flag-off number exactly (nothing is lost, nothing double-counted — see `tests/test_phase6.py`'s in-flight-waiting and stale-cache-fallback tests for those paths). |
 
 ## Known gaps in this data
 

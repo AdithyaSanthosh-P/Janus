@@ -51,6 +51,8 @@ class TaskStateMachine:
             turn_id = pending_turn.value
             if not store.jobs.running_by_kind_turn(JobKind.INTERPRET, turn_id):
                 requests.append(self._build_interpret_request(store, turn_id))
+        elif store.config.speculative_interpretation_enabled:
+            requests.extend(self._speculative_interpret(store))
 
         gid = active_goal_id(store)
         if gid is not None:
@@ -104,12 +106,43 @@ class TaskStateMachine:
             if key.startswith(prefix)
         }
 
-    def _build_interpret_request(self, store, turn_id: str) -> DispatchRequest:
+    def _speculative_interpret(self, store) -> list[DispatchRequest]:
+        """Phase 6 (`docs/prompt 2.txt` §11.3): while a turn is open, keep
+        at most one INTERPRET job in flight per turn, dispatched against
+        the current prefix. Coalescing: if one is already running, do
+        nothing here — `kernel/turns.py.TurnManager._detect_chunk_anchor`
+        doesn't touch this, and a growing prefix simply makes the running
+        (or last completed) job's cached digest stale, which this method
+        notices next call and redispatches against the latest prefix.
+        Never touches `session.pending_interpretation_turn` — that fact
+        does not exist yet while the turn is open, and a speculative job's
+        read set must never include it (excluded in `_build_interpret_
+        request`), or the turn later closing (which sets that fact) would
+        self-invalidate the very job this mechanism exists to promote."""
+        turn_id = store.turn_log.open_turn_id()
+        if turn_id is None:
+            return []
+        turn = store.turn_log.get(turn_id)
+        if turn is None or not turn.chunks:
+            return []
+        if store.jobs.running_by_kind_turn(JobKind.INTERPRET, turn_id):
+            return []  # coalesced — the running job will be redispatched against a newer prefix once it resolves
+        prefix_fact = store.facts.get(f"turn.{turn_id}.prefix")
+        if prefix_fact is None:
+            return []
+        cached_digest = store.facts.get(f"spec_interpret.{turn_id}.digest")
+        if cached_digest is not None and cached_digest.status != FactStatus.RETRACTED and cached_digest.value == prefix_fact.value:
+            return []  # already have a completed speculative result at exactly this prefix
+        return [self._build_interpret_request(store, turn_id, speculative=True)]
+
+    def _build_interpret_request(self, store, turn_id: str, *, speculative: bool = False) -> DispatchRequest:
         turn = store.turn_log.get(turn_id)
         transcript = " ".join(chunk.text for chunk in turn.chunks) if turn is not None else ""
         gid = active_goal_id(store)
 
-        read_keys = ["session.pending_interpretation_turn", f"turn.{turn_id}.prefix", "goal.active"]
+        read_keys = [f"turn.{turn_id}.prefix", "goal.active"]
+        if not speculative:
+            read_keys.append("session.pending_interpretation_turn")
         active_intent = None
         active_slots: dict = {}
         if gid is not None:

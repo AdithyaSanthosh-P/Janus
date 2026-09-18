@@ -92,14 +92,47 @@ class FastResponder:
             rule="responder.ack",
         )
         grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
+        text = self._content_ack_text(store) or ACK_DEFAULT
         return [
             IntendedAction(
                 action_type=ActionType.SPEAK,
-                body=SpeakBody(text=ACK_DEFAULT, kind="ack", claim_grade=grade),
+                body=SpeakBody(text=text, kind="ack", claim_grade=grade),
                 read_set=EMPTY_READ_SET,
                 rule_id="responder.ack",
             )
         ]
+
+    def _content_ack_text(self, store) -> str | None:
+        """Phase 6 (`docs/prompt 2.txt` §9.3): "emit a content-bearing ACK
+        only if QuickDetector produced at least one HIGH value" — instead
+        of the fixed generic string, name what was actually understood (a
+        `hyp.<turn>.<name>` fact Phase 4's `detect_values` already
+        recorded for the turn that triggered this plan dispatch). Since
+        `kernel/turns.py._detect_chunk_anchor` writes that fact
+        unconditionally — regardless of whether a goal existed yet when
+        the chunk was heard — this covers a brand-new first utterance
+        exactly as well as a correction on an active goal, as long as
+        QuickDetector found a HIGH value at all; this call only runs once
+        `_ack_plan_dispatch` itself runs (a plan is actually dispatching),
+        so interpretation has necessarily already applied by then either
+        way. When QuickDetector found nothing HIGH-confidence for that
+        turn, there is nothing to name and the generic string is used."""
+        if not store.config.speculative_interpretation_enabled:
+            return None
+        turns = store.turn_log.all()
+        if not turns:
+            return None
+        turn = turns[-1]
+        hyp_facts = store.facts.by_prefix(f"hyp.{turn.turn_id}.")
+        live = {
+            key[len(f"hyp.{turn.turn_id}.") :]: fact.value
+            for key, fact in hyp_facts.items()
+            if fact.status != FactStatus.RETRACTED
+        }
+        if not live:
+            return None
+        name, value = sorted(live.items())[0]  # deterministic pick
+        return f"Got it — {name.replace('_', ' ')}: {value}."
 
     def _clarify(self, store, goal_id: str, now_us: int, step_no: int) -> list[IntendedAction]:
         target_fact = store.facts.get(f"goal.{goal_id}.clarify_target")

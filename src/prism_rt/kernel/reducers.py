@@ -116,6 +116,36 @@ def _write_derived_facts(txn: StoreTxn, call_id: str, now_us: int, step_no: int,
         )
 
 
+def _cache_speculative_interpretation(txn: StoreTxn, job, proposal: dict, now_us: int, step_no: int, *, event_id: str) -> None:
+    """Phase 6 (`docs/prompt 2.txt` §11.3): store the prefix digest this
+    resolved speculative INTERPRET job is grounded in and its raw,
+    unapplied proposal, keyed by turn. The read-set-validity check just
+    above this call site's caller already confirmed `turn.<turn_id>.prefix`
+    hasn't changed since dispatch, so its *current* value (a digest
+    string, not a value to re-hash) is exactly the job's own dispatch-time
+    prefix digest. Never applies anything here — see `kernel/turns.py.
+    TurnManager._try_promote_speculative`."""
+    if job.turn_id is None:
+        return
+    prefix_fact = txn.facts.get(f"turn.{job.turn_id}.prefix")
+    if prefix_fact is None:
+        return
+    txn.facts.set(
+        f"spec_interpret.{job.turn_id}.digest",
+        prefix_fact.value,
+        FactStatus.COMMITTED,
+        Provenance(source="system", event_id=event_id, turn_id=job.turn_id, step_no=step_no, ts_us=now_us),
+        rule="speculation.cache_digest",
+    )
+    txn.facts.set(
+        f"spec_interpret.{job.turn_id}.proposal",
+        proposal,
+        FactStatus.COMMITTED,
+        Provenance(source="system", event_id=event_id, turn_id=job.turn_id, step_no=step_no, ts_us=now_us),
+        rule="speculation.cache_proposal",
+    )
+
+
 def _apply_tool_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
     payload: ToolResultPayload = env.payload
     outcome = _RESULT_ROUTER.route(payload, txn.store, now_us, step_no=step_no, event_id=env.event_id)
@@ -259,7 +289,23 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
             interp = parse_interpretation(proposal, turn_id=job.turn_id or "", input_digest="")
         except (KeyError, ValueError):
             return
-        apply_interpretation(interp, txn, now_us, step_no, event_id=env.event_id)
+        pending = txn.facts.get("session.pending_interpretation_turn")
+        is_pending_this_turn = (
+            pending is not None and pending.status != FactStatus.RETRACTED and pending.value == job.turn_id
+        )
+        waiting = txn.facts.get(f"spec_interpret.{job.turn_id}.eot_waiting")
+        is_eot_waiting = waiting is not None and waiting.status != FactStatus.RETRACTED and waiting.value
+        if is_pending_this_turn or is_eot_waiting:
+            apply_interpretation(interp, txn, now_us, step_no, event_id=env.event_id)
+            if is_eot_waiting:
+                txn.facts.retract(f"spec_interpret.{job.turn_id}.eot_waiting", rule="speculation.eot_waiting_consumed")
+        elif txn.store.config.speculative_interpretation_enabled:
+            # Phase 6: the turn is still open — a real (non-late) INTERPRET
+            # result that isn't wanted yet must be *this* job's speculative
+            # dispatch. Cache it (digest + raw proposal) instead of
+            # applying it; kernel/turns.py.TurnManager._try_promote_
+            # speculative reads this cache at EOT.
+            _cache_speculative_interpretation(txn, job, proposal, now_us, step_no, event_id=env.event_id)
 
     elif kind == JobKind.PLAN:
         if job.goal_id is None:
