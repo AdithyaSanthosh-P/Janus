@@ -21,7 +21,7 @@ pip install -e ".[dev]"
 ## Running the tests
 
 ```bash
-python -m pytest tests/ -v                 # full suite (73 tests: V0-V4 + post-V4 Phase A)
+python -m pytest tests/ -v                 # full suite (78 tests: V0-V4 + post-V4 Phase A + Phase 2)
 python -m pytest tests/test_v3.py -v        # a single version's scenarios
 ```
 
@@ -59,6 +59,7 @@ Built in strict, independently-submittable stages — each frozen with a git tag
 | `v3-multimodal` | `release/v3` | Vision-grounded questions/claims/conflicts over video frames, gated behind `Config.vision_enabled`. |
 | `v4-hardened` | `release/v4` | Reference-bound write identifiers (C10), targeted timing sweeps, Docker, this README. |
 | `v5-integration` | `release/v5` | A genuinely working async entry point (`entry.py`), a tolerant wire-format codec, `audio_clip` ingestion, watchdog salvage. See `docs/post_v4_implementation_plan.md`. |
+| `v6-audio` | `release/v6` | An audio/ASR pipeline (`kernel/audio.py`, `workers/asr.py`) — audio-only tasks complete end-to-end, gated behind `Config.asr_enabled`. |
 
 Every later version's new behavior is gated behind an explicit `Config` flag defaulting to the prior version's behavior — disabling V2's/V3's/V4's flags reproduces the earlier version exactly, and every frozen tag's own tests still pass unmodified on `main`.
 

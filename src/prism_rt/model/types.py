@@ -152,7 +152,7 @@ class JobKind(str, Enum):
     PLAN = "plan"
     COMPOSE = "compose"
     VISION = "vision"
-    # V3 (not implemented): ASR = "asr"
+    ASR = "asr"
 
 
 class Confidence(str, Enum):
@@ -458,15 +458,24 @@ class JobRecord:
 
 @dataclass(frozen=True)
 class Observation:
-    """A stored video frame — analyzed only on demand (§10.4), never on
-    arrival. `frame_id` is the harness-given reference; no blob is held
-    here (see `workers/vision.py`'s module docstring for why)."""
+    """A stored video frame or audio clip — analyzed only on demand
+    (§10.4), never on arrival. `frame_id` is the harness-given reference
+    (used for audio clips too, despite the name — kept rather than
+    renamed to avoid rippling through every V3 call site); no blob is
+    held here (see `workers/vision.py`'s module docstring for why).
+
+    `asr_job_id`/`asr_done` (Phase 2, audio only) track ASR dispatch the
+    same way `Question.pending_job_id` tracks a VISION dispatch —
+    `kernel/audio.py.AsrScheduler` is the sole writer."""
 
     obs_id: str
     frame_id: str
     capture_ts_us: int
     arrival_step: int
-    modality_seq: int  # 1-based
+    modality_seq: int  # 1-based *within this modality* — see EvidenceStore.add_observation
+    modality: str = "frame"  # "frame" | "audio"
+    asr_job_id: str | None = None
+    asr_done: bool = False
 
 
 @dataclass(frozen=True)
@@ -474,6 +483,17 @@ class PerceptionClaim:
     name: str
     value: Any
     confidence: Confidence
+
+
+@dataclass(frozen=True)
+class AsrSegment:
+    """Phase 2: one transcribed span from `workers/asr.py`. `offset_us`/
+    `end_us` are relative to the clip's own start, per `docs/prompt 2.txt`
+    §9.3's `ts_us = clip.ts_us + segment.offset_us` formula."""
+
+    text: str
+    offset_us: int
+    end_us: int
 
 
 @dataclass(frozen=True)

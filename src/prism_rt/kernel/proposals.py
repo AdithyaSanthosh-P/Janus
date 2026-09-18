@@ -11,6 +11,7 @@ set; accept, hold, or reject"), the prompt-building half is not.
 from __future__ import annotations
 
 from prism_rt.model.types import (
+    AsrSegment,
     Binding,
     BindingKind,
     Confidence,
@@ -102,3 +103,11 @@ def parse_perception(raw: dict) -> tuple[PerceptionClaim, ...]:
         PerceptionClaim(name=c["name"], value=c.get("value"), confidence=Confidence(c["confidence"]))
         for c in raw.get("claims") or ()
     )
+
+
+def parse_asr(raw: dict) -> tuple[tuple[AsrSegment, ...], bool]:
+    segments = tuple(
+        AsrSegment(text=s["text"], offset_us=int(s.get("offset_us", 0)), end_us=int(s.get("end_us", 0)))
+        for s in raw.get("segments") or ()
+    )
+    return segments, bool(raw.get("end_of_utterance", False))

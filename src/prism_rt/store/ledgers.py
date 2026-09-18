@@ -321,6 +321,18 @@ class EvidenceStore:
     def observations(self) -> list[Observation]:
         return list(self._observations)
 
+    def observations_by_modality(self, modality: str) -> list[Observation]:
+        return [o for o in self._observations if o.modality == modality]
+
+    def update_observation(self, obs_id: str, **changes) -> Observation:
+        self._guard.check()
+        for i, obs in enumerate(self._observations):
+            if obs.obs_id == obs_id:
+                updated = dataclasses.replace(obs, **changes)
+                self._observations[i] = updated
+                return updated
+        raise KeyError(obs_id)
+
     # --- questions ------------------------------------------------------
 
     def create_question(self, question: Question) -> None:

@@ -45,7 +45,18 @@ class Config:
     vision_enabled: bool = False  # V3: True
     evidence_align_window_ms: int = 1000  # AT_UTTERANCE: how far past anchor_ts to wait for a frame
     evidence_lease_ms: int = 4000  # CURRENT_STATE claim staleness timeout (simplified: flat timeout, not frame-count based)
-    asr_enabled: bool = False  # not implemented
+    # Phase 2 (docs/post_v4_implementation_plan.md): ASR. asr_enabled is
+    # the master gate, matching vision_enabled's pattern — every AsrScheduler
+    # code path is a no-op when it's False. audio_mode: "transcript_primary"
+    # (never analyze — text chunks carry all content), "audio_only" (always
+    # transcribe, release immediately, no dedupe wait), "auto" (transcribe,
+    # but discard the result if a real text_chunk already opened/extended
+    # the turn by the time it resolves — a simplified stand-in for
+    # docs/prompt 2.txt §9.3's precise dedupe-window/timer scheme; see
+    # kernel/audio.py's module docstring for the exact trade-off).
+    asr_enabled: bool = False
+    audio_mode: str = "auto"  # "transcript_primary" | "audio_only" | "auto"
+    asr_closes_turn: bool = False  # audio_only + end_of_utterance: also synthesize end_of_turn
 
     # V4 Hardening feature flags
     reference_bound_identifiers: bool = False  # V4: C10 — see kernel/executor.py

@@ -28,6 +28,7 @@ from prism_rt.kernel.emission import EmissionGate, EmitReport
 from prism_rt.kernel.executor import PlanExecutor
 from prism_rt.kernel.invalidation import InvalidationEngine, InvalidationReport
 from prism_rt.kernel.ordering import order_batch
+from prism_rt.kernel.audio import AsrScheduler
 from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.kernel.reducers import apply as apply_reducer
 from prism_rt.kernel.responder import FastResponder
@@ -75,6 +76,7 @@ class Kernel:
         self._commit_gate = CommitGate()
         self._task_state_machine = TaskStateMachine()
         self._perception_scheduler = PerceptionScheduler()
+        self._asr_scheduler = AsrScheduler()
         self._plan_executor = PlanExecutor()
         self._fast_responder = FastResponder()
         self._step_no = 0
@@ -129,6 +131,7 @@ class Kernel:
             intended.extend(self._invalidation_engine.cancellation_actions(invalidation, self.store))
             dispatch_requests = list(self._task_state_machine.decide(self.store, now_us, step_no))
             dispatch_requests.extend(self._perception_scheduler.decide(self.store, now_us, step_no))
+            dispatch_requests.extend(self._asr_scheduler.decide(self.store, now_us, step_no))
             self._plan_executor.propose_ready_calls(self.store, now_us, step_no)
             admitted_actions, admitted_call_ids = self._commit_gate.scan_and_admit(self.store, now_us)
             intended.extend(admitted_actions)

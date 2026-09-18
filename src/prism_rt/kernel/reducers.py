@@ -10,10 +10,10 @@ from __future__ import annotations
 import dataclasses
 
 from config.templates import WATCHDOG_FALLBACK
-from prism_rt.kernel.detector import QuickDetector
+from prism_rt.kernel.audio import AsrScheduler
 from prism_rt.kernel.interpret_apply import active_goal_id, apply_interpretation
 from prism_rt.kernel.perception import PerceptionScheduler
-from prism_rt.kernel.proposals import parse_compose, parse_interpretation, parse_perception, parse_plan
+from prism_rt.kernel.proposals import parse_asr, parse_compose, parse_interpretation, parse_perception, parse_plan
 from prism_rt.kernel.results import ResultRouter
 from prism_rt.kernel.turns import TurnManager
 from prism_rt.model.events import (
@@ -42,8 +42,8 @@ from prism_rt.store.session import StoreTxn
 
 _RESULT_ROUTER = ResultRouter()
 _TURN_MANAGER = TurnManager()
-_QUICK_DETECTOR = QuickDetector()
 _PERCEPTION = PerceptionScheduler()
+_ASR = AsrScheduler()
 
 
 def _apply_manifest(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
@@ -131,43 +131,7 @@ def _apply_text_chunk(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -
 
 def _apply_end_of_turn(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
     turn = _TURN_MANAGER.on_eot(now_us, txn)
-    if turn is None or not turn.chunks:
-        return
-
-    # V2: settle barrier needs to know when the floor last closed, regardless
-    # of whether this turn dispatches an interpretation (kernel/commit.py G10).
-    txn.facts.set(
-        "session.last_eot_ts",
-        now_us,
-        FactStatus.COMMITTED,
-        Provenance(source="system", event_id=env.event_id, turn_id=turn.turn_id, step_no=step_no, ts_us=now_us),
-        rule="reducers.eot_settle_marker",
-    )
-
-    # V2: a pure backchannel ("mm-hmm") during ongoing work needs no
-    # interpretation at all — dispatching one risks the model reading
-    # something disruptive into a turn that meant nothing (I-11). A brand
-    # new utterance (no active goal, or goal already finished) still goes
-    # through normal interpretation, since "ok" might be starting something.
-    full_text = " ".join(chunk.text for chunk in turn.chunks)
-    gid = active_goal_id(txn.store)
-    if gid is not None:
-        goal = txn.store.goals.get(gid)
-        if (
-            goal is not None
-            and goal.status == GoalStatus.ACTIVE
-            and goal.task_state in (TaskState.PLANNING, TaskState.EXECUTING, TaskState.RESPONDING)
-            and _QUICK_DETECTOR.detect(full_text).is_backchannel
-        ):
-            return
-
-    txn.facts.set(
-        "session.pending_interpretation_turn",
-        turn.turn_id,
-        FactStatus.COMMITTED,
-        Provenance(source="user", event_id=env.event_id, turn_id=turn.turn_id, step_no=step_no, ts_us=now_us),
-        rule="reducers.eot",
-    )
+    _TURN_MANAGER.request_interpretation(txn, turn, now_us, step_no, event_id=env.event_id)
 
 
 def _apply_video_frame(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
@@ -178,9 +142,9 @@ def _apply_video_frame(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) 
     V0-V2 nothing since they never send this event."""
     payload: VideoFramePayload = env.payload
     obs_id = txn.store.ids.next("obs")
-    seq = len(txn.store.evidence.observations()) + 1
+    seq = len(txn.store.evidence.observations_by_modality("frame")) + 1
     txn.evidence.add_observation(
-        Observation(obs_id=obs_id, frame_id=payload.frame_id, capture_ts_us=now_us, arrival_step=step_no, modality_seq=seq)
+        Observation(obs_id=obs_id, frame_id=payload.frame_id, capture_ts_us=now_us, arrival_step=step_no, modality_seq=seq, modality="frame")
     )
 
 
@@ -194,9 +158,9 @@ def _apply_audio_clip(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -
     audio per guidelines/Theme_5_Guide.md §4)."""
     payload: AudioClipPayload = env.payload
     obs_id = txn.store.ids.next("obs")
-    seq = len(txn.store.evidence.observations()) + 1
+    seq = len(txn.store.evidence.observations_by_modality("audio")) + 1
     txn.evidence.add_observation(
-        Observation(obs_id=obs_id, frame_id=payload.clip_id, capture_ts_us=now_us, arrival_step=step_no, modality_seq=seq)
+        Observation(obs_id=obs_id, frame_id=payload.clip_id, capture_ts_us=now_us, arrival_step=step_no, modality_seq=seq, modality="audio")
     )
 
 
@@ -326,6 +290,13 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
         except (KeyError, ValueError):
             return
         _PERCEPTION.on_perception_result(txn, job, claims, now_us, step_no, event_id=env.event_id)
+
+    elif kind == JobKind.ASR:
+        try:
+            segments, end_of_utterance = parse_asr(proposal)
+        except (KeyError, ValueError):
+            return
+        _ASR.on_asr_result(txn, job, segments, end_of_utterance, now_us, step_no, event_id=env.event_id)
 
 
 _HANDLERS = {

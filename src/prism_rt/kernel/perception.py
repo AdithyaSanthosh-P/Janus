@@ -168,7 +168,9 @@ class PerceptionScheduler:
         return requests
 
     def _select_frame(self, store, question: Question) -> Observation | None:
-        obs_list = store.evidence.observations()
+        # Phase 2: observations() now also holds audio clips — vision must
+        # only ever pick a video frame, never an audio observation.
+        obs_list = store.evidence.observations_by_modality("frame")
         if not obs_list:
             return None
         if question.mode == QuestionMode.CURRENT_STATE:

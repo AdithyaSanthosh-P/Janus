@@ -127,18 +127,20 @@ Plus: `audio_clip` added to `PAYLOAD_TYPES`/`EVENT_CLASS_BY_PAYLOAD_TYPE` (USER_
 
 **Acceptance:** `demo/run_queue_harness.py` — the real async entry point, not `SimHarness` — actually emits ACK → TOOL_CALL → FINAL. A synthetic scenario containing unknown event types, unknown extra fields, malformed payloads and audio clips runs to completion and still emits correct actions for the parts it understands.
 
-### Phase 2 — Audio path **(unlocks 30% of scenarios)**
+### Phase 2 — Audio path **(unlocks 30% of scenarios) — DONE, tag `v6-audio`**
 
-Follow `docs/prompt 2.txt` §9.3 / §10.2.
+Built per `docs/prompt 2.txt` §9.3 / §10.2, simplified in one place from what was originally scoped here — see `kernel/audio.py`'s module docstring for the exact trade-off:
 
-- Generalize `Observation` (currently frame-only: `frame_id`) with a `modality` field; store audio clips alongside frames in `EvidenceStore`.
-- `JobKind.ASR` + `workers/asr.py` (ScriptedProvider-mocked in tests, exactly like every other worker): returns `{segments: [{text, offset_us, end_us}], end_of_utterance: bool}`.
-- `audio_mode` policy (`transcript_primary` | `audio_only` | `auto`, default `auto`), `asr_dedupe_ms` (800), `asr_closes_turn`, `asr_disagreement` (`log` default) as `Config` fields.
-- **Dedupe/release** via the existing `TimerWheel`: hold ASR segments for `asr_dedupe_ms`; if text chunks covering the same window arrived, discard the ASR output and record a disagreement (M-01); otherwise release. **Release by calling `TurnManager.on_chunk` directly** rather than synthesizing envelopes — one turn-assembly path, far less machinery.
-- Self-repair text is preserved verbatim (M-10); the Interpreter resolves it — no stripping.
-- New tests: N-06 (audio-only task completes end-to-end with no text chunks), M-01, M-10.
+- `Observation` (`model/types.py`) generalized with a `modality` field (`"frame"` | `"audio"`) and `asr_job_id`/`asr_done` tracking; `modality_seq` fixed to be per-modality (it was a global counter before — harmless while only frames existed, a real bug once audio coexists, caught while making this change). `kernel/perception.py._select_frame` updated to only ever consider `modality="frame"` observations — audio clips were otherwise eligible to be picked as a "frame" for vision analysis.
+- `JobKind.ASR` + `workers/asr.py` (`ScriptedProvider`-mocked, same pattern as every other worker): returns `{segments: [{text, offset_us, end_us}], end_of_utterance}`. Wired into `workers/runner.py`.
+- `Config.audio_mode` (`transcript_primary` | `audio_only` | `auto`, default `auto`) and `asr_closes_turn`; `asr_enabled` is the master gate (was a dead `False` field, now real).
+- **New module `kernel/audio.py`** (`AsrScheduler`), same two-phase split as `PerceptionScheduler`: `decide()` dispatches an ASR job per unanalyzed audio observation (DECIDE phase, mirrors `PerceptionScheduler.decide`); `on_asr_result()` releases transcribed segments as ordinary text chunks via `TurnManager.on_chunk` (APPLY phase, mirrors `on_perception_result`).
+- **Simplified `auto`-mode dedupe** (scope trim vs. the original plan here): instead of a timer-held dedupe window, the check happens *the moment the ASR result resolves* — if the open turn already has real chunks in it, the ASR output is discarded and an `asr.<obs_id>.disagreement` fact is recorded (M-01); otherwise it's released. Doesn't catch a text chunk arriving *after* the ASR result but still describing the same utterance; every `audio_only` scenario (no text ever arrives) is unaffected either way.
+- **Real bug found and fixed while wiring `asr_closes_turn`**: closing a turn via `TurnManager.on_eot` alone does *not* trigger interpretation — the `session.pending_interpretation_turn` marker (and the settle-barrier timestamp, and the backchannel check) were bundled inside the `end_of_turn` *reducer*, not `TurnManager` itself. An audio-only scenario would close its turn and then dispatch nothing. Fixed by extracting that logic into a new `TurnManager.request_interpretation()` method both the ordinary `end_of_turn` reducer and the ASR-closes-turn path now call — one path for "what happens when a turn closes," not two that can drift.
+- Self-repair text preserved verbatim (M-10) — nothing in this path strips or normalizes segment text.
+- New tests (`tests/test_audio.py`, 5): N-06 (audio-only task completes end-to-end, no text chunks at all), a `transcript_primary`-never-dispatches-ASR sanity check, M-01 (disagreement discards ASR in favor of real text), M-10 (self-repair preserved verbatim), replay identity.
 
-**Acceptance:** an audio-only scenario completes a task end-to-end.
+**Acceptance:** met — an audio-only scenario completes a task end-to-end (`test_n06_audio_only_request_completes_end_to_end`), verified via `assert_clean` (TraceChecker) and manually before the formal test existed.
 
 ### Phase 3 — Live multimodal provider **(prototype credibility + demo)**
 
@@ -211,11 +213,11 @@ New tests: M-02 (partial transcript / inert tail, i.e. C1), T-06.
 
 ## 7. Sequencing, and what to do if time runs short
 
-Recommended order: **0 → A → 2 → 3 → 4 → 5 → 6 → 7 → 8**, inserting kit integration immediately after Phase 0 if R1 turns positive.
+Recommended order: **0 → A → 2 → 3 → 4 → 5 → 6 → 7 → 8**, inserting kit integration immediately after Phase 0 if R1 turns positive. **Phase A (tag `v5-integration`) and Phase 2 (tag `v6-audio`) are done.**
 
-Phases 0 and A are non-negotiable — one removes disqualification risk, the other removes a total-failure mode (the entry point that has never once been executed). Everything after that is additive scoring value, and each phase leaves the repo in a frozen, submittable state.
+Phases 0 and A were non-negotiable — one removes disqualification risk, the other removed a total-failure mode (the entry point that had never once been executed). Everything after that is additive scoring value, and each phase leaves the repo in a frozen, submittable state.
 
-If time compresses, drop from the back: Phase 8 → 7 → 6 → 5. Do **not** drop Phase 2 (audio) ahead of Phase 5 or 6 — 30% of scenarios outweighs either category those phases target.
+If time compresses, drop from the back: Phase 8 → 7 → 6 → 5. Phase 2 (audio) is already done, so that trade-off no longer applies — next up is Phase 3 (live multimodal provider) or Phase 4 (interruption-recovery depth), per the plan's own category-weight ordering.
 
 ---
 
