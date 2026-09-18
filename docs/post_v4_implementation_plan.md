@@ -57,7 +57,7 @@ Plus a **0.80×–1.20× quality multiplier** on "transcript naturalness, truthf
 | C6 | Schema-complete read sets | Select (M2) | ◑ absence entries built (V2); read set still only covers bound params |
 | C7 | Evidence leases | Select (M2) | ● built (V3, simplified to flat timeout) |
 | C8 | Claim-typed atomic emission | Select (M2) | ◑ claim grades built (V2); overlay validation (CS-06) not |
-| C9 | Commit-last ordering + settled commit barrier | Select (M3) | ◑ settle barrier built (V2); commit-last ordering not |
+| C9 | Commit-last ordering + settled commit barrier | Select (M3) | Built — settle barrier (V2), commit-last ordering (Phase 5) |
 | C10 | Reference-bound write arguments | Select (M3) | ● built (V4) |
 | C4, C11 | Planner bypass; effect verification probes | Reject | — (correctly skipped) |
 | C12–C17 | Agreement confidence, demand-driven perception, dual-channel cross-check, EV-gated speculation, criticality scheduling, adversarial exploration | Defer / support / cut | ✗ (C13 partially: V3's demand trigger *is* C13) |
@@ -165,13 +165,14 @@ Cancel when the *correcting words are heard*, not at end-of-turn.
 
 **Acceptance:** met — for a mid-utterance correction, CANCEL is emitted in the step the chunk arrives, provably before end-of-turn (`test_chunk_anchor_cancels_in_flight_call_in_the_chunks_own_step` asserts the CANCEL and the still-unchanged committed slot value in the same step, with EOT sent only afterward).
 
-### Phase 5 — Task-completion depth **(40% category)**
+### Phase 5 — Task-completion depth **(40% category)** — DONE, tag `v9-task-completion`
 
-- **C2 response frames**: `JobKind.FRAME`, `workers/frame.py` (model writes a template with typed holes), `kernel/frames.py` (validate holes against the tool's output schema, select branch — non-empty success / empty success / error — evaluate holes, type-check, render, emit FINAL in the same step the result lands). Operator set per `docs/prompt 3.txt` C2: `field`, `count`, `min`/`max` by field, `first-k`, `exists`. Composer stays as the fallback. The frame's read set includes goal facts, so a correction drops it.
-- **C9 commit-last ordering** in `kernel/executor.py`: a step reachable from a write is never ahead of the write (CS-31) → scenario N-02b.
-- New tests: N-02b, frame-rendered FINAL, CS-32 (a frame-rendered response contains data only from holes), frame invalidated by correction.
+- **C2 response frames**: `JobKind.FRAME`, `workers/frame.py` (model writes a template with typed holes — success/empty/error branches, no result data ever reaches it), `kernel/frames.py.FrameScheduler` (dispatches the FRAME job the moment the plan's last call is *emitted*; `try_render`, called right after that call's result is consumed, selects a branch, evaluates each hole deterministically against the real result, type-checks by construction — any hole that fails to resolve aborts rendering — and writes `compose.<goal>.text` directly, the same fact Composer would write, so `kernel/responder.py`'s FINAL emission needed zero changes). Operator set per `docs/prompt 3.txt` C2: `field`, `count`, `min`/`max` by field, `first_k`, `exists`. Composer stays as the fallback whenever no valid frame exists (`kernel/task.py`'s EXECUTING branch skips the redundant COMPOSE dispatch only when `compose.<goal>.text` is already set). Gated behind `Config.frame_rendering_enabled` (default `False`). The frame's read set (goal facts/slots at dispatch time) is checked at render time via `Provenance.derivation_read_set`, so a correction drops it — verified directly (`tests/test_phase5.py`).
+  - **Scope trim, documented in `kernel/frames.py`'s own module docstring**: only the `success`/`empty` branches are ever *selected* by this implementation. `error` is parsed/validated (the schema still requires it) but never chosen, because an error tool result routes a call to `CallStatus.FAILED`, not `CONSUMED` (`kernel/results.py`) — in this architecture a failed call is retried, not immediately terminal, and only becomes one via `PlanExecutor._fail_goal` once retries exhaust, a distinct goal-failure path this phase doesn't touch. A failed call simply never reaches `try_render`.
+- **C9 commit-last ordering** in `kernel/executor.py.PlanExecutor._commit_last_blocked`: a WRITE step, even once its own `after` dependencies are satisfied, waits for every READ step in the plan that isn't downstream of it (a sibling/independent read) to resolve first — bounded by `Config.commit_last_wait_cap_ms` (default 3000) so a slow unrelated read can't block a write forever. Gated behind `Config.commit_last_ordering` (default `False`). Verified against N-02b directly: `book_flight` (after `search_flights` only) does not emit before an independent `get_weather` read resolves, with the flag on; emits promptly with it off; and the wait cap releases the write once it elapses even if `get_weather` still hasn't resolved.
+- New tests (`tests/test_phase5.py`, 15): 4 for C9 (N-02b blocked/unblocked, wait-cap release, replay identity), 11 for C2 (grounded success-branch FINAL with no COMPOSE job ever dispatched, empty-branch selection, fallback to Compose when no frame rule exists, fallback when a hole fails to evaluate, flag-off behaves exactly as before, a frame invalidated by a correction is rejected at render time — a focused whitebox test constructing the stale-read-set race directly rather than relying on end-to-end timing, replay identity).
 
-**Acceptance:** FINAL renders in the same step the last result arrives, and every data value in it is provably a hole evaluated on a consumed result.
+**Acceptance:** met — FINAL renders in the same step the last result arrives (no COMPOSE round-trip when a frame is valid), and every dynamic value in the rendered text is provably a hole evaluated on the consumed result (`test_frame_renders_final_grounded_in_real_result_without_compose` asserts the exact expected substitution).
 
 ### Phase 6 — Response latency **(15% category)**
 
@@ -213,11 +214,11 @@ New tests: M-02 (partial transcript / inert tail, i.e. C1), T-06.
 
 ## 7. Sequencing, and what to do if time runs short
 
-Recommended order: **0 → A → 2 → 3 → 4 → 5 → 6 → 7 → 8**, inserting kit integration immediately after Phase 0 if R1 turns positive. **Phase A (`v5-integration`), Phase 2 (`v6-audio`), Phase 3 (`v7-live-multimodal`), and Phase 4 (`v8-chunk-anchor`) are done.** Next: Phase 5 (task-completion depth — C2 response frames + C9 commit-last ordering, 40%-weighted category).
+Recommended order: **0 → A → 2 → 3 → 4 → 5 → 6 → 7 → 8**, inserting kit integration immediately after Phase 0 if R1 turns positive. **Phase A (`v5-integration`), Phase 2 (`v6-audio`), Phase 3 (`v7-live-multimodal`), Phase 4 (`v8-chunk-anchor`), and Phase 5 (`v9-task-completion`) are done.** Next: Phase 6 (response latency, 15%-weighted category — speculative interpretation, per the plan at `/home/adi/.claude/plans/i-have-gemini-pro-declarative-phoenix.md`).
 
 Phases 0 and A were non-negotiable — one removes disqualification risk, the other removed a total-failure mode (the entry point that had never once been executed). Everything after that is additive scoring value, and each phase leaves the repo in a frozen, submittable state.
 
-If time compresses, drop from the back: Phase 8 → 7 → 6 → 5. Phases 2-4 (audio, live multimodal, chunk-anchored cancellation) are already done, so those trade-offs no longer apply — next up is Phase 5 (task-completion depth), per the plan's own category-weight ordering.
+If time compresses, drop from the back: Phase 8 → 7 → 6. Phases 2-5 (audio, live multimodal, chunk-anchored cancellation, task-completion depth) are already done, so those trade-offs no longer apply — next up is Phase 6 (response latency), per the plan's own category-weight ordering.
 
 ---
 

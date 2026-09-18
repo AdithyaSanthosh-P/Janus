@@ -11,9 +11,10 @@ import dataclasses
 
 from config.templates import WATCHDOG_FALLBACK
 from prism_rt.kernel.audio import AsrScheduler
+from prism_rt.kernel.frames import FrameScheduler
 from prism_rt.kernel.interpret_apply import active_goal_id, apply_interpretation
 from prism_rt.kernel.perception import PerceptionScheduler
-from prism_rt.kernel.proposals import parse_asr, parse_compose, parse_interpretation, parse_perception, parse_plan
+from prism_rt.kernel.proposals import parse_asr, parse_compose, parse_frame, parse_interpretation, parse_perception, parse_plan
 from prism_rt.kernel.results import ResultRouter
 from prism_rt.kernel.turns import TurnManager
 from prism_rt.model.events import (
@@ -44,6 +45,7 @@ _RESULT_ROUTER = ResultRouter()
 _TURN_MANAGER = TurnManager()
 _PERCEPTION = PerceptionScheduler()
 _ASR = AsrScheduler()
+_FRAMES = FrameScheduler()
 
 
 def _apply_manifest(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
@@ -121,6 +123,9 @@ def _apply_tool_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) 
     # (see ResultRouter branch 7); only the ok one actually wrote a result.
     if outcome.branch == "consumed" and outcome.new_status == CallStatus.CONSUMED and outcome.call_id is not None:
         _write_derived_facts(txn, outcome.call_id, now_us, step_no, env.event_id)
+        call = txn.store.call_ledger.get(outcome.call_id)
+        if call is not None:
+            _FRAMES.try_render(txn, call, now_us, step_no, event_id=env.event_id)
 
 
 def _apply_text_chunk(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
@@ -297,6 +302,13 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
         except (KeyError, ValueError):
             return
         _ASR.on_asr_result(txn, job, segments, end_of_utterance, now_us, step_no, event_id=env.event_id)
+
+    elif kind == JobKind.FRAME:
+        try:
+            template = parse_frame(proposal)
+        except (KeyError, ValueError):
+            return
+        _FRAMES.on_frame_result(txn, job, template, step_no, now_us, event_id=env.event_id)
 
 
 _HANDLERS = {

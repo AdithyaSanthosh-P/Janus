@@ -153,6 +153,7 @@ class JobKind(str, Enum):
     COMPOSE = "compose"
     VISION = "vision"
     ASR = "asr"
+    FRAME = "frame"  # Phase 5 (docs/post_v4_implementation_plan.md): C2 response frames
 
 
 class Confidence(str, Enum):

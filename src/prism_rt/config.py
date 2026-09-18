@@ -61,6 +61,23 @@ class Config:
     # V4 Hardening feature flags
     reference_bound_identifiers: bool = False  # V4: C10 — see kernel/executor.py
 
+    # Phase 5 (docs/post_v4_implementation_plan.md): C9 commit-last
+    # ordering. A WRITE step, even once its own `after` dependencies are
+    # satisfied, waits for every *unrelated* READ step in the same plan
+    # (one it doesn't structurally depend on) to also resolve first — an
+    # irreversible action gets the maximum chance to be caught by a
+    # correction arriving on a sibling read. `commit_last_wait_cap_ms`
+    # bounds that wait so one hung/slow unrelated read can't block a write
+    # forever (`docs/theme05_implementation_blueprint.md` N-02b).
+    commit_last_ordering: bool = False
+    commit_last_wait_cap_ms: int = 3000
+    # Phase 5: C2 response frames — a FRAME job runs once the plan's last
+    # required call is emitted, writing a template with typed holes ahead
+    # of the result; when the result lands, the kernel renders FINAL from
+    # the frame in the same step, no COMPOSE round-trip. Composer remains
+    # the fallback whenever no valid frame is available.
+    frame_rendering_enabled: bool = False
+
     # Observability
     log_decisions: bool = True
     record_trace: bool = True

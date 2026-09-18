@@ -62,7 +62,19 @@ class TaskStateMachine:
                 elif goal.task_state == TaskState.EXECUTING:
                     if self._all_required_steps_done(store, gid):
                         store.goals.update(gid, task_state=TaskState.RESPONDING)
-                        requests.append(self._build_compose_request(store, gid))
+                        # Phase 5 (C2): a response frame may have already
+                        # rendered compose.<gid>.text this very step, in
+                        # APPLY, the instant the plan's last result was
+                        # consumed (kernel/frames.py.FrameScheduler.
+                        # try_render, called from
+                        # kernel/reducers.py._apply_tool_result) — skip the
+                        # redundant COMPOSE job when it did. This is the
+                        # only place that decision is made; frame_rendering_
+                        # enabled=False means this fact is never pre-set, so
+                        # behavior is unchanged from every earlier version.
+                        pending_text = store.facts.get(f"compose.{gid}.text")
+                        if pending_text is None or pending_text.status == FactStatus.RETRACTED:
+                            requests.append(self._build_compose_request(store, gid))
                 elif goal.task_state == TaskState.CLARIFYING:
                     target = store.facts.get(f"goal.{gid}.clarify_target")
                     if target is None or target.status == FactStatus.RETRACTED:

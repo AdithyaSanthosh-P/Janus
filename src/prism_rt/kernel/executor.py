@@ -114,6 +114,9 @@ class PlanExecutor:
             if not all(self._step_done(store, gid, dep) for dep in step.after):
                 continue
 
+            if self._commit_last_blocked(store, gid, step, plan, now_us):
+                continue
+
             bind_result, missing_key = self._bind(step, gid, store)
             if bind_result is None:
                 # V3: a missing `claim.*` binding means perception hasn't
@@ -146,6 +149,52 @@ class PlanExecutor:
             store.call_ledger.create(call)
             created.append(call_id)
         return created
+
+    def _commit_last_blocked(self, store, goal_id: str, step, plan, now_us: int) -> bool:
+        """C9 (`docs/post_v4_implementation_plan.md` Phase 5, N-02b): a
+        WRITE step whose own `after` dependencies are satisfied still
+        waits for every READ step in the plan that isn't downstream of it
+        (a sibling/independent read, not one that reads *this* write's
+        output) to resolve first — bounded by `commit_last_wait_cap_ms` so
+        one slow unrelated read can't block the write forever."""
+        if not store.config.commit_last_ordering or step.kind != StepKind.WRITE:
+            return False
+        downstream = self._downstream_step_keys(plan, step.step_key)
+        unresolved = any(
+            s.kind == StepKind.READ and s.step_key != step.step_key and s.step_key not in downstream
+            and not self._step_done(store, goal_id, s.step_key)
+            for s in plan.steps
+        )
+        if not unresolved:
+            return False
+        key = f"commit_last.{goal_id}.{step.step_key}.first_ready_us"
+        fact = store.facts.get(key)
+        if fact is None:
+            store.facts.set(
+                key,
+                now_us,
+                FactStatus.COMMITTED,
+                Provenance(source="system", step_no=0, ts_us=now_us),
+                rule="executor.commit_last_first_ready",
+            )
+            return True
+        return (now_us - fact.value) / 1000 < store.config.commit_last_wait_cap_ms
+
+    def _downstream_step_keys(self, plan, step_key: str) -> set[str]:
+        """Every step_key transitively reachable via `after` edges *from*
+        `step_key` — the steps that read this step's output, directly or
+        through a chain."""
+        downstream: set[str] = set()
+        changed = True
+        while changed:
+            changed = False
+            for s in plan.steps:
+                if s.step_key in downstream:
+                    continue
+                if step_key in s.after or any(a in downstream for a in s.after):
+                    downstream.add(s.step_key)
+                    changed = True
+        return downstream
 
     def _step_done(self, store, goal_id: str, step_key: str) -> bool:
         """"Done" means consumed *and still valid* — a dependency whose

@@ -111,3 +111,34 @@ def parse_asr(raw: dict) -> tuple[tuple[AsrSegment, ...], bool]:
         for s in raw.get("segments") or ()
     )
     return segments, bool(raw.get("end_of_utterance", False))
+
+
+_FRAME_HOLE_OPS = {"field", "count", "min", "max", "first_k", "exists"}
+
+
+def parse_frame(raw: dict) -> dict:
+    """C2 (`workers/frame.py`'s module docstring, Phase 5 of
+    `docs/post_v4_implementation_plan.md`). Returns a plain, JSON-safe dict
+    (not a dataclass) so it can be stored directly as a `FactStore` value —
+    `{"list_path": str | None, "branches": {"success"|"empty"|"error":
+    {"template": str, "holes": {name: {"op", "path", "field", "k"}}}}}`.
+    Raises `KeyError`/`ValueError` on anything malformed, caught by the
+    same `_apply_worker_result` pattern every other proposal type uses."""
+    branches_raw = raw["branches"]
+    branches: dict = {}
+    for name in ("success", "empty", "error"):
+        branch_raw = branches_raw[name]
+        template = str(branch_raw["template"])
+        holes: dict = {}
+        for hole_name, spec in (branch_raw.get("holes") or {}).items():
+            op = spec["op"]
+            if op not in _FRAME_HOLE_OPS:
+                raise ValueError(f"unknown frame hole op: {op!r}")
+            holes[hole_name] = {
+                "op": op,
+                "path": spec.get("path"),
+                "field": spec.get("field"),
+                "k": int(spec["k"]) if "k" in spec and spec["k"] is not None else None,
+            }
+        branches[name] = {"template": template, "holes": holes}
+    return {"list_path": raw.get("list_path"), "branches": branches}
