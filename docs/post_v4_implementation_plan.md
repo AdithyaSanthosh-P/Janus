@@ -152,17 +152,18 @@ The kernel/store layer still never touches bytes, by design: `workers/runner.py`
 
 **Acceptance:** partially met live (quota-limited, not code-limited — see above); fully met at the level this project can actually guarantee deterministically (`tests/test_multimodal_media.py`, all passing). Re-attempt the live end-to-end run once the quota window is clean, ideally without other live testing running concurrently.
 
-### Phase 4 — Interruption-recovery depth **(35% category)**
+### Phase 4 — Interruption-recovery depth **(35% category)** — DONE, tag `v8-chunk-anchor`
 
 Cancel when the *correcting words are heard*, not at end-of-turn.
 
-- `kernel/detector.py`: add HIGH-confidence **value** extraction (schema enum match, unambiguous date/number, value already seen for that slot this session) — the module's own docstring already describes this as deliberately deferred.
-- Write `hyp.<turn>.<name>` facts with `FactStatus.HYPOTHESIS` (the enum member exists and is currently **never written by anything** — verified by grep).
-- Chunk-anchored cancellation: a HIGH hypothesis that differs from a slot an in-flight call depends on invalidates that call **in the same step as the chunk** (`docs/prompt 2.txt` §8.1 CHUNK row). Hypotheses never touch committed facts and never gate writes.
-- Promotion (§11.4): when the turn's interpretation commits, re-register hypothesis-dependent work against the committed fact iff digests match.
-- New tests: chunk-level cancel (CANCEL emitted in the chunk's step, before EOT), I-02, I-06.
+- `kernel/detector.py.QuickDetector.detect_values`: HIGH-confidence value extraction — schema enum match, and session-entity match (exact value already seen this session for exactly one slot name). Date/time and bare-number extraction (§9.2's other two extractors) are a **documented scope trim**, not built: this project's tool schemas never exercise unit/parameter disambiguation or a reference-date policy, and nothing depends on them.
+- `hyp.<turn>.<name>` facts (`FactStatus.HYPOTHESIS`) are now written by `kernel/turns.py.TurnManager._detect_chunk_anchor` for every HIGH value found, regardless of context — bookkeeping/audit, visible in the decision log.
+- Chunk-anchored cancellation implemented **without new cancellation machinery**: `store/session.py`'s `StoreTxn.mark_chunk_anchor(key)` feeds a slot's key into the same `changed_keys()` → `InvalidationEngine` pipeline a real fact change uses, without ever calling `facts.set()` on the slot itself — so the slot's committed value and digest are untouched, only its dependents (in-flight/proposed calls registered in `DependencyIndex`) get cancelled. Fires only when the HIGH value differs from the slot's current committed value (skipped if it already matches — a revert-safety check, same spirit as D4) and the chunk-anchor context holds (turn is an interruption, or the goal is active, or the chunk has a correction cue), matching `docs/prompt 2.txt` §8.2's precise rule.
+- **Promotion (§11.4) is a documented no-op, not a scope trim to revisit later**: `PlanExecutor._bind`'s existing G4 check already refuses to bind a HYPOTHESIS-status fact as any call's input, so nothing in this implementation ever reads a `hyp.<turn>.<name>` fact as work to re-register — promotion only matters once Phase 6 (speculative interpretation) introduces work that reads hypotheses directly.
+- New tests (`tests/test_phase4.py`, 5): chunk-level cancel (CANCEL emitted in the chunk's own step, before EOT — includes verifying the slot's committed value is untouched and a real, documented interaction where the immediately-retried call briefly re-binds to the still-uncommitted old value before the real EOT correction invalidates it too), a revert-safety no-op check, an inert-with-no-active-goal check, I-02 (interrupt during planning — proves the *existing* stale-read-set rejection already handles this, no new code needed), and replay identity.
+- **I-06 (correction after FINAL) deliberately not built**: `emission.py._complete_goal` clears `goal.active` to `None` when FINAL is emitted, so a bare SLOT_UPDATE interpretation act after FINAL has no goal to attach to (`interpret_apply.py`'s `active_goal_id(store)` returns `None`) — verified by reading the code, not assumed. Real support needs either Interpreter-level disambiguation (does "actually Mumbai" refer to the just-completed goal, or is it unrelated?) or a "last completed goal, same intent" heuristic — both carry a real risk of silently reactivating the wrong goal, and neither is core to the chunk-anchor deliverable this phase is named for. Left for a future phase if scoring data ever shows I-06 matters.
 
-**Acceptance:** for a mid-utterance correction, CANCEL is emitted in the step the chunk arrives — measurably earlier than today's EOT-anchored cancel.
+**Acceptance:** met — for a mid-utterance correction, CANCEL is emitted in the step the chunk arrives, provably before end-of-turn (`test_chunk_anchor_cancels_in_flight_call_in_the_chunks_own_step` asserts the CANCEL and the still-unchanged committed slot value in the same step, with EOT sent only afterward).
 
 ### Phase 5 — Task-completion depth **(40% category)**
 
@@ -212,11 +213,11 @@ New tests: M-02 (partial transcript / inert tail, i.e. C1), T-06.
 
 ## 7. Sequencing, and what to do if time runs short
 
-Recommended order: **0 → A → 2 → 3 → 4 → 5 → 6 → 7 → 8**, inserting kit integration immediately after Phase 0 if R1 turns positive. **Phase A (`v5-integration`), Phase 2 (`v6-audio`), and Phase 3 (`v7-live-multimodal`) are done.** Next: Phase 4 (interruption-recovery depth, 35%-weighted category).
+Recommended order: **0 → A → 2 → 3 → 4 → 5 → 6 → 7 → 8**, inserting kit integration immediately after Phase 0 if R1 turns positive. **Phase A (`v5-integration`), Phase 2 (`v6-audio`), Phase 3 (`v7-live-multimodal`), and Phase 4 (`v8-chunk-anchor`) are done.** Next: Phase 5 (task-completion depth — C2 response frames + C9 commit-last ordering, 40%-weighted category).
 
 Phases 0 and A were non-negotiable — one removes disqualification risk, the other removed a total-failure mode (the entry point that had never once been executed). Everything after that is additive scoring value, and each phase leaves the repo in a frozen, submittable state.
 
-If time compresses, drop from the back: Phase 8 → 7 → 6 → 5. Phase 2 (audio) is already done, so that trade-off no longer applies — next up is Phase 3 (live multimodal provider) or Phase 4 (interruption-recovery depth), per the plan's own category-weight ordering.
+If time compresses, drop from the back: Phase 8 → 7 → 6 → 5. Phases 2-4 (audio, live multimodal, chunk-anchored cancellation) are already done, so those trade-offs no longer apply — next up is Phase 5 (task-completion depth), per the plan's own category-weight ordering.
 
 ---
 

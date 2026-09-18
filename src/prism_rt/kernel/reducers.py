@@ -126,7 +126,7 @@ def _apply_tool_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) 
 def _apply_text_chunk(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
     payload: TextChunkPayload = env.payload
     gid = active_goal_id(txn.store)
-    _TURN_MANAGER.on_chunk(payload.text, env.event_id, now_us, txn, active_goal_id=gid)
+    _TURN_MANAGER.on_chunk(payload.text, env.event_id, now_us, txn, active_goal_id=gid, step_no=step_no)
 
 
 def _apply_end_of_turn(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:

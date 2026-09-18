@@ -69,6 +69,7 @@ class StoreTxn:
         self.store = store
         self.step_no = step_no
         self._committed = False
+        self._chunk_anchor_keys: set[str] = set()
         self.store._guard.active = True
 
     @property
@@ -118,10 +119,26 @@ class StoreTxn:
     def set_floor(self, state: FloorState) -> None:
         self.store.set_floor(state)
 
+    def mark_chunk_anchor(self, key: str) -> None:
+        """Phase 4 (`docs/post_v4_implementation_plan.md`): feed `key` into
+        this step's INVALIDATE phase as if it had changed, without actually
+        mutating the fact at `key`. This is how the CHUNK cancellation
+        anchor (`docs/prompt 2.txt` §8.2 — a HIGH-confidence hypothesis
+        that contradicts a slot an in-flight call depends on cancels that
+        call the instant the chunk is heard) reuses the ordinary
+        changed-keys -> `InvalidationEngine` pipeline instead of new
+        cancellation machinery. Hypotheses never touch committed facts, so
+        the slot's own value and digest are untouched — only its
+        dependents (registered in `DependencyIndex`) get cancelled. See
+        `kernel/turns.py`'s `TurnManager._detect_chunk_anchor`."""
+        self._chunk_anchor_keys.add(key)
+
     def changed_keys(self) -> set[str]:
-        """Keys changed so far this step (peek — does not clear). Used by
-        the INVALIDATE phase, which runs before COMMIT drains them."""
-        return self.store.facts.changed_keys_pending()
+        """Keys changed so far this step (peek — does not clear), plus any
+        `mark_chunk_anchor` keys. Used by the INVALIDATE phase, which runs
+        before COMMIT drains the real fact changes (chunk-anchor keys are
+        never part of that drain — they never touched the FactStore)."""
+        return self.store.facts.changed_keys_pending() | self._chunk_anchor_keys
 
     def commit(self) -> ChangeSet:
         """Finalize this step's ChangeSet and close the mutation window.

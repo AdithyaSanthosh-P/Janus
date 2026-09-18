@@ -9,18 +9,56 @@ mechanism as everything else, with no special-casing.
 
 from __future__ import annotations
 
-from prism_rt.canonical import compute_digest
+from prism_rt.canonical import compute_digest, normalize_value
 from prism_rt.kernel.detector import QuickDetector
 from prism_rt.kernel.interpret_apply import active_goal_id
 from prism_rt.model.types import FactStatus, FloorState, GoalStatus, Provenance, TaskState, Turn
 from prism_rt.store.session import StoreTxn
 
 
+def _tool_params(store) -> tuple[tuple[str, dict], ...]:
+    """`[(param_name, json_schema), ...]` across every usable tool —
+    QuickDetector's enum-match extractor input. Not narrowed to "tools
+    relevant to the active goal" (§9.2's own phrasing) — a documented
+    scope trim; this project's toy catalogs are small enough that the
+    false-positive risk is negligible, and narrowing would need plan/goal
+    plumbing this call site doesn't otherwise need."""
+    params: list[tuple[str, dict]] = []
+    for tool in store.catalog.usable_tools():
+        props = (tool.params_schema or {}).get("properties", {})
+        for name, schema in props.items():
+            params.append((name, schema))
+    return tuple(params)
+
+
+def _seen_values(store) -> dict[str, set[str]]:
+    """`{slot_name: {values...}}` from every committed `slot.*.<name>`
+    fact this session — QuickDetector's session-entity extractor input."""
+    seen: dict[str, set[str]] = {}
+    for key, value in store.facts.snapshot_committed().items():
+        if not key.startswith("slot.") or not isinstance(value, str):
+            continue
+        parts = key.split(".", 2)
+        if len(parts) != 3:
+            continue
+        seen.setdefault(parts[2], set()).add(value)
+    return seen
+
+
 class TurnManager:
     def __init__(self) -> None:
         self._quick_detector = QuickDetector()
 
-    def on_chunk(self, text: str, event_id: str, ts_us: int, txn: StoreTxn, *, active_goal_id: str | None) -> Turn:
+    def on_chunk(
+        self,
+        text: str,
+        event_id: str,
+        ts_us: int,
+        txn: StoreTxn,
+        *,
+        active_goal_id: str | None,
+        step_no: int = 0,
+    ) -> Turn:
         turn_id = txn.turn_log.open_turn_id()
         if turn_id is None:
             turn_id = txn.store.ids.next("turn")
@@ -39,7 +77,54 @@ class TurnManager:
             Provenance(source="user", event_id=event_id, turn_id=turn_id, ts_us=ts_us),
             rule="turns.chunk",
         )
+        self._detect_chunk_anchor(text, turn, txn, active_goal_id, event_id, ts_us, step_no)
         return turn
+
+    def _detect_chunk_anchor(
+        self,
+        text: str,
+        turn: Turn,
+        txn: StoreTxn,
+        gid: str | None,
+        event_id: str,
+        ts_us: int,
+        step_no: int,
+    ) -> None:
+        """Phase 4 (`docs/post_v4_implementation_plan.md`): the CHUNK
+        cancellation anchor (`docs/prompt 2.txt` §8.2). Every HIGH-confidence
+        value QuickDetector finds is recorded as a `hyp.<turn>.<name>` fact
+        (§9.2) regardless of context. Only a value that both differs from
+        an existing `slot.<gid>.<name>` and occurs in an interruption,
+        active-goal, or correction-cue context (§8.2's precise chunk-anchor
+        rule) is fed to `StoreTxn.mark_chunk_anchor` — which cancels
+        whatever in-flight call currently depends on that slot, in this
+        same step, without ever touching the slot's own committed value."""
+        values = self._quick_detector.detect_values(
+            text, tool_params=_tool_params(txn.store), seen_values=_seen_values(txn.store)
+        )
+        if not values:
+            return
+
+        goal = txn.store.goals.get(gid) if gid is not None else None
+        goal_active = goal is not None and goal.status == GoalStatus.ACTIVE
+        anchor_context = turn.is_interruption or goal_active or self._quick_detector.detect(text).is_correction
+
+        for hv in values:
+            txn.facts.set(
+                f"hyp.{turn.turn_id}.{hv.slot_name}",
+                hv.value,
+                FactStatus.HYPOTHESIS,
+                Provenance(source="system", event_id=event_id, turn_id=turn.turn_id, step_no=step_no, ts_us=ts_us),
+                rule="detector.hypothesis",
+            )
+            if gid is None or not anchor_context:
+                continue
+            slot_key = f"slot.{gid}.{hv.slot_name}"
+            candidate_digest = compute_digest(normalize_value(hv.value))
+            existing = txn.facts.get(slot_key)
+            if existing is not None and existing.status != FactStatus.RETRACTED and existing.digest == candidate_digest:
+                continue  # already matches — nothing to correct
+            txn.mark_chunk_anchor(slot_key)
 
     def on_eot(self, ts_us: int, txn: StoreTxn) -> Turn | None:
         turn_id = txn.turn_log.open_turn_id()

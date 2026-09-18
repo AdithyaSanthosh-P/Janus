@@ -105,7 +105,7 @@ class AsrScheduler:
         last_end_us = obs.capture_ts_us
         for seg in segments:
             seg_ts = obs.capture_ts_us + seg.offset_us
-            _TURN_MANAGER.on_chunk(seg.text, event_id, seg_ts, txn, active_goal_id=gid)
+            _TURN_MANAGER.on_chunk(seg.text, event_id, seg_ts, txn, active_goal_id=gid, step_no=step_no)
             last_end_us = max(last_end_us, obs.capture_ts_us + seg.end_us)
 
         if audio_mode == "audio_only" and txn.store.config.asr_closes_turn and end_of_utterance:
