@@ -124,7 +124,9 @@ Nothing in progress. All four planned versions (V0-V4) are built, tested, and fr
 - Deadline: 25 Sep 2026
 
 ### Next Task
-**All four planned versions (V0-V4) are complete.** What's left is optional and explicitly deferred (see above), or requires a decision only the team can make:
+**Read `docs/post_v4_implementation_plan.md` first — it supersedes what follows.** That plan was written after reviewing the two official guideline documents (`guidelines/Theme_5_Guide.md`, `guidelines/Samsung_PRISM_Y2026_GenAI_Hackathon_3rd_Edition.md`), which had never been read during the V0-V4 build, and it reorders everything below. Three findings drive it: **30% of the evaluation scenarios are audio and this project has zero audio support** (an `audio_clip` event currently raises `CodecError` and would abort the scenario); **the codec rejects any unknown wire field**, which would fail every scenario if the unreleased kit's format differs at all from our guess; and **the submission requires a deck and demo video inside the tagged commit**, with disqualification stated for non-compliance.
+
+The items below remain accurate but are now sequenced inside that plan (V4-era framing kept for history):
 1. **Submission**: when ready, tag the judged commit `PRISM_GENAI_HACKATHON_Y2026` (currently `v4-hardened` on `main`/`release/v4` is the candidate) — confirm with the team first, this is a one-way "this is final" action.
 2. Optional polish, roughly in order of value for effort: demo video recording (5 min, covering chain correction / settle barrier / visual lease / adversarial timing per `docs/prototype_version_plan.md`'s V4 demo script), PPT prep, updating `demo/run_v1_demo.py`/`run_v1_live_demo.py` to show V2/V3 behavior specifically (current demos predate both).
 3. If there's still real time before the deadline and more scoring depth is wanted: pick one deferred V4 item (kit integration is blocked; inert-tail promotion (C1) and the full 34-check TraceChecker are both real, bounded pieces of work — see Deferred above for what each needs).
