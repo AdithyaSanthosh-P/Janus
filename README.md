@@ -21,7 +21,7 @@ pip install -e ".[dev]"
 ## Running the tests
 
 ```bash
-python -m pytest tests/ -v                 # full suite (60 tests: V0-V4)
+python -m pytest tests/ -v                 # full suite (73 tests: V0-V4 + post-V4 Phase A)
 python -m pytest tests/test_v3.py -v        # a single version's scenarios
 ```
 
@@ -58,15 +58,16 @@ Built in strict, independently-submittable stages — each frozen with a git tag
 | `v2-robust-recovery` | `release/v2` | Transitive invalidation, settle barrier, rebinder, absence read-sets, claim grades, unconditional reconciliation. |
 | `v3-multimodal` | `release/v3` | Vision-grounded questions/claims/conflicts over video frames, gated behind `Config.vision_enabled`. |
 | `v4-hardened` | `release/v4` | Reference-bound write identifiers (C10), targeted timing sweeps, Docker, this README. |
+| `v5-integration` | `release/v5` | A genuinely working async entry point (`entry.py`), a tolerant wire-format codec, `audio_clip` ingestion, watchdog salvage. See `docs/post_v4_implementation_plan.md`. |
 
 Every later version's new behavior is gated behind an explicit `Config` flag defaulting to the prior version's behavior — disabling V2's/V3's/V4's flags reproduces the earlier version exactly, and every frozen tag's own tests still pass unmodified on `main`.
 
 ## Documentation map
 
-Read `currentStatus.md` first, every session — it's the live handoff record (current state, what's tested, what's deferred, the next task). `CLAUDE.md` has the architecture summary and commands. `docs/sonnet_implementation_plan.md` is the executable coding plan; the other `docs/` files are the design rationale. `docs/measurements.md` has the per-version test/latency numbers.
+Read `currentStatus.md` first, every session — it's the live handoff record (current state, what's tested, what's deferred, the next task). `CLAUDE.md` has the architecture summary and commands. `docs/post_v4_implementation_plan.md` is the authoritative sequencing for everything after V4. `docs/integration.md` covers plugging a real harness in. `docs/sonnet_implementation_plan.md` is the executable coding plan for V0-V4; the other `docs/` files are the design rationale. `docs/measurements.md` has the per-version test/latency numbers.
 
 ## Known limitations
 
-- The evaluation kit's wire format is unreleased; `adapters/codec.py`'s schema is a provisional guess isolated behind that one module.
-- Live LLM validation covers only the text path (`GeminiProvider`, `demo/run_v1_live_demo.py`) — `workers/vision.py` has never been called against a real vision model; the `Provider` protocol is text-only, so frames are always passed by reference, never as pixel data.
-- Some V4 scope items from `docs/prototype_version_plan.md` were deliberately not built this pass: inert-tail promotion (C1, needs a pre-EOT speculative-interpretation subsystem this project doesn't have), the full 34-invariant `TraceChecker`, and kit wire-format integration (blocked on the kit itself being unreleased). See `currentStatus.md`'s Deferred section.
+- The evaluation kit's wire format is unreleased (last checked 18 Sep 2026); `adapters/codec.py`'s schema is a provisional guess, but a deliberately *tolerant* one — see `docs/integration.md` for what dialect variance it survives.
+- Live LLM validation covers only the text path (`GeminiProvider`, `demo/run_v1_live_demo.py`) — `workers/vision.py` has never been called against a real vision model; the `Provider` protocol is text-only, so frames are always passed by reference, never as pixel data. No ASR exists yet either.
+- Some scope items from `docs/prototype_version_plan.md`/`docs/post_v4_implementation_plan.md` remain deliberately deferred: audio transcription, chunk-anchored interruption cancellation, response frames (C2), inert-tail promotion / speculative interpretation (C1), the full 34-invariant `TraceChecker`, and kit wire-format integration (blocked on the kit itself being unreleased). See `currentStatus.md`'s Deferred section for the full list and `docs/post_v4_implementation_plan.md` for the sequencing.

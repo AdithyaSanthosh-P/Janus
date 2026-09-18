@@ -11,6 +11,8 @@ against a real entry point that had never been exercised before this.
 
 from __future__ import annotations
 
+import asyncio
+
 from conftest import (
     FAST_WORKER_LATENCY,
     SEARCH_FLIGHTS_TOOL,
@@ -21,6 +23,7 @@ from conftest import (
     manifest_event,
 )
 
+from prism_rt import entry
 from prism_rt.config import Config
 from prism_rt.model.types import ActionType, CallStatus, GoalStatus
 from prism_rt.sim.checker import TraceChecker
@@ -260,3 +263,93 @@ def test_format_variant_field_aliases_decode_correctly():
 
     envs = codec.decode({"type": "audio", "ts_us": 0, "payload": {"id": "clip1"}}, seq=1)  # "audio" -> audio_clip type alias
     assert len(envs) == 1 and isinstance(envs[0].payload, AudioClipPayload) and envs[0].payload.clip_id == "clip1"
+
+
+# --- entry.py: the real async queue entry point --------------------------
+#
+# Every other test in this repository drives the kernel through
+# SimHarness. These exercise entry.Runtime.run_scenario directly — the
+# literal guidelines/Theme_5_Guide.md §3 contract ("two asynchronous
+# queues") — with AsyncWorkerRunner actually dispatching jobs on a real
+# running event loop, which before Phase A had never executed once.
+
+
+async def test_run_scenario_queue_contract_end_to_end():
+    provider = ScriptedProvider()
+    provider.register(
+        "interpret",
+        "Find flights to Pune",
+        {"act": "new_goal", "intent": "search_flights", "slot_deltas": [{"name": "destination", "scope": "goal", "op": "set", "value": "Pune"}]},
+    )
+    provider.register(
+        "plan",
+        "search_flights",
+        {"steps": [{"local_id": "s1", "tool": "search_flights", "kind": "read", "bindings": {"destination": {"type": "fact", "key": "slot.$G.destination"}}, "after": []}]},
+    )
+    provider.register("compose", "s1", {"text": "Found a flight to Pune.", "claims": ["result:s1"]})
+
+    runtime = entry.setup(Config(), provider=provider)
+    events: "asyncio.Queue[dict | None]" = asyncio.Queue()
+    actions: "asyncio.Queue[dict]" = asyncio.Queue()
+
+    for raw in [
+        {"ts_us": 0, "type": "manifest", "payload": {"tools": [SEARCH_FLIGHTS_TOOL]}},
+        {"ts_us": 100_000, "type": "text_chunk", "payload": {"text": "Find flights to Pune"}},
+        {"ts_us": 150_000, "type": "end_of_turn", "payload": {}},
+    ]:
+        await events.put(raw)
+
+    collected: list[dict] = []
+
+    async def deliver_tool_result_when_seen() -> None:
+        while True:
+            await asyncio.sleep(0.02)
+            for a in collected:
+                if a["action_type"] == "tool_call":
+                    await events.put({"ts_us": 300_000, "type": "tool_result", "payload": {"call_id": a["body"]["call_id"], "status": "ok", "result": {"flight_id": "AI-505"}}})
+                    return
+
+    async def collect() -> None:
+        while True:
+            encoded = await asyncio.wait_for(actions.get(), timeout=5.0)
+            collected.append(encoded)
+            if encoded["action_type"] == "final":
+                await events.put(None)
+                return
+
+    await asyncio.wait_for(
+        asyncio.gather(runtime.run_scenario(events, actions, meta={"seed": 7}), collect(), deliver_tool_result_when_seen()),
+        timeout=10.0,
+    )
+
+    action_types = [a["action_type"] for a in collected]
+    assert "tool_call" in action_types
+    assert action_types[-1] == "final"
+    finals = [a for a in collected if a["action_type"] == "final"]
+    assert finals[0]["body"]["text"] == "Found a flight to Pune."
+    assert finals[0]["body"]["task_completed"] is True
+
+
+async def test_run_scenario_survives_unknown_event_types_on_the_real_queue():
+    """The same P-02 tolerance, exercised through the real async entry
+    point rather than SimHarness — proves the tolerance holds on the path
+    that would actually face an external harness."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "hello", {"act": "smalltalk"})
+
+    runtime = entry.setup(Config(), provider=provider)
+    events: "asyncio.Queue[dict | None]" = asyncio.Queue()
+    actions: "asyncio.Queue[dict]" = asyncio.Queue()
+
+    for raw in [
+        {"ts_us": 0, "type": "manifest", "payload": {"tools": []}},
+        {"ts_us": 10_000, "type": "totally_unknown_event", "payload": {"whatever": 1}},
+        {"ts_us": 20_000, "type": "text_chunk", "payload": {"text": "hello"}},
+        {"ts_us": 30_000, "type": "end_of_turn", "payload": {}},
+        None,  # end immediately after — no goal-completing FINAL expected for smalltalk
+    ]:
+        await events.put(raw)
+
+    summary = await asyncio.wait_for(runtime.run_scenario(events, actions, meta={"seed": 1}), timeout=5.0)
+    assert summary.step_count >= 3  # manifest + text_chunk + end_of_turn all applied; unknown event just skipped
+    assert summary.watchdog_fired is False
