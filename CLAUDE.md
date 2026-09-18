@@ -18,7 +18,7 @@ When documents disagree, higher wins:
 1. `guidelines/Theme_5_Guide.md` — official spec, scoring, interface contract
 2. `guidelines/Samsung_PRISM_Y2026_GenAI_Hackathon_3rd_Edition.md` — submission rules, deadlines
 3. `docs/prompt 2.txt` (architecture) + `docs/prompt1.txt` (problem analysis) — architectural invariants
-4. `docs/prototype_version_plan.md` — version scope: what to build vs. defer
+4. `docs/prototype_version_plan.md` (V0-V4 scope) + `docs/post_v4_implementation_plan.md` (Phase A-8 scope, everything after V4) — version/phase scope: what to build vs. defer; between these two, the one covering the work at hand wins
 5. `docs/sonnet_implementation_plan.md` — **the executable coding plan**: repo layout, file-by-file build order, interfaces, test strategy
 6. `docs/theme05_implementation_blueprint.md` — detailed reference for data models (190KB — look up sections, don't read cover-to-cover)
 7. `currentStatus.md` — current project state only; never overrides the above

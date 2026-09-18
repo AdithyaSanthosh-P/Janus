@@ -15,14 +15,15 @@ Architecture: single-writer kernel processing timestamped events in deterministi
 | # | File | Purpose | When to Read |
 |---|---|---|---|
 | 1 | `currentStatus.md` | **Current project state + handoff** | Always read FIRST |
-| 2 | `guidelines/Theme_5_Guide.md` | Official evaluation spec & scoring | Before any design decisions |
-| 3 | `guidelines/Samsung_PRISM_Y2026_GenAI_Hackathon_3rd_Edition.md` | Hackathon rules, all themes, submission format | For submission/format questions |
-| 4 | `docs/prompt1.txt` | Pre-architecture problem analysis | When understanding WHY the architecture exists |
-| 5 | `docs/prompt 2.txt` | System architecture (single-writer kernel, invariants) | For architectural decisions |
-| 6 | `docs/prompt 3.txt` | Innovation analysis (17 weaknesses + fixes) | When implementing V2 innovations |
-| 7 | `docs/prototype_version_plan.md` | Staged V0→V4 strategy, subsystem classification, time budgets | For version scope/priority decisions |
-| 8 | `docs/theme05_implementation_blueprint.md` | Full data models, interfaces, file specs (190KB) | Reference during coding — look up specific sections, do NOT read cover-to-cover |
-| 9 | `docs/sonnet_implementation_plan.md` | **Executable coding plan** — repo structure, coding order, tests, interfaces | Primary guide during implementation |
+| 2 | `docs/post_v4_implementation_plan.md` | **Authoritative sequencing for everything after V4** (Phase A through Phase 8: what's frozen, what's next, research items) | Always read SECOND — supersedes item 8's V0-V4 framing for any post-V4 work; every tag from `v5-integration` through the current `v10-response-latency` was built under this plan, not the original one |
+| 3 | `guidelines/Theme_5_Guide.md` | Official evaluation spec & scoring | Before any design decisions |
+| 4 | `guidelines/Samsung_PRISM_Y2026_GenAI_Hackathon_3rd_Edition.md` | Hackathon rules, all themes, submission format | For submission/format questions |
+| 5 | `docs/prompt1.txt` | Pre-architecture problem analysis | When understanding WHY the architecture exists |
+| 6 | `docs/prompt 2.txt` | System architecture (single-writer kernel, invariants) | For architectural decisions |
+| 7 | `docs/prompt 3.txt` | Innovation analysis (17 weaknesses + fixes) | When implementing V2 innovations, or any post-V4 phase mapped to a C-numbered innovation |
+| 8 | `docs/prototype_version_plan.md` | Staged V0→V4 strategy, subsystem classification, time budgets | For V0-V4 version scope/priority decisions only — superseded by item 2 for anything after V4 |
+| 9 | `docs/theme05_implementation_blueprint.md` | Full data models, interfaces, file specs (190KB) | Reference during coding — look up specific sections, do NOT read cover-to-cover |
+| 10 | `docs/sonnet_implementation_plan.md` | **Executable coding plan** — repo structure, coding order, tests, interfaces | Primary guide during V0-V4 implementation |
 
 ---
 
@@ -33,7 +34,7 @@ When documents conflict, higher rank wins:
 1. **`guidelines/Theme_5_Guide.md`** — official spec, scoring, interface contract
 2. **`guidelines/Samsung_PRISM_Y2026_GenAI_Hackathon_3rd_Edition.md`** — submission rules, deadlines
 3. **`docs/prompt 2.txt`** (architecture) + **`docs/prompt1.txt`** (analysis) — architectural invariants
-4. **`docs/prototype_version_plan.md`** — version scope, what to build vs defer
+4. **`docs/prototype_version_plan.md`** (V0-V4 scope) + **`docs/post_v4_implementation_plan.md`** (Phase A-8 scope, everything after V4) — version/phase scope, what to build vs defer; between these two, the one covering the work at hand wins
 5. **`docs/sonnet_implementation_plan.md`** — coding plan, file structure, interfaces
 6. **`docs/theme05_implementation_blueprint.md`** — detailed reference for data models
 7. **`currentStatus.md`** — current project state only; does NOT override any of the above
