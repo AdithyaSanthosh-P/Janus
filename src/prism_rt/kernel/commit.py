@@ -54,6 +54,14 @@ class CommitGate:
 
         # --- write-only conditions ------------------------------------
 
+        # G_WATCHDOG (Phase A, docs/prompt 2.txt §8.9): once the scenario
+        # watchdog has fired, no new write is ever admitted — the harness's
+        # wall-clock budget is spent. Reads may still complete; only writes
+        # are barred, matching §8.9's "do not emit new writes" exactly.
+        watchdog_fact = store.facts.get("session.watchdog_fired")
+        if watchdog_fact is not None and watchdog_fact.status != FactStatus.RETRACTED and watchdog_fact.value:
+            return GateDecision(False, "watchdog_fired", "G_WATCHDOG")
+
         # G3: floor closed (no commit while the user may still be correcting)
         if store.floor_state != FloorState.USER_TURN_CLOSED:
             return GateDecision(False, "floor_open", "G3")

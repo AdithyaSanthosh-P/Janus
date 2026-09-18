@@ -115,15 +115,17 @@ Nothing here is code; it removes disqualification risk and can be done while oth
 
 **Acceptance:** everything the Google Form asks for exists in-repo except the two external URLs (video, form).
 
-### Phase 1 — Kit-readiness hardening **(highest risk-reduction per hour)**
+### Phase A — Integration surface **(highest risk-reduction per hour; supersedes the original "Phase 1" scope below — see `/home/adi/.claude/plans/i-have-gemini-pro-declarative-phoenix.md` for the full writeup)**
 
-- `adapters/codec.py`: make decode **tolerant** — unknown event type → return `[]` (recorded, not raised); unknown payload fields → ignored; missing optional fields → defaulted; keep a small alias map for plausible field-name variants (`call_id`/`id`, `ts_us`/`ts_ms`/`timestamp`). Raise only when an event is so malformed that nothing can be built, and even then the caller must survive it.
-- `entry.py`: wrap per-event decode **and** `kernel.step` in `try/except`; one bad event must never end a scenario. This is scenario P-02.
-- `model/events.py`: add `audio_clip` to `PAYLOAD_TYPES`/`EVENT_CLASS_BY_PAYLOAD_TYPE` (USER_CONTENT) — **store-only for now**, so audio scenarios degrade to "ignored input" instead of "crash".
-- Wire `ScenarioWatchdog` into `SimHarness`; implement the §8.9 behavior (cancel in-flight reads, no new writes, emit a templated FINAL if none yet) and test it (T-07).
-- New tests: P-01, P-02, P-03, T-07.
+Verifying the original Phase 1 scope surfaced a defect worse than "the codec is strict": **the only real entry point has never been executed and cannot work.** `entry.py`'s `run_scenario` is a plain synchronous function; the runner it wires in (`AsyncWorkerRunner`) dispatches jobs via `asyncio.ensure_future(...)`, which schedules a coroutine but never runs it unless something drives the event loop. Since `run_scenario` never `await`s anything, no worker job ever executes — the agent would ingest events and emit nothing, forever, until the watchdog times out with no salvage. Confirmed by grep: nothing in `src/`, `tests/`, or `demo/` has ever called `run_scenario` or `setup()`. Three defects, addressed together as Phase A:
 
-**Acceptance:** a synthetic scenario containing unknown event types, unknown extra fields, malformed payloads and audio clips runs to completion and still emits correct actions for the parts it understands.
+1. **Async entry point is non-functional** — `entry.py` rewritten as `async def run_scenario(events: asyncio.Queue, actions: asyncio.Queue, ...)`, matching `guidelines/Theme_5_Guide.md` §3's stated contract ("two asynchronous queues") directly, with the worker runner actually scheduled on a running loop. Sync `HarnessIO` kept as a thin adapter so both invocation shapes work.
+2. **Codec is strict** — make decode **tolerant**: unknown event type → return `[]` (recorded, not raised); unknown payload fields → ignored; missing optional fields → defaulted; alias map for plausible field-name variants (`call_id`/`id`, `ts_us`/`ts_ms`/`timestamp`/`ts`, `text`/`content`, `tools`/`manifest`); accept flat and `{"payload": {...}}`-nested shapes.
+3. **Watchdog stops instead of salvaging** — implement §8.9: cancel in-flight reads, block new writes, emit a templated FINAL if the active goal has none yet. Wire `ScenarioWatchdog` into `sim/harness.py` too, so it's testable.
+
+Plus: `audio_clip` added to `PAYLOAD_TYPES`/`EVENT_CLASS_BY_PAYLOAD_TYPE` (USER_CONTENT), store-only for now — degrades to "ignored input" instead of "crash". New tests: P-01, P-02, P-03, T-07, plus a format-variant suite (several plausible wire dialects through the same scenario) and a reference harness that drives the **real async entry point** end-to-end for the first time.
+
+**Acceptance:** `demo/run_queue_harness.py` — the real async entry point, not `SimHarness` — actually emits ACK → TOOL_CALL → FINAL. A synthetic scenario containing unknown event types, unknown extra fields, malformed payloads and audio clips runs to completion and still emits correct actions for the parts it understands.
 
 ### Phase 2 — Audio path **(unlocks 30% of scenarios)**
 
@@ -198,7 +200,7 @@ New tests: M-02 (partial transcript / inert tail, i.e. C1), T-06.
 
 | # | Item | Owner | Why it matters |
 |---|---|---|---|
-| R1 | **Has the evaluation kit been released?** The guide says "released post the registrations"; registration closed 16 Sep, today is 18 Sep. Check the PRISM portal / registration email. | **User** | Highest-leverage unknown in the project. If it exists, integrate it immediately after Phase 0 — it replaces the guessed wire format with the real one and lets us actually run the 9 public scenarios. Much of Phase 1 becomes verification instead of guesswork. |
+| R1 | ~~Has the evaluation kit been released?~~ **RESOLVED 18 Sep: not released.** No portal link, no registration email, no drop found. Re-check periodically — nothing in the guide names a specific channel. | **User** | Highest-leverage unknown in the project, still unresolved in the sense that "not yet" isn't "never" — re-check before the 25 Sep freeze. Kit integration stays blocked until it lands; Phase A below hardens the codec/entry point to survive the guess being wrong either way. |
 | R2 | Do audio scenarios ship a transcript alongside the WAV, or audio-only? | Resolved by R1 | Decides whether ASR is mandatory (audio-only) or a fallback (transcript-primary). Phase 2 is built to handle both, but the ordering of effort within it changes. |
 | R3 | Gemini free-tier audio input: shape and limits | Implementer | Needed for Phase 3's live ASR. Image `inline_data` is already verified working in this project; audio is the same mechanism but unverified. |
 | R4 | Team name + college name | **User** | Required for deck nomenclature (`CollegeName_TeamName`) — a stated disqualification condition. |
@@ -209,9 +211,9 @@ New tests: M-02 (partial transcript / inert tail, i.e. C1), T-06.
 
 ## 7. Sequencing, and what to do if time runs short
 
-Recommended order: **0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8**, inserting kit integration immediately after Phase 0 if R1 comes back positive.
+Recommended order: **0 → A → 2 → 3 → 4 → 5 → 6 → 7 → 8**, inserting kit integration immediately after Phase 0 if R1 turns positive.
 
-Phases 0 and 1 are non-negotiable — one removes disqualification risk, the other removes a total-failure mode. Everything after that is additive scoring value, and each phase leaves the repo in a frozen, submittable state.
+Phases 0 and A are non-negotiable — one removes disqualification risk, the other removes a total-failure mode (the entry point that has never once been executed). Everything after that is additive scoring value, and each phase leaves the repo in a frozen, submittable state.
 
 If time compresses, drop from the back: Phase 8 → 7 → 6 → 5. Do **not** drop Phase 2 (audio) ahead of Phase 5 or 6 — 30% of scenarios outweighs either category those phases target.
 

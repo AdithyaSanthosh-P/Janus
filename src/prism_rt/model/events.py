@@ -75,6 +75,16 @@ class VideoFramePayload:
 
 
 @dataclass(frozen=True)
+class AudioClipPayload:
+    """V(post-4) Phase A: accepted and stored (as an Observation), not yet
+    analyzed — ASR (Phase 2 of `docs/post_v4_implementation_plan.md`)
+    consumes this later. `clip_id` is a harness-given reference, matching
+    `VideoFramePayload.frame_id`'s pattern; no audio bytes are held here."""
+
+    clip_id: str
+
+
+@dataclass(frozen=True)
 class TimerFiredPayload:
     timer_id: str
     timer_kind: str
@@ -97,6 +107,7 @@ PAYLOAD_TYPES: dict[str, type] = {
     "tool_result": ToolResultPayload,
     "worker_result": WorkerResultPayload,
     "video_frame": VideoFramePayload,
+    "audio_clip": AudioClipPayload,
     "timer_fired": TimerFiredPayload,
     "watchdog": WatchdogPayload,
 }
@@ -107,6 +118,7 @@ EVENT_CLASS_BY_PAYLOAD_TYPE: dict[str, EventClass] = {
     "interruption": EventClass.INTERRUPTION,
     "text_chunk": EventClass.USER_CONTENT,
     "video_frame": EventClass.USER_CONTENT,
+    "audio_clip": EventClass.USER_CONTENT,
     "end_of_turn": EventClass.END_OF_TURN,
     "tool_result": EventClass.TOOL_RESULT,
     "worker_result": EventClass.WORKER_RESULT,

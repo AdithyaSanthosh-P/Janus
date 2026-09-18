@@ -142,7 +142,18 @@ class FastResponder:
         if text_fact is None or text_fact.status == FactStatus.RETRACTED:
             return []
         text = text_fact.value or FINAL_FALLBACK
-        task_completed = goal.status != GoalStatus.ABANDONED
+        # Phase A: a watchdog-salvaged FINAL must never claim completion —
+        # that's the entire point of the salvage path (§8.9). Keyed off
+        # *this fact's own provenance* (source="watchdog", set only by
+        # reducers._apply_watchdog), not "has the watchdog fired at all" —
+        # a real compose result that happens to land the same step the
+        # watchdog fires (or after it, for some other goal) is still a
+        # genuine completion and must not be falsely marked incomplete.
+        # goal.status itself still becomes COMPLETED via EmissionGate's
+        # generic post-FINAL side effect either way; this field is what
+        # the protocol output actually reports.
+        is_watchdog_salvage = text_fact.provenance.source == "watchdog"
+        task_completed = goal.status != GoalStatus.ABANDONED and not is_watchdog_salvage
 
         grade = None
         if store.config.claim_grades_enabled:

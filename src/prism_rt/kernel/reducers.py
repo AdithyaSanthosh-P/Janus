@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 
+from config.templates import WATCHDOG_FALLBACK
 from prism_rt.kernel.detector import QuickDetector
 from prism_rt.kernel.interpret_apply import active_goal_id, apply_interpretation
 from prism_rt.kernel.perception import PerceptionScheduler
@@ -16,6 +17,7 @@ from prism_rt.kernel.proposals import parse_compose, parse_interpretation, parse
 from prism_rt.kernel.results import ResultRouter
 from prism_rt.kernel.turns import TurnManager
 from prism_rt.model.events import (
+    AudioClipPayload,
     Envelope,
     InterruptionPayload,
     ManifestPayload,
@@ -182,6 +184,75 @@ def _apply_video_frame(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) 
     )
 
 
+def _apply_audio_clip(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
+    """Phase A (`docs/post_v4_implementation_plan.md`): store-only, same as
+    `_apply_video_frame` — an audio clip is always recorded as an
+    Observation on arrival, analyzed by nothing yet. ASR (Phase 2) is what
+    turns this into transcribed content; until then this exists purely so
+    a harness sending audio_clip events degrades to "observed, ignored"
+    rather than the event being unparseable (30% of scored scenarios are
+    audio per guidelines/Theme_5_Guide.md §4)."""
+    payload: AudioClipPayload = env.payload
+    obs_id = txn.store.ids.next("obs")
+    seq = len(txn.store.evidence.observations()) + 1
+    txn.evidence.add_observation(
+        Observation(obs_id=obs_id, frame_id=payload.clip_id, capture_ts_us=now_us, arrival_step=step_no, modality_seq=seq)
+    )
+
+
+def _apply_watchdog(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
+    """§8.9 salvage. The *trigger* (real wall-clock elapsed) is excluded
+    from determinism tests by design (`ScenarioWatchdog` is the one
+    permitted wall-clock reader, outside `kernel/`/`store/`) — but the
+    *salvage behavior* itself is a deterministic reducer, directly
+    testable by sending this envelope like any other. Sets
+    `session.watchdog_fired` (checked by `CommitGate` to block all future
+    writes), cancels every in-flight READ (same-step CANCEL via the
+    ordinary InvalidationEngine mechanism, exactly like
+    `interpret_apply._abandon_goal`), and forces a truthful, templated
+    FINAL for the active goal if one isn't already on its way — `_final`
+    reports `task_completed=False` for this case (`kernel/responder.py`),
+    since the whole point is never claiming to have finished."""
+    txn.facts.set(
+        "session.watchdog_fired",
+        True,
+        FactStatus.COMMITTED,
+        Provenance(source="system", event_id=env.event_id, step_no=step_no, ts_us=now_us),
+        rule="reducers.watchdog",
+    )
+
+    for call in txn.store.call_ledger.non_terminal():
+        if call.kind != StepKind.READ:
+            continue
+        if call.status == CallStatus.IN_FLIGHT:
+            txn.store.call_ledger.set_status(call.call_id, CallStatus.INVALIDATED)
+            txn.store.dep_index.unregister(call.call_id)
+        elif call.status == CallStatus.PROPOSED:
+            txn.store.call_ledger.set_status(call.call_id, CallStatus.DISCARDED)
+
+    gid = active_goal_id(txn.store)
+    if gid is None:
+        return
+    goal = txn.store.goals.get(gid)
+    if goal is None or goal.status != GoalStatus.ACTIVE:
+        return
+    existing_text = txn.facts.get(f"compose.{gid}.text")
+    if existing_text is not None and existing_text.status != FactStatus.RETRACTED:
+        return  # a FINAL is already on its way; don't clobber it
+    txn.store.goals.update(gid, task_state=TaskState.RESPONDING)
+    txn.facts.set(
+        f"compose.{gid}.text",
+        WATCHDOG_FALLBACK,
+        FactStatus.COMMITTED,
+        # source="watchdog" (not "system") is the signal `_final` reads to
+        # know this particular FINAL is the salvage fallback, not a real
+        # completion — `rule=` below is decision-log-only and isn't
+        # retrievable from the fact itself.
+        Provenance(source="watchdog", event_id=env.event_id, step_no=step_no, ts_us=now_us),
+        rule="reducers.watchdog_final",
+    )
+
+
 def _apply_interruption(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
     payload: InterruptionPayload = env.payload
     del payload  # reason isn't consulted in V1
@@ -262,9 +333,11 @@ _HANDLERS = {
     "tool_result": _apply_tool_result,
     "text_chunk": _apply_text_chunk,
     "video_frame": _apply_video_frame,
+    "audio_clip": _apply_audio_clip,
     "end_of_turn": _apply_end_of_turn,
     "interruption": _apply_interruption,
     "worker_result": _apply_worker_result,
+    "watchdog": _apply_watchdog,
 }
 
 
