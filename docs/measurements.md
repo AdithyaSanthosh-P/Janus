@@ -17,9 +17,10 @@ All numbers on this page were produced by actually running this repository's own
 | Phase 4 | Chunk-anchored cancellation, I-02, revert-safety, no-active-goal inertness + replay identity | 5 | 5/5 passing |
 | Phase 5 | C9 commit-last ordering (N-02b) + C2 response frames + replay identity | 11 | 11/11 passing |
 | Phase 6 | Speculative interpretation coalescing/promotion + content-bearing ACK + replay identity | 8 | 8/8 passing |
-| **Total** | | **106** | **106/106 passing** |
+| Bugfix | Correction-race / stale-COMPOSE regression (found by independent review, `reviews/opus/`) | 1 | 1/1 passing |
+| **Total** | | **107** | **107/107 passing** |
 
-Reproduce: `source .venv/bin/activate && python -m pytest tests/ -v`. Every test also runs `TraceChecker` (P1/P3/W1/S3 invariants, plus the static no-wall-clock scan over `kernel/` and `store/`); 0 violations across all 106 tests. Full-suite wall time: **0.56s** on this machine's dev environment (Python 3.14), verified passing (106/106) inside the Docker image (Python 3.11, `docker run --rm janus`) as of the Phase 6 freeze.
+Reproduce: `source .venv/bin/activate && python -m pytest tests/ -v`. Every test also runs `TraceChecker` (P1/P3/W1/S3 invariants, plus the static no-wall-clock scan over `kernel/` and `store/`); 0 violations across all 107 tests — notably, `TraceChecker` did **not** catch the correction-race bug on its own; it was found by an independent review, not by this project's own test suite. Full-suite wall time: **~0.6s** on this machine's dev environment (Python 3.14), verified passing (107/107) inside the Docker image (Python 3.11, `docker run --rm janus`) as of the correction-race bugfix.
 
 ## Per-step kernel latency
 

@@ -89,12 +89,28 @@ class TaskStateMachine:
         return requests
 
     def _all_required_steps_done(self, store, goal_id: str) -> bool:
+        """"Done" means CONSUMED *and still valid* — matching
+        `PlanExecutor._step_done`'s own rule (§3.5's carry-over condition).
+        Without the validity check, a step whose read set has gone stale
+        since it consumed (e.g. a correction changed the slot it was bound
+        to) still counts as "done," transitioning the goal straight to
+        RESPONDING/COMPOSE in the same step `PlanExecutor.propose_ready_
+        calls` — which runs *after* this in the fixed DECIDE order — would
+        otherwise have re-executed it. That race let a COMPOSE job
+        dispatched before the correction (whose own read set at the time
+        only pinned `result.<call_id>`, not the slot behind it) go on to
+        produce a FINAL grounded in pre-correction data. Found via an
+        independent review (Antigravity/Opus, `reviews/opus/`), confirmed
+        by direct reproduction; see `_build_compose_request`'s docstring
+        for the other half of the fix."""
         plan = store.plans.current(goal_id)
         if plan is None:
             return False
         for step in plan.steps:
             latest = store.call_ledger.latest_by_step(goal_id, step.step_key)
             if latest is None or latest.status != CallStatus.CONSUMED:
+                return False
+            if not store.facts.is_valid(latest.read_set).is_valid:
                 return False
         return True
 
@@ -183,6 +199,21 @@ class TaskStateMachine:
         return self._make_request(store, JobKind.PLAN, view, goal_id, None, read_set)
 
     def _build_compose_request(self, store, goal_id: str) -> DispatchRequest:
+        """The read set includes not just each consumed call's own
+        `result.<call_id>` key but every key *that call itself* read
+        (`call.read_set`, e.g. the `slot.<gid>.<name>` it was bound to) —
+        `result.<call_id>` never changes once written, so pinning only
+        that would let this job's read set stay "valid" forever even
+        after a correction supersedes the call it came from (the call
+        itself is CONSUMED, a terminal status exempt from
+        `InvalidationEngine`, so nothing ever retracts or changes its
+        result fact). Transitively including the call's own dependencies
+        is what makes a stale, already-dispatched COMPOSE job get
+        correctly rejected (`K4`, `_apply_worker_result`'s existing
+        `is_valid(job.read_set)` check) instead of silently producing a
+        FINAL grounded in pre-correction data — see
+        `_all_required_steps_done`'s docstring for the other half of this
+        fix, found the same way."""
         plan = store.plans.current(goal_id)
         facts: dict = {}
         effects: dict = {}
@@ -196,6 +227,7 @@ class TaskStateMachine:
                 if result_fact is not None:
                     facts[step.step_key] = result_fact.value
                     read_keys.append(f"result.{call.call_id}")
+                read_keys.extend(entry.key for entry in call.read_set.entries)
                 if step.kind == StepKind.WRITE:
                     effect = store.effect_ledger.by_fingerprint(call.fingerprint)
                     if effect is not None:
