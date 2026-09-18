@@ -6,15 +6,16 @@ this repository calls a real speech model. `AsrScheduler`
 raw response into typed segments happens there rather than here, mirroring
 `workers/interpreter.py`'s "parsing is kernel-side" convention.
 
-Like `workers/vision.py`, the clip is referenced by id only — the
-`Provider` protocol is text-only, so no audio bytes are ever sent through
-this path (`docs/post_v4_implementation_plan.md` Phase 3 covers a real,
-image/audio-aware live provider; not built yet).
+Like `workers/vision.py`, the clip is referenced by id only in the prompt.
+Phase 3 (`docs/post_v4_implementation_plan.md`) adds an optional `media`
+passthrough for live use — `workers/runner.py`'s `blob_resolver` resolves
+the clip's real bytes outside the kernel/store layer and hands them here
+as an ordinary argument; this module never resolves a blob itself.
 """
 
 from __future__ import annotations
 
-from prism_rt.workers.gateway import ModelGateway
+from prism_rt.workers.gateway import MediaPart, ModelGateway
 
 ASR_SCHEMA = {
     "type": "object",
@@ -48,5 +49,5 @@ def build_prompt(view: dict) -> str:
     )
 
 
-def run_asr(gateway: ModelGateway, view: dict) -> dict:
-    return gateway.complete_json("asr", build_prompt(view), ASR_SCHEMA)
+def run_asr(gateway: ModelGateway, view: dict, *, media: list[MediaPart] | None = None) -> dict:
+    return gateway.complete_json("asr", build_prompt(view), ASR_SCHEMA, media=media)

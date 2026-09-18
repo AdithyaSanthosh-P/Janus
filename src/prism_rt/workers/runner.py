@@ -8,20 +8,43 @@ latency has passed, mirroring `sim/harness.py`'s `MockToolRegistry` so a
 job's result can never land in the same step it was dispatched.
 `AsyncWorkerRunner` is a real asyncio implementation for optional live use
 — see `workers/gateway.py`'s module docstring for why it's unverified here.
+
+Phase 3 (`docs/post_v4_implementation_plan.md`): both runners take an
+optional `blob_resolver` — a callable mapping a harness-given reference
+(`view["frame_id"]`, the id a `video_frame`/`audio_clip` event carried,
+*not* this project's own internal `obs_id`) to a real `MediaPart`, or
+`None` if it can't resolve one. This is the *only* place in the whole
+codebase that ever turns a reference into actual bytes — the kernel and
+`store/` never do, by design, and `blob_resolver` is entirely optional
+(`None` by default), so nothing about existing behavior changes unless a
+caller explicitly supplies one (as `demo/run_live_multimodal_demo.py`
+does).
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Protocol
+from typing import Callable, Protocol
 
 from prism_rt.model.events import WorkerResultPayload
 from prism_rt.model.types import JobKind
 from prism_rt.workers import asr, composer, interpreter, planner, vision
-from prism_rt.workers.gateway import ModelGateway
+from prism_rt.workers.gateway import MediaPart, ModelGateway
+
+BlobResolver = Callable[[str], MediaPart | None]
 
 
-def _run_job(gateway: ModelGateway, kind: JobKind, view: dict) -> dict:
+def _resolve_media(view: dict, blob_resolver: BlobResolver | None) -> list[MediaPart] | None:
+    if blob_resolver is None:
+        return None
+    frame_id = view.get("frame_id")
+    if not frame_id:
+        return None
+    part = blob_resolver(frame_id)
+    return [part] if part is not None else None
+
+
+def _run_job(gateway: ModelGateway, kind: JobKind, view: dict, blob_resolver: BlobResolver | None = None) -> dict:
     if kind == JobKind.INTERPRET:
         return interpreter.run_interpret(gateway, view)
     if kind == JobKind.PLAN:
@@ -29,9 +52,9 @@ def _run_job(gateway: ModelGateway, kind: JobKind, view: dict) -> dict:
     if kind == JobKind.COMPOSE:
         return composer.run_compose(gateway, view)
     if kind == JobKind.VISION:
-        return vision.run_vision(gateway, view)
+        return vision.run_vision(gateway, view, media=_resolve_media(view, blob_resolver))
     if kind == JobKind.ASR:
-        return asr.run_asr(gateway, view)
+        return asr.run_asr(gateway, view, media=_resolve_media(view, blob_resolver))
     raise ValueError(f"unknown job kind: {kind}")
 
 
@@ -42,9 +65,16 @@ class WorkerRunner(Protocol):
 
 
 class ScriptedRunner:
-    def __init__(self, gateway: ModelGateway, *, latency_us_by_kind: dict[JobKind, int] | None = None) -> None:
+    def __init__(
+        self,
+        gateway: ModelGateway,
+        *,
+        latency_us_by_kind: dict[JobKind, int] | None = None,
+        blob_resolver: BlobResolver | None = None,
+    ) -> None:
         self._gateway = gateway
         self._latency = latency_us_by_kind or {}
+        self._blob_resolver = blob_resolver
         self._pending: dict[str, tuple[int, JobKind, dict]] = {}
         self._aborted: set[str] = set()
 
@@ -64,7 +94,7 @@ class ScriptedRunner:
             if job_id in self._aborted:
                 continue
             try:
-                proposal = _run_job(self._gateway, kind, view)
+                proposal = _run_job(self._gateway, kind, view, self._blob_resolver)
                 results.append(WorkerResultPayload(job_id=job_id, kind=kind.value, status="ok", proposal=proposal))
             except Exception as exc:  # a worker failure is an expected outcome, never a crash (C3)
                 results.append(
@@ -74,11 +104,11 @@ class ScriptedRunner:
 
 
 class AsyncWorkerRunner:
-    """Real async dispatch for optional live use. Not exercised by any test
-    in this repository."""
+    """Real async dispatch for optional live use."""
 
-    def __init__(self, gateway: ModelGateway) -> None:
+    def __init__(self, gateway: ModelGateway, *, blob_resolver: BlobResolver | None = None) -> None:
         self._gateway = gateway
+        self._blob_resolver = blob_resolver
         self._queue: "asyncio.Queue[WorkerResultPayload]" = asyncio.Queue()
         self._tasks: dict[str, asyncio.Task] = {}
 
@@ -92,7 +122,7 @@ class AsyncWorkerRunner:
 
     async def _run(self, job_id: str, kind: JobKind, view: dict) -> None:
         try:
-            proposal = await asyncio.to_thread(_run_job, self._gateway, kind, view)
+            proposal = await asyncio.to_thread(_run_job, self._gateway, kind, view, self._blob_resolver)
             await self._queue.put(WorkerResultPayload(job_id=job_id, kind=kind.value, status="ok", proposal=proposal))
         except asyncio.CancelledError:
             raise

@@ -4,20 +4,19 @@ Like `workers/interpreter.py`/`planner.py`/`composer.py`, `run_vision` only
 talks to the gateway and returns the raw dict; parsing into typed
 `PerceptionClaim`s is kernel-side (`kernel/proposals.py`).
 
-The existing `Provider.complete_json(kind, prompt, schema) -> dict` protocol
-(`workers/gateway.py`) is text-only — no caller in this project passes image
-bytes through it (`GeminiProvider`, added earlier for live text-worker
-validation, is scoped the same way). So this worker's prompt carries the
-frame only by reference (`obs_id`/targets), never pixel data: a real
-image-grounded live call would need a second, image-aware Provider method,
-which is out of scope here (V3's tests are 100% `ScriptedProvider`, matching
-`docs/sonnet_implementation_plan.md`'s "Mock first, live second" — live
-vision has never been exercised, same disclosure as `currentStatus.md`'s
-Known Risks already carries for `AnthropicProvider`)."""
+The prompt always carries the frame by reference (`obs_id`/targets) —
+never pixel data — matching every test in this project (100%
+`ScriptedProvider`, per "Mock first, live second"; the kernel/store layer
+never touches bytes, by design). Phase 3 (`docs/post_v4_implementation_plan.md`)
+adds a `media` passthrough for live use: `workers/runner.py`'s optional
+`blob_resolver` resolves `view["frame_id"]` (the harness-given reference,
+not this project's own internal `obs_id`) into real bytes *outside* the
+kernel, and hands them to `run_vision` as an ordinary function argument —
+this module still never reads or resolves a blob itself."""
 
 from __future__ import annotations
 
-from prism_rt.workers.gateway import ModelGateway
+from prism_rt.workers.gateway import MediaPart, ModelGateway
 
 VISION_SCHEMA = {
     "type": "object",
@@ -49,5 +48,5 @@ def build_prompt(view: dict) -> str:
     )
 
 
-def run_vision(gateway: ModelGateway, view: dict) -> dict:
-    return gateway.complete_json("vision", build_prompt(view), VISION_SCHEMA)
+def run_vision(gateway: ModelGateway, view: dict, *, media: list[MediaPart] | None = None) -> dict:
+    return gateway.complete_json("vision", build_prompt(view), VISION_SCHEMA, media=media)

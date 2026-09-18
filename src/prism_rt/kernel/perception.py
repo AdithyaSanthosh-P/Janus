@@ -153,6 +153,7 @@ class PerceptionScheduler:
             read_set = store.facts.build_read_set(["goal.active"])
             view = {
                 "obs_id": obs.obs_id,
+                "frame_id": obs.frame_id,  # harness-given reference — see workers/vision.py's module docstring
                 "mode": question.mode.value,
                 "targets": [{"name": t.name, "description": t.description} for t in question.targets],
             }

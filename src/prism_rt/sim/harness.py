@@ -84,6 +84,7 @@ class SimHarness:
         tools: dict | None = None,
         provider: ScriptedProvider | None = None,
         worker_latency_us: dict[JobKind, int] | None = None,
+        blob_resolver=None,
     ) -> None:
         self.config = config
         self.clock = SteppedClock()
@@ -94,7 +95,11 @@ class SimHarness:
         self.provider = provider if provider is not None else ScriptedProvider()
         self.gateway = ModelGateway(self.provider)
         default_latency = {JobKind.INTERPRET: 50_000, JobKind.PLAN: 50_000, JobKind.COMPOSE: 50_000}
-        self.runner = ScriptedRunner(self.gateway, latency_us_by_kind=worker_latency_us or default_latency)
+        # blob_resolver (Phase 3): optional, live-use-only — resolves a
+        # harness-given frame_id/clip_id into real bytes for VISION/ASR
+        # jobs. None by default, so every existing SimHarness caller
+        # (every test) is unaffected.
+        self.runner = ScriptedRunner(self.gateway, latency_us_by_kind=worker_latency_us or default_latency, blob_resolver=blob_resolver)
         self.kernel = Kernel(config, self.store, self.clock, self.writer, runner=self.runner, log=self.log)
         self.mock_tools = MockToolRegistry(tools)
         self._seq = 0

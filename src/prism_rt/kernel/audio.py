@@ -61,7 +61,7 @@ class AsrScheduler:
                 continue
             job_id = store.ids.next("job")
             read_set = store.facts.build_read_set([])  # not goal-scoped; a transcript stays valid regardless of later goal changes
-            view = {"obs_id": obs.obs_id}
+            view = {"obs_id": obs.obs_id, "frame_id": obs.frame_id}  # harness-given clip reference — see workers/asr.py's module docstring
             store.jobs.create(JobRecord(job_id=job_id, kind=JobKind.ASR, goal_id=None, turn_id=None, read_set=read_set))
             store.evidence.update_observation(obs.obs_id, asr_job_id=job_id)
             requests.append(AsrDispatchRequest(job_id=job_id, kind=JobKind.ASR, view=view, goal_id=None, turn_id=None, read_set=read_set))
