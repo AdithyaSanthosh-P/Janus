@@ -83,7 +83,21 @@ class TaskStateMachine:
                         store.goals.update(gid, task_state=TaskState.PLANNING)
                 elif goal.task_state == TaskState.RESPONDING:
                     pending_text = store.facts.get(f"compose.{gid}.text")
-                    if pending_text is None and not store.jobs.running_by_kind_goal(JobKind.COMPOSE, gid):
+                    # Matches the EXECUTING branch's identical check above
+                    # (line ~78) — a RETRACTED compose text must be
+                    # treated the same as no text at all. Currently
+                    # inert (the only retraction site,
+                    # emission.py._complete_goal, always transitions
+                    # task_state away from RESPONDING in the same write),
+                    # but a real inconsistency between two copies of the
+                    # same check is exactly the shape of bug this project
+                    # has already been bitten by once (the correction-race
+                    # fix, kernel/task.py._all_required_steps_done vs.
+                    # kernel/executor.py.PlanExecutor._step_done) — found
+                    # by an independent review (F-SONNET-1).
+                    if (
+                        pending_text is None or pending_text.status == FactStatus.RETRACTED
+                    ) and not store.jobs.running_by_kind_goal(JobKind.COMPOSE, gid):
                         requests.append(self._build_compose_request(store, gid))
 
         return requests

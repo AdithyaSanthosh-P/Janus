@@ -117,6 +117,28 @@ class PlanExecutor:
             if self._commit_last_blocked(store, gid, step, plan, now_us):
                 continue
 
+            tool_spec = store.catalog.get(step.tool)
+            if tool_spec is None or tool_spec.status != "USABLE":
+                # G1 ("tool exists and is usable" — kernel/commit.py)
+                # can never pass for this step no matter how many times
+                # it's retried: the tool simply isn't in the current
+                # catalog (a planner referencing an unknown tool, or one
+                # a later manifest update dropped). Left alone, this step
+                # would still get a CallRecord created below, which
+                # CommitGate.scan_and_admit leaves PROPOSED forever (its
+                # own docstring: "a call that fails the gate simply stays
+                # PROPOSED... re-evaluated... once whatever blocked it
+                # may have changed" — nothing ever will here) — a real,
+                # confirmed livelock (S-07): the goal never completes,
+                # never CLARIFYs, never fails, until the scenario-wide
+                # watchdog eventually times out and salvages it 100+
+                # seconds later. Found by an independent review
+                # (F-SONNET-2), confirmed by direct reproduction. Fail
+                # the goal immediately instead, the same honest way
+                # retry-exhaustion already does.
+                self._fail_goal(store, gid, step, now_us, step_no)
+                continue
+
             bind_result, missing_key = self._bind(step, gid, store)
             if bind_result is None:
                 # V3: a missing `claim.*` binding means perception hasn't
@@ -367,10 +389,23 @@ class PlanExecutor:
         store.goals.update(goal_id, task_state=TaskState.CLARIFYING)
 
     def _fail_goal(self, store, goal_id: str, step, now_us: int, step_no: int) -> None:
+        """A step whose retries are exhausted is a genuine task failure,
+        not a completion — `goal.status` must become `ABANDONED` (not
+        left `ACTIVE`) so `FastResponder._final`'s existing
+        `task_completed = goal.status != GoalStatus.ABANDONED` check
+        correctly reports `task_completed=False`. Before this fix, a
+        completely ordinary scenario (a tool erroring past
+        `max_read_retries`/`max_write_retries`) produced a FINAL whose
+        own text said "I couldn't complete this" while still claiming
+        `task_completed=True` — a real false-completion-claim bug,
+        against this project's own core invariant, found by an
+        independent review's F-SONNET-2 investigation into a related
+        livelock and confirmed by direct reproduction
+        (`tests/test_fail_goal_regression.py`)."""
         goal = store.goals.get(goal_id)
         if goal is not None and goal.task_state == TaskState.RESPONDING:
             return  # already reported
-        store.goals.update(goal_id, task_state=TaskState.RESPONDING)
+        store.goals.update(goal_id, status=GoalStatus.ABANDONED, task_state=TaskState.RESPONDING)
         store.facts.set(
             f"compose.{goal_id}.text",
             f"I couldn't complete this — {step.tool} kept failing.",
