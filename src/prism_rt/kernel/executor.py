@@ -23,6 +23,7 @@ from prism_rt.model.types import (
     BindingKind,
     CallRecord,
     CallStatus,
+    EffectStatus,
     FactStatus,
     GoalStatus,
     Provenance,
@@ -77,6 +78,19 @@ class PlanExecutor:
 
             attempt = 1
             if latest is not None and latest.status == CallStatus.PROPOSED:
+                if self._write_lineage_confirmed_elsewhere(store, gid, step, latest.fingerprint):
+                    # This call is sitting PROPOSED, its own read set still
+                    # valid, waiting on CommitGate — but a *different*
+                    # write for the same lineage confirmed *after* this
+                    # one was created (the exact race: the corrected call
+                    # was proposed before the stale original's real result
+                    # arrived). G6 will now block it forever; see
+                    # _write_lineage_confirmed_elsewhere's docstring.
+                    self._fail_goal(
+                        store, gid, step, now_us, step_no,
+                        reason=f"a previous {step.tool} request already went through before I could change it",
+                    )
+                    continue
                 # A call CommitGate hasn't admitted yet (e.g. still waiting
                 # out the settle barrier, G10) can go stale before it's ever
                 # emitted — a slot it reads changes while it sits blocked.
@@ -155,6 +169,14 @@ class PlanExecutor:
                 self._ask_for(store, gid, missing_key, now_us, step_no)
                 continue
 
+            new_fingerprint = fingerprint_for(step.tool, bind_result.args)
+            if self._write_lineage_confirmed_elsewhere(store, gid, step, new_fingerprint):
+                self._fail_goal(
+                    store, gid, step, now_us, step_no,
+                    reason=f"a previous {step.tool} request already went through before I could change it",
+                )
+                continue
+
             call_id = store.ids.next("call")
             call = CallRecord(
                 call_id=call_id,
@@ -163,7 +185,7 @@ class PlanExecutor:
                 tool=step.tool,
                 kind=step.kind,
                 args=bind_result.args,
-                fingerprint=fingerprint_for(step.tool, bind_result.args),
+                fingerprint=new_fingerprint,
                 read_set=bind_result.read_set,
                 attempt=attempt,
                 created_step=step_no,
@@ -388,27 +410,64 @@ class PlanExecutor:
         )
         store.goals.update(goal_id, task_state=TaskState.CLARIFYING)
 
-    def _fail_goal(self, store, goal_id: str, step, now_us: int, step_no: int) -> None:
-        """A step whose retries are exhausted is a genuine task failure,
-        not a completion — `goal.status` must become `ABANDONED` (not
-        left `ACTIVE`) so `FastResponder._final`'s existing
-        `task_completed = goal.status != GoalStatus.ABANDONED` check
-        correctly reports `task_completed=False`. Before this fix, a
-        completely ordinary scenario (a tool erroring past
-        `max_read_retries`/`max_write_retries`) produced a FINAL whose
-        own text said "I couldn't complete this" while still claiming
-        `task_completed=True` — a real false-completion-claim bug,
-        against this project's own core invariant, found by an
-        independent review's F-SONNET-2 investigation into a related
-        livelock and confirmed by direct reproduction
-        (`tests/test_fail_goal_regression.py`)."""
+    def _write_lineage_confirmed_elsewhere(self, store, goal_id: str, step, fingerprint: str) -> bool:
+        """True iff `CommitGate`'s G6 ("no existing effect with the same
+        lineage, PENDING or CONFIRMED") will block a call for this step
+        *forever*: a different-fingerprint effect on the same lineage
+        (`{goal_id}:{step_key}`) has already `CONFIRMED`. A same-fingerprint
+        match is a literal retry — G5's job, not this one, and excluded by
+        the fingerprint check.
+
+        This is a real, found-and-confirmed livelock (the same class as
+        S-07's unusable-tool one): a corrected write (different arguments,
+        proposed *before* the original's real result was known) can sit
+        PROPOSED with a perfectly valid read set — nothing about *it* is
+        stale — while the original, despite being cancelled, goes on to
+        confirm on the same lineage. `docs/prompt 2.txt` §8.8's own worked
+        example is exactly this shape (a 6pm booking goes through anyway;
+        the corrected 8pm booking must still get a chance) and describes
+        the intended resolution as a "modify" tool call or an interactive
+        CLARIFY — machinery this project doesn't build. The safe default
+        used here instead is an honest failure naming what already
+        happened, via `_fail_goal` — never a silent hang, and never an
+        automatic double-booking attempt. Checked at both the moment a
+        fresh call would be created and every step an already-PROPOSED
+        call is re-examined, since the confirming result can arrive
+        either before or after the corrected call exists."""
+        if step.kind != StepKind.WRITE:
+            return False
+        lineage_effect = store.effect_ledger.by_lineage(f"{goal_id}:{step.step_key}")
+        return (
+            lineage_effect is not None
+            and lineage_effect.status == EffectStatus.CONFIRMED
+            and lineage_effect.fingerprint != fingerprint
+        )
+
+    def _fail_goal(self, store, goal_id: str, step, now_us: int, step_no: int, *, reason: str | None = None) -> None:
+        """A step that can never complete is a genuine task failure, not
+        a completion — `goal.status` must become `ABANDONED` (not left
+        `ACTIVE`) so `FastResponder._final`'s existing `task_completed =
+        goal.status != GoalStatus.ABANDONED` check correctly reports
+        `task_completed=False`. Before this fix, a completely ordinary
+        scenario (a tool erroring past `max_read_retries`/
+        `max_write_retries`) produced a FINAL whose own text said "I
+        couldn't complete this" while still claiming `task_completed=True`
+        — a real false-completion-claim bug, against this project's own
+        core invariant, found by an independent review's F-SONNET-2
+        investigation into a related livelock and confirmed by direct
+        reproduction (`tests/test_failure_honesty_regression.py`).
+        `reason`, when given, replaces the default "kept failing" wording
+        for callers whose step never even attempted a call (an unusable
+        tool, or a permanently-blocked write lineage) — see this
+        method's other two call sites."""
         goal = store.goals.get(goal_id)
         if goal is not None and goal.task_state == TaskState.RESPONDING:
             return  # already reported
         store.goals.update(goal_id, status=GoalStatus.ABANDONED, task_state=TaskState.RESPONDING)
+        text = f"I couldn't complete this — {reason}." if reason else f"I couldn't complete this — {step.tool} kept failing."
         store.facts.set(
             f"compose.{goal_id}.text",
-            f"I couldn't complete this — {step.tool} kept failing.",
+            text,
             FactStatus.COMMITTED,
             Provenance(source="system", step_no=step_no, ts_us=now_us),
             rule="executor.step_failed",

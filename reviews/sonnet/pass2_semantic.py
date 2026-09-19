@@ -999,6 +999,67 @@ def test_t07_watchdog_salvage():
 # Main runner
 # ══════════════════════════════════════════════════════════════════════════════
 
+
+
+def test_w4_stale_write_reconciliation():
+    """W4 violation: A WRITE call that becomes STALE but completes successfully 
+    silently drops the effect without triggering reconciliation."""
+    config = Config(
+        transitive_invalidation=True,
+        settle_barrier_enabled=False,
+        absence_read_sets=False,
+        claim_grades_enabled=False,
+        rebinder_enabled=True,
+    )
+    p = ScriptedProvider()
+    p.register("interpret", "book flight f1", {
+        "act": "new_goal", "intent": "book_flight",
+        "slot_deltas": [{"name": "flight_id", "scope": "goal", "op": "set", "value": "f1"}],
+        "commit_intent": True,
+    })
+    p.register("interpret", "actually f2", {
+        "act": "slot_update",
+        "slot_deltas": [{"name": "flight_id", "scope": "goal", "op": "set", "value": "f2"}],
+        "commit_intent": True,
+    })
+    p.register("plan", "book_flight", {
+        "steps": [{"local_id": "s1", "tool": "book_flight", "kind": "write",
+                   "bindings": {"flight_id": {"type": "fact", "key": "slot.$G.flight_id"}}, "after": []}]
+    })
+
+    h = SimHarness(config, seed=1,
+                   tools={"book_flight": {"latency_ms": 400, "response": {"success": True}}},
+                   provider=p, worker_latency_us=FAST_LATENCY)
+
+    h.send(0, [manifest([BOOK_TOOL])])
+    h.send(100_000, [chunk("book flight f1"), eot()])
+
+    drain(h, 300_000, stop_on_final=False)
+
+    in_flight = [c for c in h.store.call_ledger.all() if c.status == CallStatus.IN_FLIGHT]
+    assert len(in_flight) >= 1
+    call1 = in_flight[0]
+
+    # Correct to f2 while the call is IN_FLIGHT
+    h.send(350_000, [chunk("actually f2"), eot()])
+    drain(h, 400_000, stop_on_final=False)
+
+    # Let the tool result arrive for the stale call
+    # The auto-responder will deliver it at around 700_000
+    actions = drain(h, 1_000_000)
+
+    final_call1 = h.store.call_ledger.get(call1.call_id)
+    print(f"\nFinal status of cancelled call: {final_call1.status}")
+    
+    # We should see a RECONCILIATION notice because the tool executed successfully
+    reconcile_actions = [a for a in actions if a.action_type == ActionType.SPEAK and a.body.kind == "inform"]
+    if not reconcile_actions:
+        print("BUG FOUND: No reconciliation action for STALE write that completed.")
+    assert len(reconcile_actions) > 0, "No reconciliation action for STALE write that completed"
+
+
+
+
 TESTS = [
     ("TEST-1: FRAME read set on correction", test_frame_readset_on_correction),
     ("TEST-2: C9 commit-last + mid-correction", test_c9_commit_last_mid_correction),
@@ -1012,8 +1073,8 @@ TESTS = [
     ("TEST-10: M-09 audio+text disagreement", test_m09_audio_text_disagreement),
     ("TEST-11: RESPONDING/compose-text-retracted audit", test_responding_compose_text_retracted),
     ("TEST-12: T-07 watchdog salvage", test_t07_watchdog_salvage),
+    ("TEST-13: W4 STALE write reconciliation", test_w4_stale_write_reconciliation),
 ]
-
 
 def main():
     results = []
@@ -1034,3 +1095,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

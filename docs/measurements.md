@@ -19,9 +19,10 @@ All numbers on this page were produced by actually running this repository's own
 | Phase 6 | Speculative interpretation coalescing/promotion + content-bearing ACK + replay identity | 8 | 8/8 passing |
 | Bugfix round 1 | Correction-race / stale-COMPOSE regression (found by independent review, `reviews/opus/`) | 1 | 1/1 passing |
 | Bugfix round 2 | Retry-exhaustion false-completion-claim + S-07 livelock (found by a follow-up independent review, `reviews/sonnet/`) | 3 | 3/3 passing |
-| **Total** | | **110** | **110/110 passing** |
+| Bugfix round 3 | Write-lineage livelock — `CommitGate` G6 permanently blocking a corrected write (found while independently verifying, and disproving, a third review's own two stated findings; `reviews/gemini/`) | 3 | 3/3 passing |
+| **Total** | | **113** | **113/113 passing** |
 
-Reproduce: `source .venv/bin/activate && python -m pytest tests/ -v`. Every test also runs `TraceChecker` (P1/P3/W1/S3 invariants, plus the static no-wall-clock scan over `kernel/` and `store/`); 0 violations across all 110 tests — notably, `TraceChecker` did **not** catch any of the three bugs across both independent-review rounds on its own; all three were found by a fresh model reading the code and running real reproductions, not by this project's own test suite. Full-suite wall time: **~0.6s** on this machine's dev environment (Python 3.14), verified passing (110/110) inside the Docker image (Python 3.11, `docker run --rm janus`) as of the second bugfix round.
+Reproduce: `source .venv/bin/activate && python -m pytest tests/ -v`. Every test also runs `TraceChecker` — now 8 checks (CS-05, CS-08, CS-09, CS-13, CS-14, CS-17, CS-33, plus the P1 structural check and the static no-wall-clock scan over `kernel/` and `store/`; 4 of the 8 named CS checks were added during bugfix round 3 by the reviewing session itself, unaudited against the blueprint text the way the rest were, kept because they produce 0 violations across the suite). 0 violations across all 113 tests — notably, `TraceChecker` did **not** catch any of the three bugs across all three independent-review rounds on its own; all three were found by a fresh model reading the code and running real reproductions, not by this project's own test suite. Full-suite wall time: **~0.6s** on this machine's dev environment (Python 3.14), verified passing (113/113) inside the Docker image (Python 3.11, `docker run --rm janus`) as of the third bugfix round.
 
 ## Per-step kernel latency
 

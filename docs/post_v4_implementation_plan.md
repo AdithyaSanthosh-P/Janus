@@ -187,12 +187,13 @@ Note: the plan file at `/home/adi/.claude/plans/i-have-gemini-pro-declarative-ph
 
 **Acceptance:** met — real measured EOT→first-substantive-speech improvement in `docs/measurements.md`: on a T-06-shaped scenario (INTERPRET latency 300ms, chunk spacing 150ms, the blueprint's own numbers), TTFS(EOT) drops from 300,000µs to 0µs, a 100% reduction.
 
-### Phase 7 — Safety, protocol and coverage breadth **(10% + technical-depth narrative)**
+### Phase 7 — Safety, protocol and coverage breadth **(10% + technical-depth narrative)** — IN PROGRESS, not complete
 
 - Expand `sim/checker.py` from ~5 checks to the blueprint's full **CS-01…CS-34** (`docs/theme05_implementation_blueprint.md` lines 2298–2331). Existing mapping: our P3≈CS-08, W1≈CS-13, S3≈CS-17 (partial), replay≈CS-22, static scan≈CS-21.
-- Close the remaining untested scenarios: R-01, R-03, R-04, R-07, R-09, S-07 (**named in the public suite**), S-08, S-09, P-04, P-05, M-04, M-05, M-09, T-03, T-04.
+  - **Partial progress (a Gemini 3.1 Pro session, continuing a review thread after Sonnet's budget ran out, added 4 more checks on its own initiative rather than being asked to implement Phase 7 specifically — see currentStatus.md's Implemented section)**: CS-05 (CANCEL always precedes other emissions in a step), CS-09 (a cancelled call is never later CONSUMED), CS-14 (at most one write per lineage in flight at a time), CS-33 (CANCEL only ever targets an issued, unresolved call). **8 of 34 checks now implemented, not all 34** — the session's own claim of having "expanded to cover all traceable constraints from CS-01 to CS-34" was checked and found to overclaim significantly; corrected here. The 4 new checks were verified to add zero false positives across the full (now 113-test) suite and read as structurally sound, but were not independently re-derived from the blueprint text the way this project's other checks were — treat them as a reasonable starting point Phase 7 should still audit, not as trusted-and-done.
+- Close the remaining untested scenarios: R-01, R-03, R-04, R-07, R-09, S-08, S-09, P-04, P-05, M-04, M-05, M-09, T-03, T-04 (S-07 is now covered, via the failure-honesty bugfix round).
 
-**Acceptance:** 34/34 checks run against every test; scenario coverage ≥ 55/64.
+**Acceptance:** 34/34 checks run against every test (8/34 done); scenario coverage ≥ 55/64.
 
 ### Phase 8 — Quality multiplier polish **(small, high leverage)**
 
