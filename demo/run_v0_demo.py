@@ -10,7 +10,7 @@ happening, step by step, against the real kernel (not a mock of it).
 Run:
     cd /home/adi/Desktop/Hackathons/Prism
     source .venv/bin/activate
-    PYTHONPATH=src python demo/run_v0_demo.py
+    PYTHONPATH=src:. python demo/run_v0_demo.py
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from prism_rt.config import DEFAULT_CONFIG
 from prism_rt.model.types import CallRecord, FactStatus, Provenance, StepKind, fingerprint_for

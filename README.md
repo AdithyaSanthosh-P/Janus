@@ -21,7 +21,7 @@ pip install -e ".[dev]"
 ## Running the tests
 
 ```bash
-python -m pytest tests/ -v                 # full suite (117 tests: V0-V4 + post-V4 Phase A + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + 3 bugfix rounds + Phase 7 in progress)
+python -m pytest tests/ -v                 # full suite (124 tests: V0-V4 + post-V4 Phase A + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + 3 bugfix rounds + Phase 7 in progress + live-reliability fixes)
 python -m pytest tests/test_v3.py -v        # a single version's scenarios
 ```
 

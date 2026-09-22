@@ -46,12 +46,33 @@ INTERPRET_SCHEMA = {
 
 
 def build_prompt(view: dict) -> str:
+    # `tools` (added alongside a live-model reliability fix): every
+    # slot_deltas[].name a live model emits must exactly match one of
+    # these tool parameter names, or it binds to nothing and the kernel
+    # asks a spurious clarifying question instead of proceeding -- see
+    # `kernel/task.py._build_interpret_request`'s docstring for the full
+    # story. Not present for ScriptedProvider-driven tests (canned
+    # responses don't read the prompt), so this is additive and doesn't
+    # change any existing test's matched substring.
+    tools = view.get("tools") or []
+    tools_block = ""
+    if tools:
+        lines = "\n".join(f"  - {t['name']}: requires {t['required_params']}" for t in tools)
+        tools_block = (
+            "\nAvailable tools (a slot_deltas[].name MUST exactly match one of "
+            f"these required_params, never a synonym):\n{lines}\n"
+            "Example: for a tool requiring [\"destination\"], \"book me a flight to "
+            "Pune\" -> slot_deltas: [{\"name\": \"destination\", \"scope\": \"goal\", "
+            "\"op\": \"set\", \"value\": \"Pune\"}], not {\"name\": \"city\", ...} or "
+            "{\"name\": \"to\", ...}.\n"
+        )
     return (
         f"transcript: {view.get('transcript', '')!r}\n"
         f"active_intent: {view.get('active_intent')}\n"
         f"active_slots: {view.get('active_slots')}\n"
         f"suspended_goals: {view.get('suspended_goals')}\n"
         f"pending_clarification: {view.get('pending_clarification')}\n"
+        f"{tools_block}"
         "Classify the act and return JSON matching the schema."
     )
 

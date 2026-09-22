@@ -26,9 +26,53 @@ from __future__ import annotations
 import base64
 import json
 import os
+import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
+
+_TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
+_TRANSIENT_EXCEPTION_NAMES = {"APIConnectionError", "APITimeoutError", "InternalServerError", "RateLimitError"}
+
+
+def _is_transient(exc: Exception) -> bool:
+    """A rate-limit/overload/connection error, not a real failure (bad
+    request, auth, malformed schema) -- retrying the latter would just
+    waste time reproducing the same error. Duck-typed rather than
+    `isinstance`-checked against `anthropic`'s own exception classes so
+    this doesn't need that (optional, undeclared) package imported at
+    module load time."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in _TRANSIENT_HTTP_STATUS
+    if isinstance(exc, urllib.error.URLError):
+        return True  # connection reset / timeout, no status code to check
+    if getattr(exc, "status_code", None) in _TRANSIENT_HTTP_STATUS:
+        return True
+    return type(exc).__name__ in _TRANSIENT_EXCEPTION_NAMES
+
+
+def _call_with_retry(call: Callable[[], dict], *, attempts: int = 3, backoff_s: tuple[float, ...] = (1.0, 2.0)) -> dict:
+    """Retry a live-provider call a bounded number of times on a transient
+    error. Found live: `GeminiProvider`'s free tier intermittently returns
+    503 Service Unavailable under load -- a single such failure otherwise
+    looked identical to the model genuinely having nothing to say, which
+    the kernel (correctly) treats as "ask, don't guess" (see
+    `kernel/reducers.py._apply_worker_result`'s "worker failure: dropped"
+    branch) rather than as a crash. That's the right behavior for a
+    genuine failure, but a transient one deserves a retry first. Not
+    covered by this project's no-wall-clock rule -- that's scoped to
+    `kernel/` and `store/` (`sim/checker.py.check_static_no_wallclock`'s
+    own roots); this is live-provider I/O code, already blocking on
+    `urlopen(timeout=30)` the same way."""
+    for attempt in range(attempts):
+        try:
+            return call()
+        except Exception as exc:
+            if attempt == attempts - 1 or not _is_transient(exc):
+                raise
+            time.sleep(backoff_s[min(attempt, len(backoff_s) - 1)])
+    raise AssertionError("unreachable")  # last iteration always returns or raises
 
 
 @dataclass(frozen=True)
@@ -96,15 +140,18 @@ class AnthropicProvider:
                     "source": {"type": "base64", "media_type": part.mime_type, "data": base64.b64encode(part.data).decode("ascii")},
                 }
             )
-        response = self._client.messages.create(
-            model=self._model,
-            max_tokens=1024,
-            temperature=0,
-            system=system,
-            messages=[{"role": "user", "content": content}],
-        )
-        text = "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
-        return json.loads(text)
+        def _call() -> dict:
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=1024,
+                temperature=0,
+                system=system,
+                messages=[{"role": "user", "content": content}],
+            )
+            text = "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
+            return json.loads(text)
+
+        return _call_with_retry(_call)
 
 
 class GeminiProvider:
@@ -138,18 +185,28 @@ class GeminiProvider:
             parts.append({"inline_data": {"mime_type": part.mime_type, "data": base64.b64encode(part.data).decode("ascii")}})
         body = {
             "contents": [{"parts": parts}],
-            "generationConfig": {"responseMimeType": "application/json"},
+            # temperature=0: this project needs a reliable structured
+            # extraction, not creative variety -- found live (see
+            # `_call_with_retry`'s docstring neighbor, `_is_transient`):
+            # the default sampling temperature let the same prompt
+            # sometimes omit a slot_deltas entry it correctly extracted on
+            # a retry. Matches `AnthropicProvider`'s existing `temperature=0`.
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0},
         }
-        req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent",
-            data=json.dumps(body).encode("utf-8"),
-            headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-        text = result["candidates"][0]["content"]["parts"][0]["text"]
-        return json.loads(text)
+
+        def _call() -> dict:
+            req = urllib.request.Request(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent",
+                data=json.dumps(body).encode("utf-8"),
+                headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+            text = result["candidates"][0]["content"]["parts"][0]["text"]
+            return json.loads(text)
+
+        return _call_with_retry(_call)
 
 
 class ModelGateway:

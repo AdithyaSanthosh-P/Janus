@@ -170,7 +170,7 @@ class TaskStateMachine:
         transcript = " ".join(chunk.text for chunk in turn.chunks) if turn is not None else ""
         gid = active_goal_id(store)
 
-        read_keys = [f"turn.{turn_id}.prefix", "goal.active"]
+        read_keys = [f"turn.{turn_id}.prefix", "goal.active", "catalog.version"]
         if not speculative:
             read_keys.append("session.pending_interpretation_turn")
         active_intent = None
@@ -182,12 +182,31 @@ class TaskStateMachine:
             active_slots = self._goal_slots(store, gid)
             read_keys.extend(f"slot.{gid}.{name}" for name in active_slots)
 
+        # Live-model reliability fix: the Interpreter previously saw only
+        # the bare transcript, with no indication of what slot *names* a
+        # live model should use in slot_deltas -- nothing tied its guess to
+        # this session's actual tool parameters, so a live model could (and
+        # sometimes did) extract a value under a plausible-but-wrong name
+        # (e.g. "city" instead of "destination"), which then bound to
+        # nothing and produced a spurious CLARIFY. Mirrors
+        # `_build_plan_request`'s existing `catalog_summary`, trimmed to
+        # just name + required params (the Interpreter only needs to name
+        # slots correctly, not validate full JSON Schema). `catalog.version`
+        # added to the read set to match (a manifest change mid-turn should
+        # invalidate an in-flight INTERPRET job the same way it already
+        # invalidates PLAN/calls).
+        tool_summary = [
+            {"name": tool.name, "required_params": (tool.params_schema or {}).get("required", [])}
+            for tool in store.catalog.usable_tools()
+        ]
+
         view = {
             "transcript": transcript,
             "active_intent": active_intent,
             "active_slots": active_slots,
             "suspended_goals": [g.goal_id for g in store.goals.suspended()],
             "pending_clarification": None,
+            "tools": tool_summary,
         }
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return self._make_request(store, JobKind.INTERPRET, view, gid, turn_id, read_set)
