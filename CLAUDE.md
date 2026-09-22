@@ -59,7 +59,7 @@ Python project (`pyproject.toml`, deps: pydantic, PyYAML, pytest, pytest-asyncio
 
 ```bash
 source .venv/bin/activate                     # venv already has all deps installed
-python -m pytest tests/ -v                    # full suite (124 tests: V0-V4 + post-V4 Phase A + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + 3 bugfix rounds + Phase 7 in progress + live-reliability fixes)
+python -m pytest tests/ -v                    # full suite (129 tests: V0-V4 + post-V4 Phase A + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + 3 bugfix rounds + Phase 7 in progress + live-reliability fixes)
 python -m pytest tests/test_v3.py -v           # single version's scenario tests
 PYTHONPATH=src:. python demo/run_v1_demo.py    # interactive demo with real spoken output (scripted)
 PYTHONPATH=src:. python demo/run_v1_live_demo.py  # same demo against the real Gemini API (GEMINI_API_KEY in .env)

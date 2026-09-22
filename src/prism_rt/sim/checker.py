@@ -12,7 +12,13 @@ bringing the total to 9 of the blueprint's CS-01..CS-34
 structural P1 check, the static no-wall-clock scan (T1), and replay
 identity (C1). Each check is independent of the kernel's own internal
 logic — it re-derives the expectation from the recorded trace rather than
-trusting the component that produced it.
+trusting the component that produced it. A second Phase 7 session added a
+tenth check's worth of coverage in a different shape: CS-10 turned out to
+have no live enforcement at all where the blueprint says it should
+(fixed directly in `store/ledgers.py`, not here — offline checking isn't
+the right tool for it; see below) plus one closed scenario gap (R-04,
+`tests/test_phase7_scenario_coverage.py`) and CS-24 investigated and
+deferred with a documented reason below.
 
 Phase 7 audit findings on the round-3 checks (see each method's docstring
 for detail): CS-09 and CS-33 match the blueprint text closely. CS-05 checks
@@ -32,6 +38,46 @@ check can't see whether two effects were ever simultaneously in a
 blocking state for the same lineage from final state alone (the same
 class of limitation `_check_cs17`'s own docstring already documents for
 snapshot-equality checking).
+
+A second Phase 7 session continued the audit and found one blueprint check
+whose stated live enforcement didn't actually exist in this codebase (not
+an offline-checker gap, so it's not added here -- see `store/ledgers.py`):
+- **CS-10** ("terminal call statuses never change") -- the blueprint says
+  this is enforced by "`set_call_status` raises." Grepped: nothing in
+  `CallLedger.set_status`/`update` (`store/ledgers.py`) raised on a
+  terminal-status transition at all before this session; it was a plain
+  `dataclasses.replace`. Reading every one of the ~7 call sites that
+  transition a call's status found each one happened to guard the
+  terminal case itself first (`ResultRouter.route`'s branch-2 duplicate
+  check, `InvalidationEngine._mark_dependents`'s explicit skip,
+  `EmissionGate`'s pre-emit CANCEL validation) -- so the invariant held by
+  convention, not by construction, across the whole codebase's current
+  call sites, but nothing would have stopped a *future* call site from
+  reintroducing exactly this bug. Fixed directly in `CallLedger.set_status`
+  (a real guard now, matching the blueprint's own stated mechanism) rather
+  than attempted here as an offline check, because an offline check would
+  need per-step call-status history this project doesn't retain (the same
+  limitation CS-17/CS-26 already document) to catch a transition that
+  happened and was later overwritten -- a live guard is both the sounder
+  and the literal fix the blueprint describes. `tests/test_cs10_terminal_
+  call_guard.py` (4 tests) proves it fires via direct construction, the
+  same fault-injection standard CS-27 set.
+- **CS-24** ("session state does not persist across scenarios," "no
+  module-level mutable state") was checked the same way: an AST scan of
+  every module-level assignment in `kernel/` and `store/` found 8 mutable
+  literals (`_EMISSION_ORDER`, `_HANDLERS`, `_RECONCILE_TEMPLATES`, etc.)
+  -- all of them fixed dispatch/lookup tables built once at import and
+  never mutated afterward (grepped for `.append(`/`.update(`/`__setitem__`
+  against each name; none found). A literal-type-based static check (the
+  same shape as T1's) would false-positive on all 8; a sound version needs
+  to also prove none of them is ever mutated anywhere in the codebase, a
+  heavier cross-file analysis not justified here since the manual audit
+  already found zero real violations. `SessionStore.new` constructing a
+  fresh store per scenario (the other half of CS-24) is exercised
+  incidentally by every test in this suite using its own `SimHarness`
+  instance, just never asserted as its own named check. Deferred, not
+  built, for the same reason CS-16/CS-26 were: the check as stated isn't
+  cheaply sound against what this codebase actually does.
 
 Investigated but not built, with reasons (do not re-attempt without
 addressing the reason first):

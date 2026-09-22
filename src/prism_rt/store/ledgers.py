@@ -61,6 +61,26 @@ class CallLedger:
         return updated
 
     def set_status(self, call_id: str, status: CallStatus, *, cancel_reason: str | None = None) -> CallRecord:
+        """CS-10 (`docs/theme05_implementation_blueprint.md` line 2314):
+        "Terminal call statuses never change." The blueprint states this is
+        enforced by `set_call_status` raising; before Phase 7 audited it,
+        no call site in this codebase actually did that -- every one of
+        the ~7 places that transition a call's status happens to guard the
+        terminal case itself first (`ResultRouter.route`'s branch-2
+        duplicate check, `InvalidationEngine._mark_dependents`'s explicit
+        `TERMINAL_CALL_STATUSES` skip, `EmissionGate`'s pre-emit CANCEL
+        validation, etc. -- verified by reading all of them), so the
+        invariant held by convention, not by construction. This closes
+        that gap for real, matching the blueprint's own stated mechanism,
+        so a future call site can't reintroduce the bug by forgetting the
+        same guard everyone else remembered to add."""
+        existing = self._calls.get(call_id)
+        if existing is not None and existing.status in TERMINAL_CALL_STATUSES and status != existing.status:
+            from prism_rt.errors import InvariantViolation
+
+            raise InvariantViolation(
+                f"call {call_id}: cannot transition terminal status {existing.status.value} -> {status.value} (CS-10)"
+            )
         changes: dict = {"status": status}
         if cancel_reason is not None:
             changes["cancel_reason"] = cancel_reason

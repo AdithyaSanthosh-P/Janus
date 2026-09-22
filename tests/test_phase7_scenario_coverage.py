@@ -20,7 +20,7 @@ from conftest import (
 )
 
 from prism_rt.config import Config
-from prism_rt.model.types import ActionType
+from prism_rt.model.types import ActionType, CallStatus
 from prism_rt.sim.checker import TraceChecker
 from prism_rt.sim.harness import SimHarness
 from prism_rt.workers.gateway import ScriptedProvider
@@ -236,4 +236,115 @@ def test_s08_manifest_update_drops_pending_steps_tool_honestly():
 
     gid = h.store.goals.all()[0].goal_id
     assert h.store.goals.get(gid).status.value == "abandoned"
+    assert_clean(h)
+
+
+def test_r04_delayed_cancellation_delivers_anyway_without_deadlock():
+    """R-04 (blueprint): "Delayed cancellation | Mock cancel_semantics:
+    deliver_anyway, extra delay 5s | cancel_ack too_late present/absent |
+    completed_after_cancel; no consumption; no deadlock | CS-09".
+
+    Two parts of this scenario don't map onto anything this codebase
+    builds, worth stating precisely rather than glossing over: there is no
+    `cancel_ack` event type at all (grepped -- never added, same wire-format
+    scope trim documented elsewhere for this project), so the "too_late"
+    field can't be checked; and "deliver_anyway" isn't a configurable mock
+    option, it's `MockToolRegistry`'s *only* behavior -- its own docstring
+    states this directly: "Cancelling a call does not un-schedule its
+    result." So every interruption scenario in this suite already exercises
+    deliver-anyway semantics incidentally; what's missing is a scenario
+    that names R-04 explicitly and checks its three stated outcomes
+    together in one place: `completed_after_cancel` (not silently dropped,
+    not treated as a fresh success), no consumption (no `result.<call_id>`
+    fact from the stale call -- the corrected goal's own result must come
+    from the *new* call), and no deadlock (the goal still reaches a real
+    FINAL despite the noise).
+
+    The correction lands while the original call is still IN_FLIGHT (5s
+    mock latency, corrected well before that elapses) -- not already
+    CONSUMED, which is the shape `test_correction_race_regression.py`
+    exercises instead. `rebinder_enabled=False` forces a full replan on the
+    slot correction (same choice that test makes), the surest way to get a
+    real CANCEL rather than an in-place rebind. Uses the plain
+    (non-`enum`) `SEARCH_FLIGHTS_TOOL` deliberately, not an enum schema --
+    an enum or already-seen session value makes `QuickDetector.detect_
+    value`'s chunk-anchor (Phase 4) fire HIGH-confidence *before* EOT,
+    which cancels-and-immediately-retries against the still-committed
+    (pre-correction) slot value first (a real, already-documented,
+    harmless extra hop -- `tests/test_phase4.py`'s own first test), adding
+    a second stale call this scenario doesn't need to make its point.
+    """
+    config = Config(
+        transitive_invalidation=False,
+        settle_barrier_enabled=False,
+        absence_read_sets=False,
+        claim_grades_enabled=False,
+        rebinder_enabled=False,
+    )
+    provider = ScriptedProvider()
+    provider.register(
+        "interpret",
+        "Find flights to Pune",
+        {"act": "new_goal", "intent": "search_flights", "slot_deltas": [{"name": "destination", "scope": "goal", "op": "set", "value": "Pune"}]},
+    )
+    provider.register(
+        "interpret",
+        "actually Mumbai",
+        {"act": "slot_update", "slot_deltas": [{"name": "destination", "scope": "goal", "op": "set", "value": "Mumbai"}]},
+    )
+    provider.register(
+        "plan",
+        "search_flights",
+        {"steps": [{"local_id": "s1", "tool": "search_flights", "kind": "read", "bindings": {"destination": {"type": "fact", "key": "slot.$G.destination"}}, "after": []}]},
+    )
+    provider.register("compose", "s1", {"text": "Found flights.", "claims": ["result:s1"]})
+
+    h = SimHarness(
+        config,
+        seed=1,
+        provider=provider,
+        tools={"search_flights": {"latency_ms": 5_000, "response": {"flights": [{"id": "AI-1"}]}}},
+        worker_latency_us=FAST_WORKER_LATENCY,
+    )
+    h.send(0, [manifest_event([SEARCH_FLIGHTS_TOOL])])
+    h.send(100_000, [chunk_event("Find flights to Pune")])
+    h.send(150_000, [eot_event()])
+
+    early_actions = drain(h, 250_000, stop_on_final=False)
+    tool_calls = [a for a in early_actions if a.action_type == ActionType.TOOL_CALL]
+    assert len(tool_calls) == 1
+    pune_call_id = tool_calls[0].body.call_id
+    pune_call = h.store.call_ledger.get(pune_call_id)
+    assert pune_call.args.get("destination") == "Pune"
+    assert pune_call.status == CallStatus.IN_FLIGHT  # well before the 5s mock latency
+
+    # Correct while it's still in flight -- 5s is a long way off yet.
+    h.send(300_000, [chunk_event("actually Mumbai")])
+    h.send(310_000, [eot_event()])
+
+    mid_actions = drain(h, 600_000, stop_on_final=False)
+    cancels = [a for a in mid_actions if a.action_type == ActionType.CANCEL]
+    assert len(cancels) == 1
+    assert cancels[0].body.target_call_id == pune_call_id
+    assert h.store.call_ledger.get(pune_call_id).status == CallStatus.CANCEL_REQUESTED
+
+    mumbai_calls = [a for a in mid_actions if a.action_type == ActionType.TOOL_CALL and a.body.call_id != pune_call_id]
+    assert len(mumbai_calls) == 1
+    mumbai_call_id = mumbai_calls[0].body.call_id
+
+    # Drain well past both the original's 5s mock delivery (deliver-anyway,
+    # arriving even though it was cancelled) and the corrected call's own
+    # 5s delivery -- the goal must still reach a real completion.
+    late_actions = drain(h, 6_500_000)
+    finals = [a for a in late_actions if a.action_type == ActionType.FINAL]
+    assert len(finals) == 1
+    assert finals[0].body.task_completed is True
+
+    # completed_after_cancel, not dropped and not a false success.
+    assert h.store.call_ledger.get(pune_call_id).status == CallStatus.COMPLETED_AFTER_CANCEL
+    # no consumption: the stale call never produced a result fact.
+    assert h.store.facts.get(f"result.{pune_call_id}") is None
+    # the corrected call is what actually resolved the goal.
+    assert h.store.call_ledger.get(mumbai_call_id).status == CallStatus.CONSUMED
+    assert h.store.facts.get(f"result.{mumbai_call_id}") is not None
     assert_clean(h)
