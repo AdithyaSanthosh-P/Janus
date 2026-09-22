@@ -199,6 +199,8 @@ Note: the plan file at `/home/adi/.claude/plans/i-have-gemini-pro-declarative-ph
 
 **Acceptance:** 34/34 checks run against every test (9/34 in `sim/checker.py`, plus CS-10 now enforced live with its own dedicated test — 10 of 34 blueprint invariants have real, verified coverage even though the offline-checker count alone reads 9); scenario coverage ≥ 55/64 (3 closed across the two Phase 7 sessions: R-03, S-08, R-04).
 
+**Side note, not itself Phase 7 but found and fixed in the same session sequence while the user was doing kit-independent work**: running `demo/run_live_multimodal_demo.py` against the real (now paid-tier) Gemini API surfaced a real gap in the V3 live orchestration path, separate from the two live-reliability fixes already documented above — `workers/interpreter.py`'s prompt gave a live model no guidance on `visual_candidates`, and `kernel/task.py._build_plan_request` never told a live PLAN call it could bind to a not-yet-existing slot fact a pending vision question would fill in. Both fixed (mirroring the existing `tools`/`slot_deltas` guidance pattern), confirmed live end-to-end on the first run after the fix — see `currentStatus.md`'s Live-Model Reliability Fixes section and `tests/test_live_multimodal_orchestration.py`.
+
 ### Phase 8 — Quality multiplier polish **(small, high leverage)**
 
 - Rewrite user-facing templates so no raw schema parameter name ever reaches speech (F5), add the §9.3 digest-based deterministic phrasing variation, and hedge MEDIUM-confidence perception claims ("it looks like…").

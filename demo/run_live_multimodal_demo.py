@@ -34,6 +34,27 @@ existing "a worker failure is an expected outcome, never a crash" design
 (`workers/runner.py`), working as intended even when the "failure" is a
 quota limit rather than a bug.
 
+NOTE on Act 1's domain (fixed alongside a second live-reliability pass):
+this used to ask a generic "what colors do you see" question while
+registering an unrelated `manual_lookup` tool with a `description: string`
+param and no connection to the image at all. A live, unscripted model has
+no way to invent a plausible binding between "look at the picture" and
+"look this description up in a manual" -- it just answered from the raw
+transcript text and never touched the vision path, and separately the
+Interpreter had no guidance on what to name `visual_candidates`, so it
+fell back to `kernel/perception.py`'s generic device-diagnostic default
+(`device_model`/`visible_state`) and asked the vision model something the
+image can't answer. Fixed in two places: `workers/interpreter.py` and
+`workers/planner.py` both gained prompt guidance (mirroring the existing
+`tools`/slot_deltas fix) so a live model names visual targets to match a
+real tool's own parameters and knows it can bind a plan step to a slot
+fact that a pending visual question will fill in later. This script's own
+domain is realigned to actually exercise that: `color_meaning_lookup`
+takes `top_color`/`bottom_color` (matching what the image can actually
+answer), so the live PLAN call has a real, nameable target to bind to and
+the plan step genuinely waits on the vision claim instead of firing
+immediately from invented text.
+
 Run:
     cd /home/adi/Desktop/Hackathons/Prism
     source .venv/bin/activate
@@ -75,10 +96,14 @@ from prism_rt.model.types import ActionType, JobKind
 from prism_rt.sim.harness import SimHarness
 from prism_rt.workers.gateway import GeminiProvider, MediaPart
 
-MANUAL_LOOKUP_TOOL = {
-    "name": "manual_lookup",
+COLOR_LOOKUP_TOOL = {
+    "name": "color_meaning_lookup",
     "mutability": "read_only",
-    "parameters": {"type": "object", "properties": {"description": {"type": "string"}}, "required": ["description"]},
+    "parameters": {
+        "type": "object",
+        "properties": {"top_color": {"type": "string"}, "bottom_color": {"type": "string"}},
+        "required": ["top_color", "bottom_color"],
+    },
 }
 
 RULE = "-" * 78
@@ -143,7 +168,12 @@ def main() -> None:
         seed=7,
         provider=provider,
         worker_latency_us={JobKind.INTERPRET: 15_000, JobKind.PLAN: 15_000, JobKind.COMPOSE: 15_000, JobKind.VISION: 15_000, JobKind.ASR: 15_000},
-        tools={"manual_lookup": {"latency_ms": 50, "response": {"note": "no manual for a synthetic test image"}}},
+        tools={
+            "color_meaning_lookup": {
+                "latency_ms": 50,
+                "response": {"meaning": "a solid red-over-blue split is a classic hazard/calibration stripe pattern, not an alert"},
+            }
+        },
         blob_resolver=blob_resolver,
     )
 
@@ -154,11 +184,11 @@ def main() -> None:
     # === Act 1: vision, grounded in a real image =============================
     print()
     print("Act 1 — a real image, described by a real model")
-    h.send(0, [{"type": "manifest", "payload": {"tools": [MANUAL_LOOKUP_TOOL]}}])
+    h.send(0, [{"type": "manifest", "payload": {"tools": [COLOR_LOOKUP_TOOL]}}])
     say("CAMERA", "[a 60x60 PNG: solid red top half, solid blue bottom half]")
     h.send(50_000, [{"type": "video_frame", "payload": {"frame_id": "device-photo"}}])
-    say("USER", '"what colors do you see in this image, top and bottom?"')
-    h.send(100_000, [{"type": "text_chunk", "payload": {"text": "what colors do you see in this image, top and bottom?"}}])
+    say("USER", '"what colors do you see in this image, top and bottom, and what does that pattern mean?"')
+    h.send(100_000, [{"type": "text_chunk", "payload": {"text": "what colors do you see in this image, top and bottom, and what does that pattern mean?"}}])
     h.send(150_000, [{"type": "end_of_turn", "payload": {}}])
 
     t = h.clock.now_us()

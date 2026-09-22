@@ -21,7 +21,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from prism_rt.kernel.interpret_apply import active_goal_id
-from prism_rt.model.types import CallStatus, FactStatus, GoalStatus, JobKind, JobRecord, ReadSet, StepKind, TaskState
+from prism_rt.model.types import (
+    CallStatus,
+    FactStatus,
+    GoalStatus,
+    JobKind,
+    JobRecord,
+    QuestionStatus,
+    ReadSet,
+    StepKind,
+    TaskState,
+)
 
 
 @dataclass(frozen=True)
@@ -207,6 +217,7 @@ class TaskStateMachine:
             "suspended_goals": [g.goal_id for g in store.goals.suspended()],
             "pending_clarification": None,
             "tools": tool_summary,
+            "vision_enabled": store.config.vision_enabled,
         }
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return self._make_request(store, JobKind.INTERPRET, view, gid, turn_id, read_set)
@@ -227,7 +238,31 @@ class TaskStateMachine:
             }
             for tool in store.catalog.usable_tools()
         ]
-        view = {"intent": intent, "facts": facts, "catalog": catalog_summary, "change_context": None}
+        # V3: a live model has no way to know a step can legitimately bind
+        # to a slot fact that doesn't exist *yet* -- one a pending VISION
+        # question will fill in once it resolves (`kernel/perception.py`'s
+        # module docstring: the Question is created in APPLY, before
+        # DECIDE dispatches this PLAN job, in the same step, so it's
+        # always visible here already). Without this, a live PLAN call has
+        # no reason to ever emit `{"type": "fact", "key": "slot.$G.<name>"}`
+        # for a name not already in `facts` -- it either invents a literal
+        # from the transcript or leaves the parameter unbound, neither of
+        # which waits for or grounds in the real visual claim. Not read-set
+        # material (the question rarely changes between INTERPRET and PLAN
+        # in the same step) -- purely additive prompt context, same
+        # pattern as `_build_interpret_request`'s `tool_summary`.
+        pending_visual_targets: list[dict] = []
+        if store.config.vision_enabled:
+            question = store.evidence.latest_active_question(goal_id)
+            if question is not None and question.status != QuestionStatus.ANSWERED:
+                pending_visual_targets = [{"name": t.name, "description": t.description} for t in question.targets]
+        view = {
+            "intent": intent,
+            "facts": facts,
+            "catalog": catalog_summary,
+            "change_context": None,
+            "pending_visual_targets": pending_visual_targets,
+        }
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return self._make_request(store, JobKind.PLAN, view, goal_id, None, read_set)
 

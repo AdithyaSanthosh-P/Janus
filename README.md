@@ -21,7 +21,7 @@ pip install -e ".[dev]"
 ## Running the tests
 
 ```bash
-python -m pytest tests/ -v                 # full suite (129 tests: V0-V4 + post-V4 Phase A + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + 3 bugfix rounds + Phase 7 in progress + live-reliability fixes)
+python -m pytest tests/ -v                 # full suite (134 tests: V0-V4 + post-V4 Phase A + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + 3 bugfix rounds + Phase 7 in progress + live-reliability fixes)
 python -m pytest tests/test_v3.py -v        # a single version's scenarios
 ```
 
@@ -77,5 +77,5 @@ Read `currentStatus.md` first, every session — it's the live handoff record (c
 ## Known limitations
 
 - The evaluation kit's wire format is unreleased (last checked 18 Sep 2026); `adapters/codec.py`'s schema is a provisional guess, but a deliberately *tolerant* one — see `docs/integration.md` for what dialect variance it survives.
-- Live LLM validation covers only the text path (`GeminiProvider`, `demo/run_v1_live_demo.py`) — `workers/vision.py` has never been called against a real vision model; the `Provider` protocol is text-only, so frames are always passed by reference, never as pixel data. No ASR exists yet either.
+- Live LLM validation: text (`demo/run_v1_live_demo.py`), vision, and audio (`demo/run_live_multimodal_demo.py`, real image/audio bytes via `MediaPart`/`blob_resolver`) are all verified working end-to-end against the live Gemini API, including the full kernel-orchestrated path (INTERPRET naming a visual target -> VISION claim -> PLAN binding a tool call to the resulting slot fact -> COMPOSE), not just the provider call in isolation. `AnthropicProvider` (image-only forwarding, no audio-input modality) remains untested live.
 - Some scope items from `docs/prototype_version_plan.md`/`docs/post_v4_implementation_plan.md` remain deliberately deferred: audio transcription, chunk-anchored interruption cancellation, response frames (C2), inert-tail promotion / speculative interpretation (C1), the full 34-invariant `TraceChecker`, and kit wire-format integration (blocked on the kit itself being unreleased). See `currentStatus.md`'s Deferred section for the full list and `docs/post_v4_implementation_plan.md` for the sequencing.

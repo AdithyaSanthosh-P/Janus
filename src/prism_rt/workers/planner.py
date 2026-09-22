@@ -42,11 +42,31 @@ PLAN_SCHEMA = {
 
 
 def build_prompt(view: dict) -> str:
+    # V3 (added alongside a live-model reliability fix): a pending visual
+    # question's targets don't exist as facts *yet* -- nothing else in
+    # this prompt tells a live model that binding to one of them is even
+    # legal, so it either invents a literal from the transcript or leaves
+    # the parameter unbound instead of waiting on the real answer. Not
+    # present when no vision question is pending (`kernel/task.py.
+    # _build_plan_request`'s docstring), so this is additive and doesn't
+    # change any existing ScriptedProvider test's matched substring.
+    pending_visual_targets = view.get("pending_visual_targets") or []
+    visual_block = ""
+    if pending_visual_targets:
+        lines = "\n".join(f"  - {t['name']}: {t['description']}" for t in pending_visual_targets)
+        visual_block = (
+            "\nA visual question is pending -- these facts don't exist yet "
+            f"but WILL once it's answered (a step bound to one just waits "
+            f"until then, same as any other fact):\n{lines}\n"
+            'Bind a parameter needing one of these to {"type": "fact", '
+            '"key": "slot.$G.<name>"}, exactly like a committed_facts slot.\n'
+        )
     return (
         f"goal_intent: {view.get('intent')}\n"
         f"committed_facts: {view.get('facts')}\n"
         f"catalog: {view.get('catalog')}\n"
         f"change_context: {view.get('change_context')}\n"
+        f"{visual_block}"
         "Return JSON matching the schema: an ordered list of steps."
     )
 

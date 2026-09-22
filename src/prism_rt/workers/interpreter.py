@@ -66,6 +66,38 @@ def build_prompt(view: dict) -> str:
             "\"op\": \"set\", \"value\": \"Pune\"}], not {\"name\": \"city\", ...} or "
             "{\"name\": \"to\", ...}.\n"
         )
+    # V3 (found by directly running the live multimodal demo, not by
+    # design review): `visual_candidates` had zero prompt guidance --
+    # a live model correctly set `visual_reference` on a vision-grounded
+    # question but left `visual_candidates` empty, since nothing told it
+    # what to put there. Empty candidates make `kernel/perception.py`
+    # fall back to `_GENERIC_TARGETS` (device_model/visible_state -- built
+    # for this project's own tested device-diagnostic scenario, N-05),
+    # which is wrong for any other visual question and gets a legitimately
+    # empty claim result back from VISION. Gated on `vision_enabled`
+    # (absent/False for every non-V3 test and any harness that never turns
+    # vision on) so this doesn't change the prompt at all for the common
+    # case -- doesn't change any existing ScriptedProvider test's matched
+    # substring either way.
+    visual_block = ""
+    if view.get("vision_enabled"):
+        visual_block = (
+            "\nIf answering needs looking at something (an image/video frame "
+            "was provided or the user references what they're pointing a "
+            "camera at), set visual_reference to \"at_utterance\" (a one-time "
+            "look) or \"current_state\" (an ongoing/ambient state, e.g. \"is the "
+            "light still on\"), and name what to look for in visual_candidates "
+            "using short snake_case names taken from what's literally being "
+            "asked -- never leave visual_candidates empty when visual_reference "
+            "isn't \"none\". If one of the available tools listed above will "
+            "need the answer as a parameter, name the candidate to match that "
+            "parameter exactly (same rule as slot_deltas above) instead of "
+            "inventing a new name. Example: \"what colors do you see, top and "
+            "bottom\" -> visual_candidates: [{\"name\": \"top_half_color\", "
+            "\"description\": \"the color of the top half\"}, {\"name\": "
+            "\"bottom_half_color\", \"description\": \"the color of the bottom "
+            "half\"}].\n"
+        )
     return (
         f"transcript: {view.get('transcript', '')!r}\n"
         f"active_intent: {view.get('active_intent')}\n"
@@ -73,6 +105,7 @@ def build_prompt(view: dict) -> str:
         f"suspended_goals: {view.get('suspended_goals')}\n"
         f"pending_clarification: {view.get('pending_clarification')}\n"
         f"{tools_block}"
+        f"{visual_block}"
         "Classify the act and return JSON matching the schema."
     )
 
