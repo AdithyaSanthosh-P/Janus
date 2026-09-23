@@ -21,7 +21,11 @@ the right tool for it; see below) plus one closed scenario gap (R-04,
 deferred with a documented reason below. A fourth session added the
 P-04 snapshot-validity check (`_check_p04`: keys ⊆ tool parameter names,
 types match schema -- the half of P-04 CS-27 didn't cover), with
-fault-injection tests in `tests/test_p04_snapshot_validity.py`.
+fault-injection tests in `tests/test_p04_snapshot_validity.py`. A fifth
+session added CS-03 (`_check_cs03`: each report's own `batch` applied in
+`Envelope.ordering_key` = (ts_us, class, seq) order) — sound purely from
+the batch itself, same standard as CS-27, no store/history dependency —
+bringing the offline-CS-check total to 10 of the blueprint's CS-01..CS-34.
 
 Phase 7 audit findings on the round-3 checks (see each method's docstring
 for detail): CS-09 and CS-33 match the blueprint text closely. CS-05 checks
@@ -152,6 +156,32 @@ class TraceChecker:
         violations.extend(self._check_cs33(reports))
         violations.extend(self._check_cs27(reports))
         violations.extend(self._check_p04(reports))
+        violations.extend(self._check_cs03(reports))
+        return violations
+
+    # CS-03 (Phase 7): events are applied in (ts_us, class, seq) order.
+    # `Envelope.ordering_key` is exactly this tuple (`model/events.py`); each
+    # report's own `batch` is the set of envelopes the kernel applied that
+    # step, so this only needs the batch itself, no store/history -- sound
+    # by construction, same standard as CS-27.
+    def _check_cs03(self, reports: list) -> list[Violation]:
+        violations = []
+        for report in reports:
+            prev_key = None
+            for env in report.batch:
+                key = getattr(env, "ordering_key", None)
+                if key is None:
+                    continue  # fixture stand-in without ordering_key -- nothing to check
+                if prev_key is not None and key < prev_key:
+                    violations.append(
+                        Violation(
+                            "CS-03",
+                            f"envelope {env.event_id} (ordering_key={key}) applied after "
+                            f"a later-ordered envelope (ordering_key={prev_key}) in step {report.step_no}",
+                            report.step_no,
+                        )
+                    )
+                prev_key = key
         return violations
 
     # CS-08 (formerly P3): every call invalidated this step has a CANCEL emitted this same step.
