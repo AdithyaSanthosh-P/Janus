@@ -11,6 +11,7 @@ from __future__ import annotations
 
 ACK_DEFAULT = "Got it, working on it."
 CLARIFY_TEMPLATE = "I need a bit more information — what should {target} be?"
+FRESH_VIEW_REQUEST = "The last view I have is a few seconds old — could you show it to me again before I go ahead?"
 INFORM_DUPLICATE_WRITE = "That's already been taken care of."
 INFORM_UNKNOWN_WRITE_OUTCOME = "I haven't received confirmation for that yet."
 FINAL_FALLBACK = "Here's what I found."

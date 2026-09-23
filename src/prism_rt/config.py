@@ -44,6 +44,7 @@ class Config:
     # (which never set it) are structurally unaffected by this version.
     vision_enabled: bool = False  # V3: True
     evidence_align_window_ms: int = 1000  # AT_UTTERANCE: how far past anchor_ts to wait for a frame
+    frame_gap_ms: int = 3000  # docs/prompt 2.txt §10 freshness: a CURRENT_STATE claim older than this since the last frame asks for a fresh view before a WRITE (M-05)
     evidence_lease_ms: int = 4000  # CURRENT_STATE claim staleness timeout (simplified: flat timeout, not frame-count based)
     # Phase 2 (docs/post_v4_implementation_plan.md): ASR. asr_enabled is
     # the master gate, matching vision_enabled's pattern — every AsrScheduler

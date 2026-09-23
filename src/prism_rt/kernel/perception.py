@@ -88,6 +88,7 @@ class PerceptionScheduler:
                 status=QuestionStatus.OPEN,
                 pending_job_id=None,
                 pending_obs_id=None,
+                analyzed_obs_id=None,
             )
             return existing.question_id
 
@@ -134,6 +135,7 @@ class PerceptionScheduler:
                     created_by="renewal",
                     pending_job_id=None,
                     pending_obs_id=None,
+                    analyzed_obs_id=None,
                 )
 
     # --- dispatch (called from kernel/step.py, DECIDE phase) ---
@@ -148,6 +150,8 @@ class PerceptionScheduler:
             obs = self._select_frame(store, question)
             if obs is None:
                 continue  # still waiting for an aligned frame
+            if obs.obs_id == question.analyzed_obs_id:
+                continue  # already analyzed without a full answer; wait for new evidence
 
             job_id = store.ids.next("job")
             read_set = store.facts.build_read_set(["goal.active"])
@@ -185,6 +189,24 @@ class PerceptionScheduler:
         after = [o for o in obs_list if anchor < o.capture_ts_us <= anchor + window_us]
         return min(after, key=lambda o: o.capture_ts_us) if after else None
 
+    def release_dropped_job(self, txn, job) -> None:
+        """A VISION job that errored or went stale never reaches
+        `on_perception_result`, so without this its question kept
+        `pending_job_id` set forever and `decide` never analyzed it again,
+        even after a new frame arrived. The frame counts as analyzed (the
+        provider already retries transient errors itself), so a persistently
+        failing provider can't hot-loop; new evidence, a retarget, or a
+        lease renewal re-opens analysis."""
+        question = txn.evidence.question_by_pending_job(job.job_id)
+        if question is None:
+            return
+        txn.evidence.update_question(
+            question.question_id,
+            pending_job_id=None,
+            pending_obs_id=None,
+            analyzed_obs_id=question.pending_obs_id,
+        )
+
     # --- claim acceptance (called from kernel/reducers.py, APPLY phase) ---
 
     def on_perception_result(
@@ -194,7 +216,9 @@ class PerceptionScheduler:
         if question is None:
             return
         obs_id = question.pending_obs_id or ""
-        txn.evidence.update_question(question.question_id, pending_job_id=None, pending_obs_id=None)
+        txn.evidence.update_question(
+            question.question_id, pending_job_id=None, pending_obs_id=None, analyzed_obs_id=obs_id or None
+        )
 
         target_names = {t.name for t in question.targets}
         accepted_names: set[str] = set()
@@ -231,6 +255,17 @@ class PerceptionScheduler:
                 Provenance(source="perception", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="perception.claim_slot",
             )
+            # The goal may already be CLARIFYING on exactly this slot (an
+            # earlier analysis came back LOW, or a VISION job failed) --
+            # perception has now answered it, same as a user answer would
+            # (`interpret_apply`'s clarify_resolved retraction).
+            clarify = txn.facts.get(f"goal.{question.goal_id}.clarify_target")
+            answered_keys = (slot_key, f"claim.{question.question_id}.{claim.name}")
+            if clarify is not None and clarify.status != FactStatus.RETRACTED and clarify.value in answered_keys:
+                txn.facts.retract(f"goal.{question.goal_id}.clarify_target", rule="perception.clarify_resolved")
+            fresh = txn.facts.get(f"perception.{question.goal_id}.fresh_view_for")
+            if fresh is not None and fresh.status != FactStatus.RETRACTED and fresh.value in answered_keys:
+                txn.facts.retract(f"perception.{question.goal_id}.fresh_view_for", rule="perception.fresh_view_received")
 
         if target_names and target_names <= accepted_names and question.status == QuestionStatus.OPEN:
             txn.evidence.update_question(question.question_id, status=QuestionStatus.ANSWERED)

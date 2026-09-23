@@ -112,6 +112,30 @@ class AsrScheduler:
             turn = _TURN_MANAGER.on_eot(last_end_us, txn)
             _TURN_MANAGER.request_interpretation(txn, turn, last_end_us, step_no, event_id=event_id)
 
+    def release_dropped_job(self, txn, job, now_us: int, step_no: int, *, event_id: str) -> None:
+        """An ASR job that errored never reaches `on_asr_result`, so without
+        this its observation kept `asr_job_id` set forever and `decide`
+        never retried it -- an audio-only utterance was silently lost after
+        a single failure (e.g. a live 429 surviving the provider's own
+        retries). Transcription is idempotent, so it's retried like a READ
+        call, bounded by the same `max_read_retries`; once exhausted the
+        clip is marked done and the failure recorded as a fact rather than
+        retried forever."""
+        obs = self._obs_for_job(txn.store, job.job_id)
+        if obs is None:
+            return
+        attempts = obs.asr_attempts + 1
+        exhausted = attempts > txn.store.config.max_read_retries
+        txn.evidence.update_observation(obs.obs_id, asr_job_id=None, asr_attempts=attempts, asr_done=exhausted)
+        if exhausted:
+            txn.facts.set(
+                f"asr.{obs.obs_id}.failed",
+                attempts,
+                FactStatus.COMMITTED,
+                Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
+                rule="asr.retries_exhausted",
+            )
+
     def _obs_for_job(self, store, job_id: str):
         for obs in store.evidence.observations_by_modality("audio"):
             if obs.asr_job_id == job_id:

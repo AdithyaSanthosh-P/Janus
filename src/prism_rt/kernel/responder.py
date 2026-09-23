@@ -24,7 +24,7 @@ as everything else for free.
 
 from __future__ import annotations
 
-from config.templates import ACK_DEFAULT, CLARIFY_TEMPLATE, FINAL_FALLBACK, INFORM_DUPLICATE_WRITE
+from config.templates import ACK_DEFAULT, CLARIFY_TEMPLATE, FINAL_FALLBACK, FRESH_VIEW_REQUEST, INFORM_DUPLICATE_WRITE
 from prism_rt.kernel.commit import CommitGate
 from prism_rt.kernel.interpret_apply import active_goal_id
 from prism_rt.model.actions import FinalBody, IntendedAction, SpeakBody
@@ -161,6 +161,9 @@ class FastResponder:
                 user_val = next((c["value"] for c in conflict.candidates if c["source"] == "user"), None)
                 perception_val = next((c["value"] for c in conflict.candidates if c["source"] == "perception"), None)
                 text = f"The camera shows {perception_val}. Did you mean {user_val}, or {perception_val}?"
+            fresh = store.facts.get(f"perception.{goal_id}.fresh_view_for")
+            if fresh is not None and fresh.status != FactStatus.RETRACTED and fresh.value == target:
+                text = FRESH_VIEW_REQUEST  # M-05: stale evidence before a write, not missing information
         return [
             IntendedAction(
                 action_type=ActionType.CLARIFY,

@@ -276,10 +276,15 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
 
     txn.store.jobs.set_status(payload.job_id, JobStatus.DONE)
 
-    if payload.status != "ok":
-        return  # worker failure: dropped; TaskStateMachine will re-request next step
-    if not txn.facts.is_valid(job.read_set).is_valid:
-        return  # stale proposal: dropped, never applied (K4)
+    if payload.status != "ok" or not txn.facts.is_valid(job.read_set).is_valid:
+        # worker failure or stale proposal (K4): dropped, never applied.
+        # TaskStateMachine re-requests INTERPRET/PLAN/COMPOSE on its own;
+        # VISION/ASR scheduling bookkeeping must be released explicitly.
+        if job.kind == JobKind.VISION:
+            _PERCEPTION.release_dropped_job(txn, job)
+        elif job.kind == JobKind.ASR:
+            _ASR.release_dropped_job(txn, job, now_us, step_no, event_id=env.event_id)
+        return
 
     kind = JobKind(payload.kind)
     proposal = payload.proposal or {}

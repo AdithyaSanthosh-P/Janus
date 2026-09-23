@@ -477,6 +477,7 @@ class Observation:
     modality: str = "frame"  # "frame" | "audio"
     asr_job_id: str | None = None
     asr_done: bool = False
+    asr_attempts: int = 0  # dropped (errored) ASR jobs so far; bounded by Config.max_read_retries
 
 
 @dataclass(frozen=True)
@@ -514,6 +515,11 @@ class Question:
     status: QuestionStatus = QuestionStatus.OPEN
     pending_job_id: str | None = None  # VISION job currently analyzing a frame for this question
     pending_obs_id: str | None = None  # which observation that job is analyzing
+    # Last observation already analyzed for this question without fully
+    # answering it (LOW/partial/empty claims). PerceptionScheduler.decide
+    # won't re-dispatch against it -- only new evidence, a retarget, or a
+    # lease renewal re-opens analysis.
+    analyzed_obs_id: str | None = None
 
 
 @dataclass(frozen=True)

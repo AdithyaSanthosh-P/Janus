@@ -36,6 +36,13 @@ _PY_TYPE_CHECKS = {
 }
 
 
+def value_matches_schema_type(prop_schema: dict, value) -> bool:
+    """True if `value` fits the property's declared JSON-schema `type`
+    (or the property declares none) -- the same table `validate_args` uses."""
+    check = _PY_TYPE_CHECKS.get((prop_schema or {}).get("type"))
+    return check is None or check(value)
+
+
 class ToolValidationError(Exception):
     pass
 

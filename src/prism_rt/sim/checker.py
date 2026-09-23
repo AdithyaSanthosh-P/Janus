@@ -18,7 +18,10 @@ have no live enforcement at all where the blueprint says it should
 (fixed directly in `store/ledgers.py`, not here — offline checking isn't
 the right tool for it; see below) plus one closed scenario gap (R-04,
 `tests/test_phase7_scenario_coverage.py`) and CS-24 investigated and
-deferred with a documented reason below.
+deferred with a documented reason below. A fourth session added the
+P-04 snapshot-validity check (`_check_p04`: keys ⊆ tool parameter names,
+types match schema -- the half of P-04 CS-27 didn't cover), with
+fault-injection tests in `tests/test_p04_snapshot_validity.py`.
 
 Phase 7 audit findings on the round-3 checks (see each method's docstring
 for detail): CS-09 and CS-33 match the blueprint text closely. CS-05 checks
@@ -148,6 +151,7 @@ class TraceChecker:
         violations.extend(self._check_cs14(reports, store))
         violations.extend(self._check_cs33(reports))
         violations.extend(self._check_cs27(reports))
+        violations.extend(self._check_p04(reports))
         return violations
 
     # CS-08 (formerly P3): every call invalidated this step has a CANCEL emitted this same step.
@@ -302,6 +306,57 @@ class TraceChecker:
                     )
                 else:
                     max_seen = snapshot.revision
+        return violations
+
+    # P-04 (Phase 7; blueprint line 2528, "Snapshot validity | Every
+    # scenario | Snapshot keys ⊆ parameter names; types match schema;
+    # revisions monotonic"). The monotonic half is CS-27 above; this is the
+    # rest. The catalog is rebuilt *from the trace's own manifest events*,
+    # step by step, not read from final store state -- a later manifest can
+    # drop a tool (S-08), which would make a final-state check flag
+    # snapshots that were valid when emitted (the same soundness trap
+    # CS-17's docstring documents).
+    _JSON_TYPES = {
+        "string": (str,),
+        "integer": (int,),
+        "number": (int, float),
+        "boolean": (bool,),
+        "array": (list, tuple),
+        "object": (dict,),
+    }
+
+    def _check_p04(self, reports: list) -> list[Violation]:
+        violations = []
+        params: dict[str, dict] = {}
+        for report in reports:
+            for env in report.batch:
+                if env.payload_type == "manifest":
+                    params = {}
+                    for tool in env.payload.tools or []:
+                        schema = tool.get("parameters") or tool.get("params_schema") or {}
+                        for name, prop in (schema.get("properties") or {}).items():
+                            params.setdefault(name, prop if isinstance(prop, dict) else {})
+            for er in report.emit_report.emitted:
+                snapshot = er.action.snapshot
+                if snapshot is None:
+                    continue
+                for key, value in snapshot.slots.items():
+                    if key not in params:
+                        violations.append(
+                            Violation("P-04", f"snapshot key {key!r} on action {er.action.action_id} is not a parameter of any declared tool", report.step_no)
+                        )
+                        continue
+                    expected = self._JSON_TYPES.get(params[key].get("type"))
+                    if expected is None or value is None:
+                        continue
+                    if isinstance(value, bool) and bool not in expected:
+                        ok = False
+                    else:
+                        ok = isinstance(value, expected)
+                    if not ok:
+                        violations.append(
+                            Violation("P-04", f"snapshot key {key!r}={value!r} on action {er.action.action_id} doesn't match schema type {params[key].get('type')!r}", report.step_no)
+                        )
         return violations
 
     # CS-13 (formerly W1): no two emitted WRITE tool_calls share a fingerprint *unless* the

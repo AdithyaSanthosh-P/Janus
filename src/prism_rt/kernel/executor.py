@@ -27,6 +27,8 @@ from prism_rt.model.types import (
     FactStatus,
     GoalStatus,
     Provenance,
+    QuestionMode,
+    QuestionStatus,
     ReadSet,
     StepKind,
     TaskState,
@@ -164,10 +166,37 @@ class PlanExecutor:
                 # when a WRITE step needs a MEDIUM-confidence claim, which
                 # this doesn't distinguish — no test scenario needs that
                 # nuance; see kernel/perception.py's module docstring.)
-                if missing_key is not None and missing_key.startswith("claim."):
+                if missing_key is not None and (
+                    missing_key.startswith("claim.") or self._perception_will_answer(store, gid, missing_key)
+                ):
                     continue
                 self._ask_for(store, gid, missing_key, now_us, step_no)
                 continue
+
+            validation = store.catalog.validate_args(step.tool, bind_result.args)
+            if not validation.valid:
+                # G8 (args valid) can never pass for these exact args -- they
+                # only change if a bound fact changes, and that path already
+                # replaces a stale call. Creating the call anyway left it
+                # PROPOSED forever, silently (same livelock class as S-07's
+                # unknown tool): e.g. a live model returning destination=42
+                # for a string param. A bad user-supplied slot is asked about
+                # (the user can fix it); anything else fails honestly.
+                bad_slot = self._invalid_slot_input(step, gid, validation.errors)
+                if bad_slot is not None:
+                    self._ask_for(store, gid, bad_slot, now_us, step_no)
+                else:
+                    self._fail_goal(
+                        store, gid, step, now_us, step_no,
+                        reason=f"{step.tool} was given an input it can't accept",
+                    )
+                continue
+
+            if step.kind == StepKind.WRITE:
+                stale_key = self._stale_current_state_input(store, gid, bind_result.read_set, now_us)
+                if stale_key is not None:
+                    self._request_fresh_view(store, gid, stale_key, now_us, step_no)
+                    continue
 
             new_fingerprint = fingerprint_for(step.tool, bind_result.args)
             if self._write_lineage_confirmed_elsewhere(store, gid, step, new_fingerprint):
@@ -394,6 +423,106 @@ class PlanExecutor:
         if plan is None:
             return None
         return next((s for s in plan.steps if s.step_key == step_key), None)
+
+    def _perception_will_answer(self, store, goal_id: str, key: str) -> bool:
+        """V3: a step bound through `slot.$G.<name>` (AT_UTTERANCE targets,
+        and what the live PLAN prompt teaches) was treated as missing *user*
+        input whenever VISION was slower than PLAN -- the agent asked the
+        user about the very thing it was looking at, and the goal then sat
+        in CLARIFYING forever, since a perception-filled slot never cleared
+        `clarify_target`. Same rule as the `claim.*` skip in
+        `propose_ready_calls`, extended to slot keys: wait while perception
+        can still answer (a VISION job is in flight, or the current evidence
+        hasn't been analyzed yet). Once analyzed without an answer (LOW --
+        M-09), or with an open conflict (M-06), fall through and ask."""
+        if not store.config.vision_enabled or not key.startswith(f"slot.{goal_id}."):
+            return False
+        name = key[len(f"slot.{goal_id}."):]
+        if store.evidence.conflict_open(goal_id, name):
+            return False
+        question = store.evidence.latest_active_question(goal_id)
+        if question is None or question.status != QuestionStatus.OPEN:
+            return False
+        if name not in {t.name for t in question.targets}:
+            return False
+        return question.pending_job_id is not None or question.analyzed_obs_id is None
+
+    def _invalid_slot_input(self, step, goal_id: str, errors) -> str | None:
+        """The `slot.<goal>.<name>` key behind the first invalid argument,
+        if that argument is FACT-bound to a user/perception slot -- else
+        None (planner literal, step output, derived fact)."""
+        for error in errors:
+            _, _, param = error.partition(":")
+            binding = step.bindings.get(param)
+            if binding is None or binding.kind != BindingKind.FACT:
+                continue
+            key = (binding.fact_key or "").replace("$G", goal_id)
+            if key.startswith(f"slot.{goal_id}."):
+                return key
+        return None
+
+    def _stale_current_state_input(self, store, goal_id: str, read_set, now_us: int) -> str | None:
+        """M-05 / CS-25 (`docs/prompt 2.txt` §10 "Freshness"): a frame gap
+        doesn't invalidate a CURRENT_STATE claim, but a WRITE must not
+        assume the state persisted across one. Returns the first
+        perception-sourced input this write would bind if the goal's
+        CURRENT_STATE question has had no frame for longer than
+        `frame_gap_ms`, else None. Checked against the latest frame's
+        *capture* time -- a claim's own provenance timestamp is when the
+        frame was analyzed, which is exactly how a 5s-old frame analyzed
+        just now used to look fresh. A user-stated value (provenance
+        "user") is never gated: they told us, not the camera."""
+        if not store.config.vision_enabled:
+            return None
+        question = store.evidence.latest_active_question(goal_id)
+        if question is None or question.mode != QuestionMode.CURRENT_STATE:
+            return None
+        target_names = {t.name for t in question.targets}
+        stale_key = None
+        for entry in read_set.entries:
+            key = entry.key
+            if key.startswith(f"slot.{goal_id}."):
+                name = key[len(f"slot.{goal_id}."):]
+            elif key.startswith(f"claim.{question.question_id}."):
+                name = key[len(f"claim.{question.question_id}."):]
+            else:
+                continue
+            fact = store.facts.get(key)
+            if name in target_names and fact is not None and fact.provenance.source == "perception":
+                stale_key = key
+                break
+        if stale_key is None:
+            return None
+        frames = store.evidence.observations_by_modality("frame")
+        if frames and now_us - frames[-1].capture_ts_us <= store.config.frame_gap_ms * 1000:
+            return None
+        return stale_key
+
+    def _request_fresh_view(self, store, goal_id: str, target_key: str, now_us: int, step_no: int) -> None:
+        """Reuses lease renewal's shape (`PerceptionScheduler.expire_leases`)
+        without retracting anything -- the claim stays valid for reads.
+        The question re-opens with the stale frame already marked analyzed
+        (so it's never re-sent); the next *new* frame gets analyzed, and a
+        HIGH claim on this slot resolves the clarification through the
+        existing `perception.clarify_resolved` path."""
+        question = store.evidence.latest_active_question(goal_id)
+        frames = store.evidence.observations_by_modality("frame")
+        store.evidence.update_question(
+            question.question_id,
+            status=QuestionStatus.OPEN,
+            created_by="renewal",
+            pending_job_id=None,
+            pending_obs_id=None,
+            analyzed_obs_id=frames[-1].obs_id if frames else None,
+        )
+        store.facts.set(
+            f"perception.{goal_id}.fresh_view_for",
+            target_key,
+            FactStatus.COMMITTED,
+            Provenance(source="system", step_no=step_no, ts_us=now_us),
+            rule="executor.fresh_view",
+        )
+        self._ask_for(store, goal_id, target_key, now_us, step_no)
 
     def _ask_for(self, store, goal_id: str, target_key: str | None, now_us: int, step_no: int) -> None:
         if target_key is None:
