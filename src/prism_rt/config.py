@@ -12,10 +12,26 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Config:
-    # Clock
-    clock_model: str = "B"
+    # Clock (`docs/prompt 2.txt` §13.2, `adapters/clock.py`). "A" (coupled,
+    # the default): entry.py's real driver derives now_us() from real
+    # elapsed wall time on top of the last harness timestamp, so a
+    # step-scheduled timer (e.g. G10's settle wake) is honoured even with
+    # no further external events (D1, docs/original_design_audit.md P0.1).
+    # "B" (stepped): time only ever moves via an explicit advance_to — what
+    # sim/harness.py always uses (deterministic replay), and an option for
+    # entry.py too when exact virtual timestamps matter more than real
+    # elapsed time.
+    clock_model: str = "A"
     settle_ms: int = 300  # 0 = disabled
     watchdog_timeout_ms: int = 105_000
+    # P0.4 (call deadlines, docs/original_design_audit.md D4, blueprint
+    # §5.9's own defaults): an IN_FLIGHT call past this many ms with no
+    # result is treated as dropped -- reads retry (bounded by
+    # max_read_retries); writes get an honest, ambiguous-outcome INFORM +
+    # CLARIFY (effect UNKNOWN, no auto-retry) instead of silently hanging
+    # until the scenario watchdog (105_000ms default, well above both).
+    call_deadline_read_ms: int = 6_000
+    call_deadline_write_ms: int = 12_000
 
     # Policies
     max_read_retries: int = 2
@@ -23,6 +39,28 @@ class Config:
     max_clarification_attempts: int = 2
     max_consecutive_holds: int = 3
     min_speech_gap_ms: int = 400
+    # CS-28 / `docs/prompt 2.txt` line 370: "No SPEAK, CLARIFY, or FINAL is
+    # emitted while the floor region is USER_TURN_OPEN (policy
+    # speak_during_open_turn, default OFF). Talking over the user harms
+    # naturalness and usually refers to soon-to-change information."
+    # `False` (the doc's own default) enforces the floor rule; `kernel/
+    # responder.py.FastResponder.decide` is the sole source of SPEAK/
+    # CLARIFY/FINAL actions, so gating there is sufficient — CANCEL/
+    # TOOL_CALL emission is untouched (the floor rule names only the three
+    # speaking action types).
+    speak_during_open_turn: bool = False
+    # TRIAGE hold (`docs/prompt 2.txt` §8.3, transitions 23-31): once a
+    # user turn spoken during an active goal has closed but isn't
+    # interpreted yet, hold every emission except CANCEL -- speech in
+    # `FastResponder`, new tool calls in `CommitGate` (G3) -- until it is.
+    # On by default (the spec's behavior); `False` exists so
+    # `sim/explorer.py` can demonstrate what it prevents.
+    triage_hold_enabled: bool = True
+    # C1 inert-tail promotion (`docs/prompt 3.txt` C1): extends Phase 6's
+    # exact-digest promotion to a turn whose only words after the cached
+    # speculative prefix are inert (`config/lexicons.py` INERT_TOKENS).
+    # Only has any effect when speculative_interpretation_enabled is on.
+    inert_tail_promotion: bool = True
 
     # V0 Foundation (always active)
     enforce_commit_gate: bool = True
@@ -58,6 +96,10 @@ class Config:
     asr_enabled: bool = False
     audio_mode: str = "auto"  # "transcript_primary" | "audio_only" | "auto"
     asr_closes_turn: bool = False  # audio_only + end_of_utterance: also synthesize end_of_turn
+    # AUTO mode (`docs/prompt 2.txt` line 909, default 800): ASR output is
+    # held this long after the clip's capture; if the harness's own text
+    # transcript covers that window, the ASR output is discarded.
+    asr_dedupe_window_ms: int = 800
 
     # V4 Hardening feature flags
     reference_bound_identifiers: bool = False  # V4: C10 — see kernel/executor.py

@@ -234,7 +234,11 @@ def test_i01_interrupt_before_interpretation_returns(config):
 
     # INTERPRET latency of 100ms is longer than the 5ms gap between the two
     # turns closing, so turn 1's interpretation is still in flight when
-    # turn 2 (the correction) closes and overwrites the pending-turn marker.
+    # turn 2 (the correction) closes. Turn 2 queues behind turn 1 (it used
+    # to overwrite turn 1's pending marker, which silently lost a genuine
+    # rapid follow-up -- found by `sim/explorer.py`); the TRIAGE hold keeps
+    # anything turn 1 produces from being emitted until turn 2 is
+    # understood.
     h = new_harness(
         config,
         tools={"search_flights": {"latency_ms": 50, "response": {"flight_id": "AI-1"}}},
@@ -250,11 +254,15 @@ def test_i01_interrupt_before_interpretation_returns(config):
 
     actions = drain(h, 3_000_000)
     tool_calls = [a for a in actions if a.action_type == ActionType.TOOL_CALL]
-    # Exactly one search should ever have been issued, and it must be Mumbai —
-    # the stale Delhi interpretation (rejected by read-set invalidation) must
-    # never have produced a call.
+    # Blueprint I-01 acceptance: exactly one search call (Mumbai); no plan
+    # acted on with Delhi after the correction. The Delhi turn *is*
+    # interpreted now (queued, not discarded) and may create a goal record
+    # that the correction replaces -- but nothing from it is ever emitted.
     assert [c.body.arguments["destination"] for c in tool_calls] == ["Mumbai"]
-    assert len(h.store.goals.all()) == 1
+    completed = [g for g in h.store.goals.all() if g.status == GoalStatus.COMPLETED]
+    assert len(completed) == 1
+    assert h.store.facts.get(f"slot.{completed[0].goal_id}.destination").value == "Mumbai"
+    assert not any(a.action_type == ActionType.SPEAK and "Delhi" in (a.body.text or "") for a in actions)
     finals = [a for a in actions if a.action_type == ActionType.FINAL]
     assert len(finals) == 1
     assert finals[0].body.text == "Found flights to Mumbai."

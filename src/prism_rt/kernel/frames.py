@@ -46,7 +46,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from prism_rt.kernel.interpret_apply import active_goal_id
+from prism_rt.kernel.interpret_apply import active_goal_id, set_grounded_compose_text
 from prism_rt.model.types import CallStatus, FactStatus, GoalStatus, JobKind, JobRecord, Provenance, ReadSet, TaskState
 
 
@@ -176,7 +176,20 @@ class FrameScheduler:
             for key, value in store.facts.snapshot_committed().items()
             if key.startswith(f"slot.{gid}.")
         }
-        read_keys = ["goal.active", "catalog.version"] + [f"slot.{gid}.{name}" for name in facts]
+        # C6 (`docs/prompt 3.txt`): include every key the pending call
+        # itself read, not just its already-bound slot values -- the same
+        # pattern `kernel/task.py._build_compose_request` uses for exactly
+        # the same reason (found first there, `v10-1-correction-race-fix`).
+        # Since `PlanExecutor._bind` now makes a call's own read set
+        # schema-complete (every optional tool param it didn't bind, not
+        # just the ones it did), this line is what lets the frame inherit
+        # that completeness automatically instead of needing its own
+        # separate schema walk.
+        read_keys = (
+            ["goal.active", "catalog.version"]
+            + [f"slot.{gid}.{name}" for name in facts]
+            + [entry.key for entry in latest.read_set.entries]
+        )
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         view = {
             "intent": intent_fact.value if intent_fact is not None and intent_fact.status != FactStatus.RETRACTED else None,
@@ -225,11 +238,13 @@ class FrameScheduler:
         text = self._render(template_fact.value, result_fact.value if result_fact is not None else None)
         if text is None:
             return False
-        txn.facts.set(
-            f"compose.{goal_id}.text",
+        # Same grounding contract as a COMPOSE result: the frame's read set
+        # (which folds in the call's own read set, C6).
+        set_grounded_compose_text(
+            txn,
+            goal_id,
             text,
-            FactStatus.COMMITTED,
-            Provenance(source="system", event_id=event_id, call_id=call.call_id, step_no=step_no, ts_us=now_us),
+            Provenance(source="system", event_id=event_id, call_id=call.call_id, step_no=step_no, ts_us=now_us, derivation_read_set=read_set),
             rule="frames.render",
         )
         return True

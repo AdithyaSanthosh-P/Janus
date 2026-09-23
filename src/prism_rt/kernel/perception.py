@@ -25,6 +25,7 @@ from prism_rt.model.types import (
     ConflictStatus,
     Confidence,
     FactStatus,
+    GoalStatus,
     JobKind,
     JobRecord,
     Observation,
@@ -54,6 +55,12 @@ class VisionDispatchRequest:
     turn_id: str | None
     read_set: ReadSet
 
+
+def _goal_active(store, goal_id: str) -> bool:
+    goal = store.goals.get(goal_id)
+    return goal is not None and goal.status == GoalStatus.ACTIVE
+
+
 _GENERIC_TARGETS = (
     QuestionTarget(name="device_model", description="the device's model or identity"),
     QuestionTarget(name="visible_state", description="salient visible state (e.g. an indicator light)"),
@@ -80,6 +87,38 @@ class PerceptionScheduler:
 
         existing = txn.evidence.latest_active_question(goal_id)
         if existing is not None:
+            # The user has asked for a fresh look ("actually, the other
+            # one"): whatever perception concluded for this question before
+            # is superseded evidence. Retract it through the ordinary path
+            # -- claim facts (the question id is reused, so `$Q` bindings
+            # would otherwise keep reading them) and perception-sourced slot
+            # values -- so same-step invalidation cancels or discards
+            # anything built on it, and `_perception_will_answer` waits for
+            # the new analysis instead of the old answer carrying the goal
+            # to a FINAL. User-stated values are never touched. Same shape
+            # as `expire_leases`' renewal. Found by `sim/explorer.py`
+            # (scenarios V1/V2): the FINAL was grounded in the first frame's
+            # colour after the user redirected to the second.
+            names = {t.name for t in existing.targets} | {t.name for t in targets}
+            # A clarification already pending about one of these targets is
+            # answered by this re-look, not by the user: found by the
+            # explorer (V3) -- a CLARIFY queued after the first frame's
+            # analysis failed was released right after the user redirected
+            # to a new frame perception was about to analyze.
+            clarify = txn.facts.get(f"goal.{goal_id}.clarify_target")
+            if clarify is not None and clarify.status != FactStatus.RETRACTED and clarify.value in (
+                {f"slot.{goal_id}.{n}" for n in names} | {f"claim.{existing.question_id}.{n}" for n in names}
+            ):
+                txn.facts.retract(f"goal.{goal_id}.clarify_target", rule="perception.retarget_clarify_resolved")
+            for name in names:
+                claim_key = f"claim.{existing.question_id}.{name}"
+                claim = txn.facts.get(claim_key)
+                if claim is not None and claim.status != FactStatus.RETRACTED:
+                    txn.facts.retract(claim_key, rule="perception.retarget")
+                slot_key = f"slot.{goal_id}.{name}"
+                slot = txn.facts.get(slot_key)
+                if slot is not None and slot.status != FactStatus.RETRACTED and slot.provenance.source == "perception":
+                    txn.facts.retract(slot_key, rule="perception.retarget")
             txn.evidence.update_question(
                 existing.question_id,
                 targets=targets,
@@ -114,6 +153,8 @@ class PerceptionScheduler:
         for question in txn.evidence.all_questions():
             if question.mode != QuestionMode.CURRENT_STATE or question.status != QuestionStatus.ANSWERED:
                 continue
+            if not _goal_active(txn.store, question.goal_id):
+                continue  # the conversation moved on; don't renew (and re-pay for) evidence nobody needs
             expired = False
             for target in question.targets:
                 claim_key = f"claim.{question.question_id}.{target.name}"
@@ -146,6 +187,12 @@ class PerceptionScheduler:
         requests: list[DispatchRequest] = []
         for question in store.evidence.all_questions():
             if question.status != QuestionStatus.OPEN or question.pending_job_id is not None:
+                continue
+            if not _goal_active(store, question.goal_id):
+                # Found by `sim/explorer.py` (V2): a CURRENT_STATE question
+                # kept re-analyzing on every lease renewal long after its
+                # goal had COMPLETED -- a paid vision call every
+                # `evidence_lease_ms`, forever.
                 continue
             obs = self._select_frame(store, question)
             if obs is None:
@@ -182,12 +229,19 @@ class PerceptionScheduler:
             return obs_list[-1]
 
         anchor = question.anchor_ts_us
+        # Ties on capture time are broken by arrival order (modality_seq):
+        # when two frames share a timestamp, the later arrival is the more
+        # recent evidence -- arrival order is the only recency information
+        # left. `max` on capture time alone returned the *first* (older)
+        # frame of a tie; found by `sim/explorer.py` (V1/V3/V4 with both
+        # frames compressed onto one timestamp): "actually, the other one"
+        # re-selected the very frame the user had redirected away from.
         at_or_before = [o for o in obs_list if o.capture_ts_us <= anchor]
         if at_or_before:
-            return max(at_or_before, key=lambda o: o.capture_ts_us)
+            return max(at_or_before, key=lambda o: (o.capture_ts_us, o.modality_seq))
         window_us = store.config.evidence_align_window_ms * 1000
         after = [o for o in obs_list if anchor < o.capture_ts_us <= anchor + window_us]
-        return min(after, key=lambda o: o.capture_ts_us) if after else None
+        return min(after, key=lambda o: (o.capture_ts_us, o.modality_seq)) if after else None
 
     def release_dropped_job(self, txn, job) -> None:
         """A VISION job that errored or went stale never reaches

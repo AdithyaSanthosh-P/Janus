@@ -52,6 +52,26 @@ BACKCHANNEL_TOKENS: tuple[str, ...] = (
     "got it",
 )
 
+# C1 inert-tail promotion (`docs/prompt 3.txt` C1): words that carry no
+# value and no change cue, so a speculative interpretation of everything
+# *before* them is still the interpretation of the whole turn. Deliberately
+# tight: politeness and fillers only. Confirmation-like words ("ok",
+# "yeah", "fine") are excluded -- they are content when answering a
+# question -- and negations are never inert.
+INERT_TOKENS: tuple[str, ...] = (
+    "please",
+    "thanks",
+    "thank",
+    "you",
+    "um",
+    "uh",
+    "uhm",
+    "erm",
+    "er",
+    "hmm",
+)
+NEGATION_TOKENS: tuple[str, ...] = ("no", "not", "don't", "dont", "never", "nope")
+
 VISUAL_CUES: tuple[str, ...] = (
     "this",
     "that one",

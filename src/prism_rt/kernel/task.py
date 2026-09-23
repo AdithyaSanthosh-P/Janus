@@ -7,20 +7,25 @@ idempotent, safe to call every step — because it always checks
 `store.jobs` for an already-running job of the kind it would otherwise
 request before requesting another.
 
-V1 has no explicit TRIAGE state (`docs/sonnet_implementation_plan.md` §4
-VERSION 1 Known Limitations: no speculative execution, no chunk-anchored
-cancellation). Interruptions are handled uniformly: whatever the
-Interpreter's committed act says (SLOT_UPDATE, NEW_GOAL, ABORT,
-RETURN_TO_GOAL, ...) is applied via `kernel/interpret_apply.py` regardless
-of what task_state the goal was in when the turn started — a real TRIAGE
-hold-mode is a V2 concern once speculative work exists to hold.
+There is no explicit TRIAGE *task state*. Interruptions are handled
+uniformly: whatever the Interpreter's committed act says (SLOT_UPDATE,
+NEW_GOAL, ABORT, RETURN_TO_GOAL, ...) is applied via
+`kernel/interpret_apply.py` regardless of what task_state the goal was in
+when the turn started. TRIAGE's *hold mode* (`docs/prompt 2.txt` §8.3) is
+realized without a state: while `interpret_apply.interpretation_busy` is
+true for an active goal, `FastResponder` emits nothing and `CommitGate`
+admits no new call (G3), and turns are interpreted strictly in order
+(`enqueue_interpretation`). Held work isn't stored anywhere -- the kernel
+re-derives everything from state each step, so whatever is still valid
+once the interpretation lands is emitted then, and whatever it
+invalidated never is.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from prism_rt.kernel.interpret_apply import active_goal_id
+from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text
 from prism_rt.model.types import (
     CallStatus,
     FactStatus,
@@ -84,15 +89,28 @@ class TaskStateMachine:
                         # only place that decision is made; frame_rendering_
                         # enabled=False means this fact is never pre-set, so
                         # behavior is unchanged from every earlier version.
-                        pending_text = store.facts.get(f"compose.{gid}.text")
-                        if pending_text is None or pending_text.status == FactStatus.RETRACTED:
+                        if grounded_compose_text(store, gid) is None:
                             requests.append(self._build_compose_request(store, gid))
                 elif goal.task_state == TaskState.CLARIFYING:
                     target = store.facts.get(f"goal.{gid}.clarify_target")
                     if target is None or target.status == FactStatus.RETRACTED:
                         store.goals.update(gid, task_state=TaskState.PLANNING)
+                elif goal.task_state == TaskState.RESPONDING and self._consumed_step_went_stale(store, gid):
+                    # RESPONDING means "every step consumed *and still
+                    # valid*" (`_all_required_steps_done`) -- but that was
+                    # only ever checked on the way in. A fact a consumed step
+                    # read can change afterwards without a replan: a
+                    # perception retarget or lease expiry retracts a
+                    # perception slot (text corrections go through
+                    # interpret_apply, which forces PLANNING). Without this,
+                    # the goal re-composed from the stale result instead of
+                    # re-running it -- found by `sim/explorer.py` (V1/V2: a
+                    # FINAL built on the first frame's lookup after the user
+                    # redirected to the second). PlanExecutor, next in this
+                    # same DECIDE phase, re-executes the stale step.
+                    store.goals.update(gid, task_state=TaskState.EXECUTING)
                 elif goal.task_state == TaskState.RESPONDING:
-                    pending_text = store.facts.get(f"compose.{gid}.text")
+                    pending_text = grounded_compose_text(store, gid)
                     # Matches the EXECUTING branch's identical check above
                     # (line ~78) — a RETRACTED compose text must be
                     # treated the same as no text at all. Currently
@@ -137,6 +155,23 @@ class TaskStateMachine:
             if not store.facts.is_valid(latest.read_set).is_valid:
                 return False
         return True
+
+    def _consumed_step_went_stale(self, store, goal_id: str) -> bool:
+        """A step whose consumed result no longer matches its inputs --
+        unless the goal's final text is system-authored (watchdog salvage,
+        honest failure), which is not grounded in results and must never be
+        reopened."""
+        text = store.facts.get(f"compose.{goal_id}.text")
+        if text is not None and text.status != FactStatus.RETRACTED and text.provenance.derivation_read_set is None:
+            return False
+        plan = store.plans.current(goal_id)
+        if plan is None:
+            return False
+        for step in plan.steps:
+            latest = store.call_ledger.latest_by_step(goal_id, step.step_key)
+            if latest is not None and latest.status == CallStatus.CONSUMED and not store.facts.is_valid(latest.read_set).is_valid:
+                return True
+        return False
 
     def _goal_slots(self, store, goal_id: str) -> dict:
         prefix = f"slot.{goal_id}."

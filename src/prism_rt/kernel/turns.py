@@ -10,8 +10,8 @@ mechanism as everything else, with no special-casing.
 from __future__ import annotations
 
 from prism_rt.canonical import compute_digest, normalize_value
-from prism_rt.kernel.detector import QuickDetector
-from prism_rt.kernel.interpret_apply import active_goal_id, apply_interpretation
+from prism_rt.kernel.detector import QuickDetector, is_inert_tail
+from prism_rt.kernel.interpret_apply import active_goal_id, apply_interpretation, enqueue_interpretation, interpretation_busy
 from prism_rt.kernel.proposals import parse_interpretation
 from prism_rt.model.types import FactStatus, FloorState, GoalStatus, JobKind, Provenance, TaskState, Turn
 from prism_rt.store.session import StoreTxn
@@ -59,6 +59,7 @@ class TurnManager:
         *,
         active_goal_id: str | None,
         step_no: int = 0,
+        source: str = "text",
     ) -> Turn:
         turn_id = txn.turn_log.open_turn_id()
         if turn_id is None:
@@ -68,7 +69,7 @@ class TurnManager:
             )
             txn.set_floor(FloorState.USER_TURN_OPEN)
 
-        turn = txn.turn_log.append_chunk(turn_id, ts_us, text)
+        turn = txn.turn_log.append_chunk(turn_id, ts_us, text, source)
         prefix_text = " ".join(chunk.text for chunk in turn.chunks)
         digest = compute_digest(prefix_text)
         txn.facts.set(
@@ -183,16 +184,18 @@ class TurnManager:
         # second (redundant) job; kernel/reducers.py._apply_worker_result
         # applies it directly when it resolves. Either way, no fresh
         # (non-speculative) INTERPRET job goes out.
-        if txn.store.config.speculative_interpretation_enabled:
+        # Promotion/waiting only when no earlier turn is still outstanding --
+        # otherwise this turn would be applied ahead of one the user said
+        # first. It queues behind it instead (enqueue_interpretation).
+        if txn.store.config.speculative_interpretation_enabled and not interpretation_busy(txn.store):
             if self._try_promote_speculative(txn, turn, now_us, step_no, event_id=event_id):
                 return
             if self._mark_eot_waiting_if_matching_job_in_flight(txn, turn, now_us, step_no, event_id=event_id):
                 return
 
-        txn.facts.set(
-            "session.pending_interpretation_turn",
+        enqueue_interpretation(
+            txn,
             turn.turn_id,
-            FactStatus.COMMITTED,
             Provenance(source="user", event_id=event_id, turn_id=turn.turn_id, step_no=step_no, ts_us=now_us),
             rule="turns.eot",
         )
@@ -200,22 +203,64 @@ class TurnManager:
     def _try_promote_speculative(self, txn: StoreTxn, turn: Turn, now_us: int, step_no: int, *, event_id: str) -> bool:
         prefix_fact = txn.facts.get(f"turn.{turn.turn_id}.prefix")
         cached_digest = txn.facts.get(f"spec_interpret.{turn.turn_id}.digest")
-        if (
-            prefix_fact is None
-            or cached_digest is None
-            or cached_digest.status == FactStatus.RETRACTED
-            or cached_digest.value != prefix_fact.value
-        ):
-            return False  # no cache, or the user kept talking past the cached prefix
+        if prefix_fact is None or cached_digest is None or cached_digest.status == FactStatus.RETRACTED:
+            return False  # no cache
         proposal_fact = txn.facts.get(f"spec_interpret.{turn.turn_id}.proposal")
         if proposal_fact is None or proposal_fact.status == FactStatus.RETRACTED:
             return False
+        tail = None
+        if cached_digest.value != prefix_fact.value:
+            # The user kept talking past the cached prefix. C1: still
+            # promote if everything they added is inert ("... please").
+            tail = self._inert_tail(txn, turn, cached_digest.value, proposal_fact.value)
+            if tail is None:
+                return False
         try:
             interp = parse_interpretation(proposal_fact.value, turn_id=turn.turn_id, input_digest="")
         except (KeyError, ValueError):
             return False
         apply_interpretation(interp, txn, now_us, step_no, event_id=event_id)
+        if tail is not None:
+            # Audit trail for CS-30 (`sim/checker.py._check_cs30`).
+            txn.facts.set(
+                f"spec_interpret.{turn.turn_id}.promoted_tail",
+                tail,
+                FactStatus.COMMITTED,
+                Provenance(source="system", event_id=event_id, turn_id=turn.turn_id, step_no=step_no, ts_us=now_us),
+                rule="speculation.inert_tail_promoted",
+            )
         return True
+
+    def _inert_tail(self, txn: StoreTxn, turn: Turn, cached_digest: str, proposal) -> str | None:
+        """C1 (`docs/prompt 3.txt`): the text after the cached speculative
+        prefix, iff promoting across it is safe -- every word inert (no
+        value, no change cue, no negation), no HIGH-confidence value, no
+        clarification pending (a word inert in general is content when it
+        answers a question), and not a commit-bearing interpretation (the
+        original analysis requires stricter evidence before acting on a
+        promoted interpretation that can trigger a write). `None` means
+        fall back to an ordinary interpretation of the full turn."""
+        if not txn.store.config.inert_tail_promotion:
+            return None
+        texts = [chunk.text for chunk in turn.chunks]
+        k = next((i for i in range(len(texts) - 1, 0, -1) if compute_digest(" ".join(texts[:i])) == cached_digest), None)
+        if k is None:
+            return None  # cached prefix isn't a chunk-boundary prefix of this turn
+        tail = " ".join(texts[k:])
+        if not is_inert_tail(tail):
+            return None
+        signals = self._quick_detector.detect(tail)
+        if signals.is_correction or signals.is_hold or signals.is_abort:
+            return None
+        if self._quick_detector.detect_values(tail, tool_params=_tool_params(txn.store), seen_values=_seen_values(txn.store)):
+            return None
+        gid = active_goal_id(txn.store)
+        goal = txn.store.goals.get(gid) if gid is not None else None
+        if goal is not None and goal.task_state == TaskState.CLARIFYING:
+            return None
+        if isinstance(proposal, dict) and proposal.get("commit_intent"):
+            return None
+        return tail
 
     def _mark_eot_waiting_if_matching_job_in_flight(
         self, txn: StoreTxn, turn: Turn, now_us: int, step_no: int, *, event_id: str

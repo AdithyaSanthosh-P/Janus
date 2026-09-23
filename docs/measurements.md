@@ -26,7 +26,14 @@ All numbers on this page were produced by actually running this repository's own
 | Live multimodal orchestration fix | `visual_candidates` prompt guidance + pending-visual-target PLAN binding guidance (found by directly running `demo/run_live_multimodal_demo.py` against the real Gemini API — a live vision question came back with an empty claim list and an unrelated tool answer, not from quota, from two real prompt-completeness gaps; confirmed fixed live, first run after) | 5 | 5/5 passing |
 | Phase 7, session 3 | R-07, M-09, M-04 scenarios + N-05-slow-VISION regression, and dropped VISION/ASR job liveness (three real bugs: VISION re-analysis loop, dropped jobs stuck forever, slow-VISION spurious CLARIFY) | 7 | 7/7 passing |
 | Phase 7, session 4 | M-05 (stale evidence before a write → fresh-view request) x3, P-04 snapshot validity (offline check fault-injection x3, extra-slot snapshot filtering, wrong-type-slot livelock) x5 | 8 | 8/8 passing |
-| **Total** | | **149** | **149/149 passing** |
+| Phase 7, session 5 | CS-03 event-ordering checker check + fault injection | 3 | 3/3 passing |
+| C6 | Schema-complete read sets (tool calls + FRAME inheritance), each gap verified to fail pre-fix | 8 | 8/8 passing |
+| CS-28 | Floor rule: no SPEAK/CLARIFY/FINAL while the user holds the floor (found by the CS audit) | 6 | 6/6 passing |
+| T-04 | `observability/metrics.py` — TTFS, tool latency, cancel latency, end-to-end latency; cross-checked against the Phase 6 number below | 24 | 24/24 passing |
+| M4 / C17 | Explorer-found regressions (TRIAGE hold, lost rapid follow-up, stuck speculative correction, interpreter give-up, watchdog exemption) + bounded exploration + explorer self-tests | 11 | 11/11 passing |
+| C1 | Inert-tail promotion: lexicon, promotion/refusal cases, 9-point timing sweep, CS-30 fault injection | 28 | 28/28 passing |
+| Multimodal races | Vision (V1–V4) + ASR (A1–A4b) explorer regressions: 12 fix-and-mutation cases (clean with the fix, violating with only it removed), 4 outcome checks, bounded exploration | 17 | 17/17 passing |
+| **Total** | | **246** | **246/246 passing** |
 
 Reproduce: `source .venv/bin/activate && python -m pytest tests/ -v`. Every test also runs `TraceChecker` — 9 offline checks (CS-05, CS-08, CS-09, CS-13, CS-14, CS-17, CS-27, CS-33, plus the P1 structural check and the static no-wall-clock scan over `kernel/` and `store/`). The 4 CS checks added during bugfix round 3 (CS-05/09/14/33) have since been audited against the blueprint text by Phase 7 (see `sim/checker.py`'s module docstring for per-check findings — most hold up, CS-14 covers only half its stated invariant). CS-27 shipped with a fault-injection test (`tests/test_checker_cs27.py`) that proves it actually fires, not just that it produces zero violations on the existing suite. Phase 7's second session found CS-10 ("terminal call statuses never change") had no live enforcement at all despite the blueprint claiming it did — fixed directly in `store/ledgers.py` (not an offline `TraceChecker` rule, since there's no per-step call-status history retained to check a transition-and-overwrite after the fact) with its own fault-injection test, `tests/test_cs10_terminal_call_guard.py`. CS-15/CS-16/CS-24/CS-26/CS-30 are investigated and explicitly deferred with documented reasons, not silently skipped. 0 violations across all 149 tests (plus a new P-04 snapshot-validity check, with its own fault-injection tests) — notably, `TraceChecker` did **not** catch any of the three independent-review-round bugs on its own; all three were found by a fresh model reading the code and running real reproductions, not by this project's own test suite. Full-suite wall time: **~0.8s** on this machine's dev environment (Python 3.14), **1.20s** re-verified passing (149/149) inside the Docker image (Python 3.11, `docker run --rm janus`).
 
@@ -57,6 +64,66 @@ The hackathon's hidden evaluation kit — the actual scoring harness this projec
 | V0-V2 vs V3 multimodal | `vision_enabled` | `test_m06_conflicting_visual_text`: a vision-perceived value that disagrees with what the user said opens a conflict and blocks the step with a specific CLARIFY — vs. the slot binding simply being absent (a generic "what should X be" clarify, or nothing at all if unrelated), with the flag off. |
 | V0-V3 vs V4 identifier binding | `reference_bound_identifiers` | `test_c10_model_literal_identifier_refused`: a WRITE call with a model-invented identifier argument is refused and the plan blocks pending a resolving read/clarification — vs. the call being admitted and potentially acting on a fabricated identifier, with the flag off. |
 | Phase 5 vs Phase 6 speculative interpretation | `speculative_interpretation_enabled` | Real benchmark (`SimHarness`, INTERPRET latency 300ms, chunk spacing 150ms — the same numbers `docs/theme05_implementation_blueprint.md`'s T-06 scenario uses), measuring TTFS(EOT): time from the `end_of_turn` event to the first substantive SPEAK/FINAL/CLARIFY action. **Flag off: 300,000 µs** (the full INTERPRET round-trip happens only after EOT). **Flag on: 0 µs** (the speculative job resolved and was promoted while the turn was still open, so EOT itself triggers the plan dispatch and ACK in the same step) — a **100% reduction**, meeting T-06's acceptance bar ("TTFS(EOT) ≤ 1 ms when... promotion"). This specific number depends on the turn lasting long enough for the speculative job to resolve before EOT (here: 4 × 150ms ≥ 300ms); a turn shorter than the model's own latency falls back to the flag-off number exactly (nothing is lost, nothing double-counted — see `tests/test_phase6.py`'s in-flight-waiting and stale-cache-fallback tests for those paths). |
+
+## Reusable metrics module (T-04)
+
+`src/prism_rt/observability/metrics.py` (`docs/theme05_implementation_blueprint.md` §10.3, T-04) turns the ad-hoc, one-off TTFS calculation used for the Phase 6 row above into a tested, reusable function over a run's own `StepReport` trace (`list[kernel.step.StepReport]`, the same `reports`/`store` calling convention `sim/checker.py.TraceChecker` already established) — no wall clock, no kernel/store mutation, pure aggregation.
+
+**Cross-check, not just self-consistency**: `tests/test_metrics.py::test_ttfs_matches_the_documented_speculative_interpretation_numbers` reproduces the exact scenario this page's Phase 6 row describes by hand ("INTERPRET latency 300ms, chunk spacing 150ms") through `metrics.ttfs()` and asserts it returns the identical **300,000 µs / 0 µs** already published above — an independent implementation reproducing a previously hand-computed number exactly, not a number invented to match.
+
+Implemented: `ttfs` (all three trigger types), `tool_latency` (per tool + status), `interruption_to_cancellation_latency` (signal-anchored latency, plus the blueprint's own explicit safety count of calls invalidated-but-never-cancelled — must be 0, and is, on every existing test), `end_to_end_latency` (both of §10.3's definitions). Deliberately not implemented, with reasons documented in the module's own docstring: evidence-anchored cancel latency and cancel-delay-for-transitive-dependents (the trace doesn't preserve which specific fact-changing envelope invalidated which specific call, only aggregate per-step sets — the same class of limitation `sim/checker.py` already documents for CS-15/CS-26); event-anchored ratio and state-update timing (look derivable, not attempted this session); the full "Others" (INNOV §6.2) counter grab-bag (stale consumptions, omission escapes, etc. — each needs its own bespoke definition, deliberately out of a "small reusable module"'s scope).
+
+`tests/test_metrics.py` (24 tests): empty-trace handling for every function, percentile-math correctness on known datasets, substantive-action classification, TTFS windowing edge cases (nearest-action selection, per-trigger-type windowing, miss cases, zero-latency same-step promotion), tool-latency grouping and malformed-trace handling (a `tool_result` for a call never dispatched), cancel-latency signal-anchoring and the invalidated-never-cancelled safety count, end-to-end latency across single and multiple turns, non-mutation and reproducibility, plus three full `SimHarness` scenarios (normal, interruption/cancellation, multi-turn) and the measurements cross-check above. 190/190 passing across the full suite, Docker-verified on Python 3.11.
+
+## Adversarial schedule exploration (M4 / C17)
+
+`src/prism_rt/sim/explorer.py` re-runs 10 race scenarios (`tests/explore_scenarios.py`: correction vs. in-flight read, write vs. correction, cancel vs. write result, correction through a chained plan, slow tool vs. a new utterance, backchannel, retry vs. late success, manifest update mid-plan, speculative correction, inert tail + correction) under perturbed schedules — seeded random draws over tool/worker latencies and user-event gaps, plus *targeted* schedules that set a tool's latency so its result lands one step before, at, or after each later user event, each crossed with a slow (400ms) interpreter. Every run is checked by 9 oracles re-derived from state (not by calling kernel helpers): the full `TraceChecker`, the floor rule, the TRIAGE hold, FINAL-vs-consumed-call grounding, invalidated-never-cancelled, at most one confirmed write per lineage, liveness at a horizon that outlasts the slowest perturbed chain, W4 reconciliation, and a per-scenario semantic check. `sim/minimize.py` shrinks any failure back toward baseline one knob at a time until only the deviations the failure needs remain.
+
+| Run | Schedules | Failing | Violation kinds |
+|---|---|---|---|
+| First run, before this session's fixes (9 scenarios) | 471 | 126 | triage, stale-final (FINAL says Pune after "actually Mumbai"), liveness (lost first turn; stuck speculative correction) |
+| After the fixes — 3 seeds × 300 random + targeted | **9,142** | **0** | — |
+| Same explorer, `triage_hold_enabled=False` (every other fix still in place) | 3,122 | **704** | triage 704, **stale-final 256**, **superseded-write 76** |
+
+The last row is the evidence for what the TRIAGE hold buys: without it, 256 of 3,122 adversarial schedules (8.2%) give the user a stale answer after they corrected it, and 76 (2.4%) book a flight the user had already corrected away from. Minimized, the most common failure is a single deviation from baseline ("search latency 400ms → 220ms"): the result lands mid-correction and was released in the step the correction's end-of-turn closed the floor. Exploration is deterministic (same seed → same schedules → same findings) and fast: ~9,000 kernel runs in ~2 minutes; the suite runs a bounded version (`tests/test_triage_hold.py::test_bounded_exploration_of_every_scenario_is_clean`) on every test run.
+
+## C1 inert-tail promotion
+
+Same T-06 shape as the Phase 6 row above (INTERPRET 300ms), with the user adding "please" after the speculative interpretation of "Find flights to Pune" has finished. **With C1: TTFS(EOT) = 0 µs** (promoted across the inert tail, same step as EOT). **Without C1: 100,000 µs** here — the remaining latency of the re-dispatched interpretation; approaches the full 300ms model round-trip when the tail arrives right before EOT. Measured with `observability/metrics.ttfs` (`tests/test_c1_inert_tail.py`, which also sweeps 9 tail/EOT offsets and holds TTFS(EOT)=0 and the correct destination across all of them).
+
+### Multimodal extension (vision + ASR)
+
+9 more scenarios (`tests/explore_scenarios_mm.py`): V1 redirect to another frame, V2 new frame vs. old result, V3 vision failure vs. redirect, V4 slow vision + watchdog; A1 spoken request vs. typed correction, A2 earlier vs. newer speech with a transient failure, A3 ASR vs. end-of-turn, A4 persistent / A4b malformed transcription then a typed request. Before fixes: 4 of 8 baselines failed and 123 of 556 schedules failed on the first bounded run; 12 real bugs followed (see `currentStatus.md`), one of them in the text path (a composed answer grounded in pre-correction results).
+
+**Reproduce: `PYTHONPATH=src:.:tests python demo/run_exploration.py`** (deterministic, ~5 min; `--quick` for a smaller run).
+
+| All safeguards on | Scenarios | Schedules | Failing |
+|---|---|---|---|
+| Text/tool | 10 | 9,142 | **0** |
+| Multimodal | 9 | 8,194 | **0** |
+
+Each safeguard disabled *alone*, via a test-local patch (`tests/mutations.py`; production untouched), against the scenarios it protects:
+
+| Safeguard disabled | Schedules | Failing | What comes back |
+|---|---|---|---|
+| ASR capture order + AUTO dedupe window | 912 | 629 | lost/duplicated/out-of-order utterances, floor stuck open |
+| Malformed transcript counts as a failure | 453 | 453 | agent silent forever |
+| TRIAGE hold (text) | 916 | 265 | stale answers (86), superseded writes (98) |
+| Deferred end-of-turn | 453 | 208 | spoken request never answered |
+| TRIAGE hold (multimodal) | 927 | 161 | answers from superseded evidence (147) |
+| Vision job identity *(pre-existing)* | 921 | 142 | stale evidence, spurious clarifications |
+| Retarget clears a pending clarify | 453 | 86 | clarification asked after the user already redirected |
+| RESPONDING re-checks step validity | 936 | 74 | ungrounded / lost answers |
+| Retarget retracts old evidence | 936 | 67 | answer from the frame the user redirected away from |
+| Compose-text grounding | 463 | 24 | FINAL speaks words composed from pre-correction results |
+| Untranscribed speech is pending user content | 459 | 14 | answer given over speech still in ASR |
+| Watchdog exemption only for the salvage FINAL | 475 | 6 | genuine answer skips the hold after a watchdog |
+| Perception stops after the goal ends | 468 | 5 | paid vision calls continue forever |
+| Frame tie-break by arrival | 921 | 2 | rarest — needs every gap compressed onto one timestamp; pinned by a deterministic test |
+
+Bounded, not exhaustive: latency knobs are per worker *kind*, event order is always preserved, and the value grids are fixed. A clean run means no violation in the explored space, not a proof.
+
+Current suite: **246/246 passing**, Docker-verified on Python 3.11.
 
 ## Known gaps in this data
 

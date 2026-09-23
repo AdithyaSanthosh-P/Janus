@@ -50,19 +50,22 @@ Plus a **0.80×–1.20× quality multiplier** on "transcript naturalness, truthf
 
 | ID | Innovation | Verdict in the original analysis | Built? |
 |---|---|---|---|
-| C1 | Inert-tail promotion of speculative interpretation | Select (M1) | ✗ none |
-| C2 | Prepared response frames with typed holes | Select (M1) | ✗ none |
-| C3 | Event-anchored reaction scheduling | Select (M1) | ✗ none |
+| C1 | Inert-tail promotion of speculative interpretation | Select (M1) | ● built — `kernel/turns.py._inert_tail` promotes a finished speculative interpretation across a tail of inert words only, under the original guards (no value/cue/negation, no pending clarification, not commit-bearing); CS-30 now checked offline. Completed-cache case only: an *in-flight* job for the pre-tail prefix still falls back to a fresh dispatch |
+| C2 | Prepared response frames with typed holes | Select (M1) | ● built (Phase 5, `kernel/frames.py`) — this row previously said "✗ none"; that was stale |
+| C3 | Event-anchored reaction scheduling | Select (M1) | ✗ not built, deliberately — its purpose (the event's step only validates and selects; model work was done before) is already met for kernel-decided reactions by the same-step step engine (CANCEL/ACK/CLARIFY/hold decisions are computed in the triggering step), and for model-dependent ones by C1/C2/Phase 6 speculation. The remaining value (reaction *slots* under clock Model A) doesn't apply to this project's Model B |
 | C5 | Provenance-closed invalidation + value-based early cutoff | Select (M2) | ◑ transitive invalidation built (V2); value-based cutoff not |
-| C6 | Schema-complete read sets | Select (M2) | ◑ absence entries built (V2); read set still only covers bound params |
+| C6 | Schema-complete read sets | Select (M2) | ● built — every optional tool-schema param a plan step doesn't bind is now tracked (`kernel/executor.py._schema_complete_absence_keys`, `kernel/frames.py`), not just Planner-declared `absence_keys`; goal-level (non-tool-parameter) constraint tracking in frames/selection steps remains undone, documented in `currentStatus.md`'s C6 section as C8/CS-06 territory |
 | C7 | Evidence leases | Select (M2) | ● built (V3, simplified to flat timeout) |
 | C8 | Claim-typed atomic emission | Select (M2) | ◑ claim grades built (V2); overlay validation (CS-06) not |
 | C9 | Commit-last ordering + settled commit barrier | Select (M3) | Built — settle barrier (V2), commit-last ordering (Phase 5) |
 | C10 | Reference-bound write arguments | Select (M3) | ● built (V4) |
 | C4, C11 | Planner bypass; effect verification probes | Reject | — (correctly skipped) |
-| C12–C17 | Agreement confidence, demand-driven perception, dual-channel cross-check, EV-gated speculation, criticality scheduling, adversarial exploration | Defer / support / cut | ✗ (C13 partially: V3's demand trigger *is* C13) |
+| C12, C14, C15 | Agreement confidence, dual-channel cross-check, EV-gated speculation | Defer / diagnostic | ✗ as originally decided (need labelled data / kit rules) |
+| C13 | Demand-driven perception | Support (folded into C3) | ● V3's Interpreter-demand trigger *is* C13 |
+| C16 | Criticality-aware worker scheduling | Support (folded into C3) | ✗ not needed: neither runner caps job concurrency, so there is no queue to prioritize; would matter only under a live concurrency limit |
+| C17 | Adversarial schedule exploration + shared monitors | Select (M4) | ● built, bounded — `sim/explorer.py` + `sim/minimize.py`: seeded random + *targeted* (result-lands-next-to-a-user-event) schedules over 19 race scenarios incl. vision (V1–V4) and ASR (A1–A4b), 11 oracles, 1-minimal shrinking. Found 3 real bugs on its first run and 12 more once extended to vision/ASR (see `currentStatus.md`); 17,336 schedules clean after the fixes, and each of 14 safeguards brings violations back when disabled alone. The full PCT/mutation engine stays cut, as originally planned |
 
-**Score: 2 of 9 fully, 4 partially, 3 not started.** The three untouched ones (C1, C2, C3) are all in "M1" — the milestone the original analysis ranked *first*.
+**Score (re-audited against the code): 7 of 10 selected fully built (C1, C2, C6, C7, C9, C10, C17), 2 partial (C5 — no value-based early cutoff; C8 — no overlay validation), 1 deliberately not built (C3, see its row).** Two built mechanisms ship default-off (C9's commit-last ordering, C10) — a judged-run configuration decision, not a code gap.
 
 ### 3.2 Scenario coverage (`docs/theme05_implementation_blueprint.md` catalog — 64 scenarios)
 

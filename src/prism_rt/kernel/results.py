@@ -112,13 +112,23 @@ class ResultRouter:
             _settle_pending_effect(store, call, ok=True)
             return RouteOutcome(call.call_id, "consumed", CallStatus.CONSUMED, "RES.CONSUMED")
 
-        # result.status == "error": tool executed but failed
-        retryable = bool((result.error or {}).get("retryable"))
-        store.call_ledger.set_status(call.call_id, CallStatus.FAILED)
+        # result.status == "error": tool executed but failed. §5.8 step 6 /
+        # P0.2 (docs/original_design_audit.md D3): a definite error result
+        # always means the effect FAILED -- known for certain, never
+        # ambiguous (UNKNOWN is reserved for a genuinely unclear outcome: a
+        # malformed payload above, or a dropped/timed-out result, P0.4).
+        # `retryable` (True / False / absent-from-the-payload -> None) is
+        # persisted on the call itself so PlanExecutor -- the only other
+        # place that needs it -- can decide *whether* to retry (S-01,
+        # kernel/executor.py); it never changes the effect status here.
+        # FAILED never blocks G5/G6 by design (BLOCKING_EFFECT_STATUSES's
+        # own comment), so a legitimate retryable-write retry still passes
+        # the gate normally.
+        raw_retryable = (result.error or {}).get("retryable")
+        retryable = raw_retryable if isinstance(raw_retryable, bool) else None
+        store.call_ledger.set_status(call.call_id, CallStatus.FAILED, retryable=retryable)
         if call.kind == StepKind.WRITE:
             effect = store.effect_ledger.by_fingerprint(call.fingerprint)
             if effect is not None and effect.status == EffectStatus.PENDING:
-                store.effect_ledger.set_status(
-                    call.fingerprint, EffectStatus.FAILED if retryable else EffectStatus.UNKNOWN
-                )
+                store.effect_ledger.set_status(call.fingerprint, EffectStatus.FAILED)
         return RouteOutcome(call.call_id, "consumed", CallStatus.FAILED, "RES.CONSUMED_ERROR")

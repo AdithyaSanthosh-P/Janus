@@ -30,6 +30,7 @@ from prism_rt.model.types import (
     GoalStatus,
     Provenance,
     TaskState,
+    ToolMutability,
 )
 from prism_rt.store.session import SessionStore
 
@@ -150,6 +151,22 @@ class EmissionGate:
             assert isinstance(body, ToolCallBody)
             store.call_ledger.update(body.call_id, status=CallStatus.IN_FLIGHT, emitted_ts_us=now_us)
             store.dep_index.register(body.call_id, ia.read_set)
+            # P0.4 (call deadlines, docs/original_design_audit.md D4,
+            # blueprint §5.9): a liveness nudge only -- kernel/executor.py.
+            # PlanExecutor.expire_deadlines re-checks every IN_FLIGHT call's
+            # elapsed time from scratch every step regardless of whether
+            # this timer ever fires, same pattern as G10's settle wake
+            # (kernel/commit.py._schedule_settle_wake). What makes it
+            # actually matter is P0.1: entry.py's idle loop (and
+            # SimHarness.fire_liveness_if_due in tests) honours
+            # StepReport.next_wake_us, so a dropped result's deadline gets
+            # checked even with no further external event.
+            deadline_ms = (
+                store.config.call_deadline_write_ms
+                if body.mutability == ToolMutability.STATE_CHANGING
+                else store.config.call_deadline_read_ms
+            )
+            store.timers.schedule(f"deadline:{body.call_id}", now_us + deadline_ms * 1000)
         elif ia.action_type == ActionType.CANCEL:
             body = ia.body
             assert isinstance(body, CancelBody)

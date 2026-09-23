@@ -24,9 +24,17 @@ as everything else for free.
 
 from __future__ import annotations
 
-from config.templates import ACK_DEFAULT, CLARIFY_TEMPLATE, FINAL_FALLBACK, FRESH_VIEW_REQUEST, INFORM_DUPLICATE_WRITE
+from config.templates import (
+    ACK_DEFAULT,
+    CLARIFY_RETRY_WRITE,
+    CLARIFY_TEMPLATE,
+    FINAL_FALLBACK,
+    FRESH_VIEW_REQUEST,
+    INFORM_DUPLICATE_WRITE,
+    INFORM_UNKNOWN_WRITE_OUTCOME,
+)
 from prism_rt.kernel.commit import CommitGate
-from prism_rt.kernel.interpret_apply import active_goal_id
+from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, user_content_pending
 from prism_rt.model.actions import FinalBody, IntendedAction, SpeakBody
 from prism_rt.model.types import (
     EMPTY_READ_SET,
@@ -36,6 +44,7 @@ from prism_rt.model.types import (
     ConflictStatus,
     EffectStatus,
     FactStatus,
+    FloorState,
     GoalStatus,
     JobKind,
     Provenance,
@@ -49,13 +58,54 @@ _RECONCILE_TEMPLATES = {
 }
 
 
+def _is_watchdog_salvage(store) -> bool:
+    """Only the salvage FINAL itself is exempt from the hold -- found by
+    `sim/explorer.py` (V4): exempting everything once the watchdog had
+    fired let a *genuine* answer race past a pending correction."""
+    gid = active_goal_id(store)
+    if gid is None:
+        return False
+    text = store.facts.get(f"compose.{gid}.text")
+    return text is not None and text.status != FactStatus.RETRACTED and text.provenance.source == "watchdog"
+
+
 class FastResponder:
     def __init__(self) -> None:
         self._commit_gate = CommitGate()
 
     def decide(self, store, now_us: int, step_no: int, *, skip_call_ids: frozenset[str] = frozenset()) -> list[IntendedAction]:
+        # CS-28 (`docs/prompt 2.txt` line 370, policy speak_during_open_turn,
+        # default OFF): no SPEAK, CLARIFY, or FINAL while the floor is
+        # USER_TURN_OPEN -- this method is the only source of those three
+        # action types (CANCEL/TOOL_CALL come from InvalidationEngine/
+        # CommitGate elsewhere, unaffected). Returning [] here rather than
+        # filtering afterward means none of this method's "already handled"
+        # facts (ack/clarify/inform-sent) get set either, so a floor-blocked
+        # notice is deferred to the next step the floor is closed, never
+        # silently dropped.
+        if store.floor_state == FloorState.USER_TURN_OPEN and not store.config.speak_during_open_turn:
+            return []
+        # TRIAGE hold (`docs/prompt 2.txt` §8.3, transitions 23-31): the
+        # floor just closed on a turn spoken during an active goal, but
+        # that turn hasn't been interpreted yet -- it may be a correction
+        # ("actually Mumbai") that makes whatever we'd say now stale. Found
+        # by `sim/explorer.py`: the floor rule held FINAL("Pune flights
+        # found") while the user said "actually Mumbai", then released it
+        # in the very step their EOT closed the floor. Hold, don't discard:
+        # every responder output is re-derived from state each step, so
+        # once the interpretation lands, whatever is still valid is spoken
+        # and whatever it invalidated simply never is. The watchdog's
+        # salvage FINAL is exempt -- the budget is spent either way.
+        if (
+            store.config.triage_hold_enabled
+            and active_goal_id(store) is not None
+            and user_content_pending(store)
+            and not _is_watchdog_salvage(store)
+        ):
+            return []
         actions: list[IntendedAction] = []
         actions.extend(self._inform_blocked_writes(store, now_us, step_no, skip_call_ids))
+        actions.extend(self._inform_write_timeout(store, now_us, step_no))
         actions.extend(self._reconcile_completed_after_cancel(store, now_us, step_no))
 
         gid = active_goal_id(store)
@@ -151,6 +201,13 @@ class FastResponder:
         )
         friendly = target.rsplit(".", 1)[-1]
         text = CLARIFY_TEMPLATE.format(target=friendly)
+        # P0.4 (S-02, docs/original_design_audit.md D4): a write-timeout
+        # retry confirmation (kernel/executor.py.PlanExecutor.
+        # expire_deadlines) is a yes/no question, not a missing-slot one --
+        # the generic "what should X be" template would be nonsensical
+        # against a `retry:<lineage>` target.
+        if target.startswith("retry:"):
+            text = CLARIFY_RETRY_WRITE
         # V3: a slot blocked by an open perception conflict gets a more
         # specific question naming both candidate values, rather than the
         # generic "what should X be" (§9.4 "Claim acceptance" example:
@@ -174,8 +231,8 @@ class FastResponder:
         ]
 
     def _final(self, store, goal, now_us: int, step_no: int) -> list[IntendedAction]:
-        text_fact = store.facts.get(f"compose.{goal.goal_id}.text")
-        if text_fact is None or text_fact.status == FactStatus.RETRACTED:
+        text_fact = grounded_compose_text(store, goal.goal_id)
+        if text_fact is None:
             return []
         text = text_fact.value or FINAL_FALLBACK
         # Phase A: a watchdog-salvaged FINAL must never claim completion —
@@ -227,7 +284,14 @@ class FastResponder:
             if call.kind != StepKind.WRITE or call.call_id in skip_call_ids:
                 continue
             decision = self._commit_gate.evaluate(call, store, now_us)
-            if decision.allowed or decision.rule_id not in ("G5", "G6"):
+            # P0.4 (docs/original_design_audit.md D4): G7 (unknown_effect_
+            # outcome) added alongside G5/G6 -- a DENY on a retry
+            # confirmation (kernel/interpret_apply.py) leaves the
+            # blocking effect UNKNOWN rather than resolving it, and a
+            # subsequent replan attempt for the same lineage would
+            # otherwise sit G7-blocked with no message at all, a silent
+            # block this check already exists to prevent for G5/G6.
+            if decision.allowed or decision.rule_id not in ("G5", "G6", "G7"):
                 continue
             already = store.facts.get(f"inform.{call.call_id}.sent")
             if already is not None and already.status != FactStatus.RETRACTED:
@@ -239,12 +303,69 @@ class FastResponder:
                 Provenance(source="system", step_no=step_no, ts_us=now_us),
                 rule="responder.inform_duplicate",
             )
+            # P0.2 (docs/original_design_audit.md D3): "already taken care
+            # of" is only true when the blocking effect is actually
+            # CONFIRMED -- a PENDING or UNKNOWN blocker (G6/G5's other two
+            # blocking statuses) means we genuinely don't know the outcome
+            # yet, so saying "done" would be exactly the false completion
+            # claim D3 found. CS-06's spirit: a claim must be supported by
+            # ledger state, not just "some earlier attempt exists".
+            blocking_effect = store.effect_ledger.by_fingerprint(call.fingerprint)
+            text = (
+                INFORM_DUPLICATE_WRITE
+                if blocking_effect is not None and blocking_effect.status == EffectStatus.CONFIRMED
+                else INFORM_UNKNOWN_WRITE_OUTCOME
+            )
             actions.append(
                 IntendedAction(
                     action_type=ActionType.SPEAK,
-                    body=SpeakBody(text=INFORM_DUPLICATE_WRITE, kind="inform"),
+                    body=SpeakBody(text=text, kind="inform"),
                     read_set=EMPTY_READ_SET,
                     rule_id="responder.inform_duplicate",
+                )
+            )
+        return actions
+
+    def _inform_write_timeout(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
+        """P0.4 (S-02, docs/original_design_audit.md D4): a write whose
+        call deadline expired (`kernel/executor.py.PlanExecutor.
+        expire_deadlines` emits CANCEL for it; `propose_ready_calls`'
+        `CANCEL_REQUESTED`/`"deadline_expired"` branch settles its
+        effect) has an effect that's genuinely UNKNOWN, not a definite
+        failure -- distinct from P0.2's non-retryable-error case (which
+        always settles the effect to FAILED, never UNKNOWN). Say so
+        honestly once, in the same INFORM wording a blocked duplicate
+        write with an UNKNOWN effect already uses (`_inform_blocked_
+        writes`); the accompanying "should I try again?" CLARIFY comes
+        from `_clarify` once that same branch's own `_ask_for` call put
+        the goal into CLARIFYING."""
+        actions: list[IntendedAction] = []
+        for call in store.call_ledger.all():
+            if (
+                call.kind != StepKind.WRITE
+                or call.status != CallStatus.CANCEL_REQUESTED
+                or call.cancel_reason != "deadline_expired"
+            ):
+                continue
+            effect = store.effect_ledger.by_fingerprint(call.fingerprint)
+            if effect is None or effect.status != EffectStatus.UNKNOWN:
+                continue
+            already = store.facts.get(f"timeout_inform.{call.call_id}.sent")
+            if already is not None and already.status != FactStatus.RETRACTED:
+                continue
+            store.facts.set(
+                f"timeout_inform.{call.call_id}.sent",
+                True,
+                FactStatus.COMMITTED,
+                Provenance(source="system", step_no=step_no, ts_us=now_us),
+                rule="responder.inform_write_timeout",
+            )
+            actions.append(
+                IntendedAction(
+                    action_type=ActionType.SPEAK,
+                    body=SpeakBody(text=INFORM_UNKNOWN_WRITE_OUTCOME, kind="inform"),
+                    read_set=EMPTY_READ_SET,
+                    rule_id="responder.inform_write_timeout",
                 )
             )
         return actions

@@ -60,7 +60,9 @@ class CallLedger:
         self._calls[call_id] = updated
         return updated
 
-    def set_status(self, call_id: str, status: CallStatus, *, cancel_reason: str | None = None) -> CallRecord:
+    def set_status(
+        self, call_id: str, status: CallStatus, *, cancel_reason: str | None = None, retryable: bool | None = None
+    ) -> CallRecord:
         """CS-10 (`docs/theme05_implementation_blueprint.md` line 2314):
         "Terminal call statuses never change." The blueprint states this is
         enforced by `set_call_status` raising; before Phase 7 audited it,
@@ -84,6 +86,8 @@ class CallLedger:
         changes: dict = {"status": status}
         if cancel_reason is not None:
             changes["cancel_reason"] = cancel_reason
+        if retryable is not None:
+            changes["retryable"] = retryable
         return self.update(call_id, **changes)
 
     def all(self) -> list[CallRecord]:
@@ -127,6 +131,9 @@ class EffectLedger:
 
     def by_lineage(self, lineage: str) -> EffectRecord | None:
         return self._by_lineage.get(lineage)
+
+    def all(self) -> list[EffectRecord]:
+        return list(self._by_fingerprint.values())
 
     def set_status(self, fingerprint: str, status: EffectStatus) -> EffectRecord:
         self._guard.check()
@@ -227,10 +234,10 @@ class TurnLog:
         self._open_turn_id = turn_id
         return turn
 
-    def append_chunk(self, turn_id: str, ts_us: int, text: str) -> Turn:
+    def append_chunk(self, turn_id: str, ts_us: int, text: str, source: str = "text") -> Turn:
         self._guard.check()
         turn = self._turns[turn_id]
-        updated = dataclasses.replace(turn, chunks=turn.chunks + (ChunkRecord(ts_us=ts_us, text=text),))
+        updated = dataclasses.replace(turn, chunks=turn.chunks + (ChunkRecord(ts_us=ts_us, text=text, source=source),))
         self._turns[turn_id] = updated
         return updated
 
@@ -268,6 +275,9 @@ class JobTable:
 
     def get(self, job_id: str) -> JobRecord | None:
         return self._jobs.get(job_id)
+
+    def all(self) -> list[JobRecord]:
+        return list(self._jobs.values())
 
     def set_status(self, job_id: str, status: JobStatus) -> JobRecord:
         self._guard.check()

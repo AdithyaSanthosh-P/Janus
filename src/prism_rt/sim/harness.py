@@ -41,12 +41,19 @@ class MockToolRegistry:
         self._tools = tools or {}
         self._scheduled: dict[str, tuple[int, str, object, dict | None]] = {}
         self._cancelled: set[str] = set()
+        self._calls_per_tool: dict[str, int] = {}
 
     def on_call(self, call_id: str, tool_name: str, args: dict, ts_us: int) -> None:
         cfg = self._tools.get(tool_name, {})
         latency_us = int(cfg.get("latency_ms", 0)) * 1000
         due_us = ts_us + latency_us
+        # `fail_first`: the tool's first N calls error, later ones succeed
+        # (retry-vs-late-success races, `sim/explorer.py`).
+        n = self._calls_per_tool.get(tool_name, 0)
+        self._calls_per_tool[tool_name] = n + 1
         error = cfg.get("error")
+        if error is None and n < int(cfg.get("fail_first", 0)):
+            error = {"code": "transient", "message": "scripted transient failure"}
         status = "error" if error else "ok"
         response = cfg.get("response")
         self._scheduled[call_id] = (due_us, status, response, error)
@@ -128,6 +135,42 @@ class SimHarness:
         """Move time forward with no new external events, delivering
         whatever mock tool results are due by then."""
         return self.send(ts_us)
+
+    def fire_liveness_if_due(self) -> StepReport | None:
+        """P0.1 (C9c, docs/original_design_audit.md): the deterministic
+        simulator's analogue of `entry.py`'s real-time idle loop / Model A
+        CoupledClock -- jumps straight to the earliest TimerWheel due time
+        (`StepReport.next_wake_us`, e.g. G10's settle wake in
+        `kernel/commit.py`) and steps with a `timer_fired`
+        (`liveness_fire=True`) envelope, rather than blindly advancing by a
+        fixed increment the way `advance`/`drain` do.
+
+        Model B (`docs/prompt 2.txt` §13.2) never advances on its own, so a
+        test driving the harness *only* through this method (no `send`/
+        `advance` calls of its own) reproduces the exact "harness sends
+        nothing more" shape D1 was found under -- proving a settle-blocked
+        write is released by honouring `next_wake_us` alone, not by the
+        test script happening to advance time regardless (which is what
+        `drain`'s fixed-`step_us` loop does, and why it never caught D1).
+        Returns None (no step taken) when no timer is currently scheduled.
+        """
+        due_us = self.store.timers.next_due_us()
+        if due_us is None:
+            return None
+        self.clock.advance_to(max(due_us, self.clock.now_us()))
+        now_us = self.clock.now_us()
+        raw = {
+            "ts_us": now_us,
+            "type": "timer_fired",
+            "payload": {"timer_id": "liveness", "timer_kind": "liveness", "liveness_fire": True},
+        }
+        envelopes = self.codec.decode(raw, seq=self._next_seq())
+        envelopes.extend(self._due_tool_result_envelopes(now_us))
+        envelopes.extend(self._due_worker_result_envelopes(now_us))
+        report = self.kernel.step(envelopes)
+        self._register_new_calls(report)
+        self.run_log.reports.append(report)
+        return report
 
     def _due_tool_result_envelopes(self, now_us: int) -> list[Envelope]:
         envelopes: list[Envelope] = []

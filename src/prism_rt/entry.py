@@ -36,7 +36,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from prism_rt.adapters.clock import SteppedClock
+from prism_rt.adapters.clock import ClockPort, CoupledClock, SteppedClock
 from prism_rt.adapters.codec import HarnessCodec
 from prism_rt.adapters.output_writer import OutputWriter, WriteResult
 from prism_rt.config import DEFAULT_CONFIG, Config
@@ -108,7 +108,7 @@ class Runtime:
         """
         meta = meta or {}
         session = SessionStore.new(self.config, IdGenerator(meta.get("seed", 0)))
-        clock = SteppedClock()
+        clock: ClockPort = CoupledClock() if self.config.clock_model == "A" else SteppedClock()
         codec = HarnessCodec()
         writer = _QueueWriter(actions, codec)
         log = DecisionLogger(meta.get("log_path")) if self.config.log_decisions else None
@@ -120,6 +120,13 @@ class Runtime:
         wall_start = time.monotonic()
         watchdog = ScenarioWatchdog(self.config.watchdog_timeout_ms / 1000, callback=lambda: None)
         watchdog.start()
+        # P0.1 (C9c, docs/original_design_audit.md): the earliest time a
+        # driver-visible timer (TimerWheel, e.g. G10's settle wake in
+        # kernel/commit.py) needs the kernel to step again, per the most
+        # recent StepReport. Without honouring this, a write blocked behind
+        # settle_ms never gets re-evaluated once the harness stops sending
+        # events, and stalls until the watchdog salvages it (D1).
+        next_wake_us: int | None = None
 
         while True:
             if watchdog.check():
@@ -142,18 +149,41 @@ class Runtime:
                     "type": "worker_result",
                     "payload": {"job_id": result.job_id, "kind": result.kind, "status": result.status, "proposal": result.proposal},
                 }
-                self._step_safely(kernel, codec, raw, seq, summary)
+                report = self._step_safely(kernel, codec, raw, seq, summary)
+                if report is not None:
+                    next_wake_us = report.next_wake_us
+
+            if next_wake_us is not None:
+                # Model B never advances on its own — jump the virtual clock
+                # straight to the due timer (there is nothing to wait for).
+                # Model A's CoupledClock already tracks real elapsed wall
+                # time on its own, so this only ever fires once that much
+                # real time has genuinely passed.
+                if clock.model == "B" and next_wake_us > clock.now_us():
+                    clock.advance_to(next_wake_us)
+                if next_wake_us <= clock.now_us():
+                    seq += 1
+                    raw = {
+                        "ts_us": clock.now_us(),
+                        "type": "timer_fired",
+                        "payload": {"timer_id": "liveness", "timer_kind": "liveness", "liveness_fire": True},
+                    }
+                    report = self._step_safely(kernel, codec, raw, seq, summary)
+                    next_wake_us = report.next_wake_us if report is not None else None
+                    continue  # re-check watchdog + workers before waiting on events again
 
             try:
                 raw = await asyncio.wait_for(events.get(), timeout=_POLL_INTERVAL_S)
             except asyncio.TimeoutError:
-                continue  # nothing new; loop back to re-check watchdog + poll workers
+                continue  # nothing new; loop back to re-check watchdog + poll workers + liveness
 
             if not raw:
                 break
             seq += 1
             self._advance_clock(clock, raw)
-            self._step_safely(kernel, codec, raw, seq, summary)
+            report = self._step_safely(kernel, codec, raw, seq, summary)
+            if report is not None:
+                next_wake_us = report.next_wake_us
 
         return summary
 
@@ -166,23 +196,26 @@ class Runtime:
         except (TypeError, ValueError):
             pass  # unparseable timestamp -> clock just doesn't advance; decode below still degrades gracefully
 
-    def _step_safely(self, kernel: Kernel, codec: HarnessCodec, raw: dict, seq: int, summary: RunSummary) -> None:
+    def _step_safely(self, kernel: Kernel, codec: HarnessCodec, raw: dict, seq: int, summary: RunSummary) -> StepReport | None:
         """P-02: one bad event, or one bug the codec's own tolerance
         didn't anticipate, must never end the scenario. `codec.decode`
         already returns `[]` for anything it can't make sense of rather
         than raising; this is the second line of defense for whatever
         gets past that anyway (a reducer bug, an unexpected exception deep
-        in a worker's proposal handling, etc.)."""
+        in a worker's proposal handling, etc.). Returns the StepReport so
+        the caller can read `next_wake_us` (P0.1 liveness); None on either
+        failure path above, or if the event decoded to nothing."""
         try:
             envelopes = codec.decode(raw, seq=seq)
         except Exception:  # noqa: BLE001 - decode is documented tolerant; this is pure insurance
-            return
+            return None
         try:
             report = kernel.step(envelopes)
         except Exception:  # noqa: BLE001 - a single step's failure must not end the scenario
-            return
+            return None
         summary.reports.append(report)
         summary.step_count += 1
+        return report
 
     async def run_scenario_io(self, io: HarnessIO, meta: dict | None = None) -> RunSummary:
         """Synchronous-callback adapter over `run_scenario`, for a harness

@@ -21,6 +21,7 @@ from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.model.types import (
     BindingKind,
     CallStatus,
+    EffectStatus,
     FactStatus,
     GoalRecord,
     GoalStatus,
@@ -180,12 +181,151 @@ def _abandon_goal(txn: StoreTxn, goal_id: str, now_us: int, step_no: int, *, eve
     )
 
 
+def grounded_compose_text(store, goal_id: str):
+    """The goal's composed final text, or None if there is none *or* it was
+    grounded in facts that have since changed. A COMPOSE result (or a
+    rendered response frame) records the read set it was built from as
+    `derivation_read_set`; once that is invalid, the text describes
+    results the user has since corrected away from and must never be
+    spoken -- callers treat it exactly like "no text yet" and compose again.
+    Found by `sim/explorer.py`: a COMPOSE job grounded in the Pune result
+    landed the instant the user said "actually Mumbai"; after the Mumbai
+    search completed, the existing text suppressed a fresh COMPOSE and the
+    FINAL spoke the Pune-grounded text under a Mumbai snapshot. Texts with
+    no derivation read set (abort, watchdog salvage, honest failure) are
+    not grounded in results and are always usable."""
+    fact = store.facts.get(f"compose.{goal_id}.text")
+    if fact is None or fact.status == FactStatus.RETRACTED:
+        return None
+    grounding = fact.provenance.derivation_read_set
+    if grounding is not None and not store.facts.is_valid(grounding).is_valid:
+        return None
+    return fact
+
+
+def set_grounded_compose_text(txn: StoreTxn, goal_id: str, text: str, provenance: Provenance, *, rule: str) -> None:
+    """Write a result-grounded final text. `FactStore.set` is a no-op when
+    value and status are unchanged (D4) -- so a re-compose that produces
+    the *same words* from *new* results would keep the old, stale
+    grounding, and `grounded_compose_text` would reject it forever (found
+    by the explorer as a COMPOSE re-dispatch livelock). Retract first
+    whenever the grounding differs, so the new grounding always lands."""
+    key = f"compose.{goal_id}.text"
+    existing = txn.facts.get(key)
+    if (
+        existing is not None
+        and existing.status != FactStatus.RETRACTED
+        and existing.provenance.derivation_read_set != provenance.derivation_read_set
+    ):
+        txn.facts.retract(key, rule=f"{rule}.regrounded")
+    txn.facts.set(key, text, FactStatus.COMMITTED, provenance, rule=rule)
+
+
+_PENDING = "session.pending_interpretation_turn"
+_QUEUED = "session.queued_interpretation_turns"
+
+
+def _active(fact) -> bool:
+    return fact is not None and fact.status != FactStatus.RETRACTED
+
+
+def interpretation_busy(store) -> bool:
+    """True while some closed user turn is still awaiting interpretation --
+    either the ordinary pending marker, or a turn waiting on its own
+    in-flight speculative job (Phase 6's `eot_waiting`). While this holds,
+    the turn might be a correction, so nothing that could go stale because
+    of it may take effect: this is the TRIAGE hold (`docs/prompt 2.txt`
+    §8.3), checked by `FastResponder` (speech) and `CommitGate` (writes)."""
+    if _active(store.facts.get(_PENDING)):
+        return True
+    return any(
+        key.endswith(".eot_waiting") and _active(fact) and fact.value
+        for key, fact in store.facts.by_prefix("spec_interpret.").items()
+    )
+
+
+def audio_covered_by_text(store, obs) -> bool:
+    """AUTO mode (`docs/prompt 2.txt` line 909): the harness's own text
+    transcript covers this clip's capture window, so its ASR output will be
+    discarded -- and since later text can never un-cover it, that is known
+    the moment the covering chunk arrives."""
+    if store.config.audio_mode != "auto":
+        return False
+    lo = obs.capture_ts_us
+    hi = lo + store.config.asr_dedupe_window_ms * 1000
+    return any(
+        chunk.source == "text" and lo <= chunk.ts_us <= hi
+        for turn in store.turn_log.all()
+        for chunk in turn.chunks
+    )
+
+
+def transcription_pending(store) -> bool:
+    """An audio clip the user spoke hasn't been transcribed yet -- user
+    content not yet understood, same as an uninterpreted turn. A clip
+    already covered by text isn't pending: the text *is* its content."""
+    if not store.config.asr_enabled or store.config.audio_mode == "transcript_primary":
+        return False
+    return any(
+        not obs.asr_done and not audio_covered_by_text(store, obs)
+        for obs in store.evidence.observations_by_modality("audio")
+    )
+
+
+def user_content_pending(store) -> bool:
+    """What the TRIAGE hold waits on (`docs/prompt 2.txt` transition 23:
+    "Interruption signal, or user content while a goal is active"): a
+    closed turn awaiting interpretation, *or* speech still being
+    transcribed. Found by `sim/explorer.py` (A2): with only the former, a
+    FINAL for "Pune" went out while the user's next clip -- "actually
+    Mumbai" -- was still in ASR. Deliberately separate from
+    `interpretation_busy`, which orders the interpretation queue and must
+    not wait on ASR (the queue only advances when interpretations land)."""
+    return interpretation_busy(store) or transcription_pending(store)
+
+
+def enqueue_interpretation(txn: StoreTxn, turn_id: str, provenance: Provenance, *, rule: str) -> None:
+    """Request interpretation of `turn_id`. If an earlier turn is still
+    being interpreted, queue behind it rather than overwrite it -- found by
+    `sim/explorer.py`: "mm-hmm" closing before "Find flights to Pune" had
+    been interpreted replaced the pending marker, and the first request's
+    result was then silently discarded (spec transition 7: new user content
+    before interpretation completes is a rapid follow-up, not a
+    replacement). Turns are interpreted strictly in order."""
+    if interpretation_busy(txn.store):
+        queued = txn.facts.get(_QUEUED)
+        current = tuple(queued.value) if _active(queued) else ()
+        txn.facts.set(_QUEUED, current + (turn_id,), FactStatus.COMMITTED, provenance, rule=rule)
+        return
+    txn.facts.set(_PENDING, turn_id, FactStatus.COMMITTED, provenance, rule=rule)
+
+
+def advance_interpretation_queue(txn: StoreTxn, now_us: int, step_no: int, *, event_id: str) -> None:
+    """Once nothing is outstanding, promote the next queued turn (if any)
+    to pending, so TaskStateMachine dispatches its INTERPRET job."""
+    if interpretation_busy(txn.store):
+        return
+    queued = txn.facts.get(_QUEUED)
+    if not _active(queued) or not queued.value:
+        return
+    head, rest = queued.value[0], tuple(queued.value[1:])
+    prov = Provenance(source="user", event_id=event_id, turn_id=head, step_no=step_no, ts_us=now_us)
+    txn.facts.set(_PENDING, head, FactStatus.COMMITTED, prov, rule="interpret_apply.dequeued")
+    if rest:
+        txn.facts.set(_QUEUED, rest, FactStatus.COMMITTED, prov, rule="interpret_apply.dequeued")
+    else:
+        txn.facts.retract(_QUEUED, rule="interpret_apply.dequeued")
+
+
 def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int, step_no: int, *, event_id: str) -> str | None:
     """Returns the goal_id this interpretation ended up affecting, if any."""
     # Read-set validity was already checked before this is called (the
-    # WORKER_RESULT handler rejects a stale proposal upstream), so it's
-    # always safe to consume the marker unconditionally here.
-    txn.facts.retract("session.pending_interpretation_turn", rule="interpret_apply.consumed")
+    # WORKER_RESULT handler rejects a stale proposal upstream). Consume the
+    # pending marker only if it names *this* turn -- a speculative/eot-
+    # waiting application must never consume a different turn's marker.
+    pending = txn.facts.get(_PENDING)
+    if _active(pending) and pending.value == interp.turn_id:
+        txn.facts.retract(_PENDING, rule="interpret_apply.consumed")
 
     if interp.act == InterpretAct.ABORT:
         gid = active_goal_id(txn.store)
@@ -273,7 +413,47 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 rule="interpret_apply.commit_intent",
             )
 
-        if interp.act == InterpretAct.ANSWER_CLARIFICATION or changed:
+        if interp.act in (InterpretAct.ANSWER_CLARIFICATION, InterpretAct.CONFIRM, InterpretAct.DENY) or changed:
+            # P0.4 (S-02 / blueprint §5.10's `write_unknown` reconcile
+            # item, docs/original_design_audit.md D4): a `retry:<lineage>`
+            # clarify_target (kernel/executor.py.PlanExecutor.
+            # propose_ready_calls' CANCEL_REQUESTED/"deadline_expired"
+            # branch, set when a write's deadline expired with a
+            # genuinely unknown outcome) is a yes/no confirmation, not a
+            # missing-slot question. CONFIRM/ANSWER_CLARIFICATION ("yes")
+            # flips the blocking UNKNOWN effect to FAILED -- mirroring
+            # RECONCILE.USER_RETRY -- so that same branch, re-examining
+            # the step on the next replan, takes its "already resolved"
+            # path and proposes exactly one further attempt. DENY ("no")
+            # still ends the wait (retracted below either way) but leaves
+            # the effect UNKNOWN, permanently unresolved -- CONFIRM/
+            # ANSWER_CLARIFICATION are the only acts this project builds
+            # a path to actually retry through.
+            target_fact = txn.facts.get(f"goal.{gid}.clarify_target")
+            if (
+                target_fact is not None
+                and target_fact.status != FactStatus.RETRACTED
+                and isinstance(target_fact.value, str)
+                and target_fact.value.startswith("retry:")
+            ):
+                lineage = target_fact.value[len("retry:") :]
+                if interp.act == InterpretAct.DENY:
+                    # Recorded so PlanExecutor's CANCEL_REQUESTED/
+                    # "deadline_expired" branch stops re-asking once
+                    # declined -- without this, the goal returns to
+                    # PLANNING (below), re-examines the same still-
+                    # UNKNOWN effect, and asks again forever.
+                    txn.facts.set(
+                        f"retry_declined.{lineage}",
+                        True,
+                        FactStatus.COMMITTED,
+                        Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
+                        rule="interpret_apply.retry_declined",
+                    )
+                else:
+                    effect = txn.store.effect_ledger.by_lineage(lineage)
+                    if effect is not None and effect.status == EffectStatus.UNKNOWN:
+                        txn.store.effect_ledger.set_status(effect.fingerprint, EffectStatus.FAILED)
             txn.facts.retract(f"goal.{gid}.clarify_target", rule="interpret_apply.clarify_resolved")
         if changed and goal.task_state not in (TaskState.COMPLETED, TaskState.FAILED):
             changed_names = {d.name for d in interp.slot_deltas if d.scope != "session"}

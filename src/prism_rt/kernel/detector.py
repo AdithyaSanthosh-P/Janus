@@ -27,7 +27,29 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from config.lexicons import ABORT_CUES, BACKCHANNEL_TOKENS, CORRECTION_CUES, HOLD_CUES, VISUAL_CUES
+from config.lexicons import (
+    ABORT_CUES,
+    BACKCHANNEL_TOKENS,
+    CORRECTION_CUES,
+    HOLD_CUES,
+    INERT_TOKENS,
+    NEGATION_TOKENS,
+    VISUAL_CUES,
+)
+
+_WORD_RE = re.compile(r"[a-z']+")
+
+
+def is_inert_tail(text: str) -> bool:
+    """C1 (`docs/prompt 3.txt`): true iff every word in `text` is in the
+    inert lexicon (politeness, fillers) and none is a negation. An empty
+    tail is not "inert" -- that case is exact-digest promotion, handled
+    separately. Cue/value checks are the caller's job (they need catalog
+    and session context); this is only the lexical test."""
+    words = _WORD_RE.findall(text.lower())
+    if not words:
+        return False
+    return all(w in INERT_TOKENS and w not in NEGATION_TOKENS for w in words)
 
 
 @dataclass(frozen=True)

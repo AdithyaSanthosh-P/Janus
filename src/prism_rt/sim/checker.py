@@ -112,9 +112,13 @@ addressing the reason first):
   bound cleanly, producing a false positive) — deferred rather than
   shipped unsound.
 - **CS-30** ("a promoted interpretation differs from the full text only by
-  an inert tail") depends on inert-tail promotion, which this project has
-  never built (explicitly deferred/CUT scope, see `currentStatus.md`) —
-  nothing exists yet for this check to verify.
+  an inert tail") was deferred only because inert-tail promotion (C1)
+  didn't exist. It does now (`kernel/turns.py._inert_tail`), and every
+  such promotion leaves a `spec_interpret.<turn>.promoted_tail` fact, so
+  `_check_cs30` verifies each one independently: the recorded tail really
+  is the end of that turn's transcript, and every word in it is in the
+  inert lexicon with no negation -- re-derived here with its own
+  tokenization, not by calling the kernel's `is_inert_tail`.
 """
 
 from __future__ import annotations
@@ -124,7 +128,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from prism_rt.model.types import ActionType, StepKind, ToolMutability, fingerprint_for
+from prism_rt.model.types import ActionType, BindingKind, EffectStatus, StepKind, ToolMutability, fingerprint_for
 
 _BANNED_CALLS = {
     ("time", "time"),
@@ -153,10 +157,118 @@ class TraceChecker:
         violations.extend(self._check_cs05(reports))
         violations.extend(self._check_cs09(reports, store))
         violations.extend(self._check_cs14(reports, store))
+        violations.extend(self._check_cs15(reports, store))
         violations.extend(self._check_cs33(reports))
         violations.extend(self._check_cs27(reports))
         violations.extend(self._check_p04(reports))
         violations.extend(self._check_cs03(reports))
+        violations.extend(self._check_cs30(store))
+        violations.extend(self._check_stale_consumption(store))
+        violations.extend(self._check_false_claim(reports, store))
+        return violations
+
+    # P1 (docs/original_design_audit.md, "stale consumption (provenance
+    # closure at consumption)"): D2's exact shape -- a call bound via a
+    # STEP_OUTPUT binding must be grounded in its upstream step's
+    # *current* result, not one a later correction superseded. Final-
+    # store-state only (the same limitation `_check_cs17` already
+    # documents for snapshot equality: no per-step fact history is
+    # retained), but sound for it: by the time a scenario settles, a
+    # correctly-invalidated chain has no such mismatch left standing,
+    # while P0.3 reverted leaves one behind forever (D2's own repro).
+    # Acceptance proof: reverting kernel/executor.py._bind's STEP_OUTPUT
+    # fallback back to reading `result.<call_id>` directly (pre-P0.3)
+    # makes this fire on the D2 scenario (tests/test_checker_stale_
+    # consumption.py).
+    def _check_stale_consumption(self, store) -> list[Violation]:
+        if store is None:
+            return []
+        violations = []
+        for goal in store.goals.all():
+            plan = store.plans.current(goal.goal_id)
+            if plan is None:
+                continue
+            for step in plan.steps:
+                call = store.call_ledger.latest_by_step(goal.goal_id, step.step_key)
+                if call is None or call.status.value != "consumed":
+                    continue
+                for param, binding in step.bindings.items():
+                    if binding.kind != BindingKind.STEP_OUTPUT:
+                        continue
+                    upstream = store.call_ledger.latest_by_step(goal.goal_id, binding.step_key)
+                    if upstream is None or upstream.status.value != "consumed":
+                        continue
+                    result_fact = store.facts.get(f"result.{upstream.call_id}")
+                    if result_fact is None or result_fact.status.value == "retracted":
+                        continue
+                    value = result_fact.value
+                    if binding.path:
+                        for part in binding.path.split("."):
+                            if isinstance(value, dict):
+                                value = value.get(part)
+                            elif isinstance(value, list) and part.lstrip("-").isdigit():
+                                index = int(part)
+                                value = value[index] if -len(value) <= index < len(value) else None
+                            else:
+                                value = None
+                            if value is None:
+                                break
+                    if param in call.args and call.args[param] != value:
+                        violations.append(
+                            Violation(
+                                "STALE-CONSUME",
+                                f"call {call.call_id} (step {step.step_key}) consumed with {param}={call.args[param]!r} "
+                                f"but upstream {upstream.call_id} (step {binding.step_key}) currently returns {value!r}",
+                            )
+                        )
+        return violations
+
+    # P1 ("false claim"): "That's already been taken care of." may only
+    # be spoken when at least one write's effect is genuinely CONFIRMED
+    # (kernel/responder.py._inform_blocked_writes, P0.2/D3). The same
+    # invariant `sim/explorer.py`'s per-step oracle already checks live;
+    # this is the offline/final-state form, checked over the whole
+    # emitted-action stream against final ledger state.
+    def _check_false_claim(self, reports: list, store) -> list[Violation]:
+        if store is None:
+            return []
+        from config.templates import INFORM_DUPLICATE_WRITE
+
+        confirmed = any(e.status == EffectStatus.CONFIRMED for e in store.effect_ledger.all())
+        if confirmed:
+            return []
+        violations = []
+        for report in reports:
+            for er in report.emit_report.emitted:
+                a = er.action
+                if a.action_type == ActionType.SPEAK and getattr(a.body, "text", None) == INFORM_DUPLICATE_WRITE:
+                    violations.append(
+                        Violation("FALSE-CLAIM", f"'already taken care of' spoken (step {report.step_no}) with no CONFIRMED effect anywhere in the run", report.step_no)
+                    )
+        return violations
+
+    # CS-30: every inert-tail promotion (C1) promoted across genuinely
+    # inert words only, and the recorded tail is the actual end of the
+    # turn's transcript.
+    def _check_cs30(self, store) -> list[Violation]:
+        if store is None:
+            return []
+        from config.lexicons import INERT_TOKENS, NEGATION_TOKENS
+
+        violations = []
+        for key, fact in sorted(store.facts.by_prefix("spec_interpret.").items()):
+            if not key.endswith(".promoted_tail") or fact.status.value == "retracted":
+                continue
+            turn_id = key[len("spec_interpret."):-len(".promoted_tail")]
+            tail = str(fact.value)
+            words = [w.strip(".,!?;:\"") for w in tail.lower().split()]
+            words = [w for w in words if w]
+            if not words or any(w not in INERT_TOKENS or w in NEGATION_TOKENS for w in words):
+                violations.append(Violation("CS-30", f"turn {turn_id} promoted across non-inert tail {tail!r}"))
+            turn = store.turn_log.get(turn_id)
+            full = " ".join(c.text for c in turn.chunks) if turn is not None else ""
+            if not full.endswith(tail) or full == tail:
+                violations.append(Violation("CS-30", f"turn {turn_id} promoted tail {tail!r} is not a strict suffix of its transcript"))
         return violations
 
     # CS-03 (Phase 7): events are applied in (ts_us, class, seq) order.
@@ -281,6 +393,49 @@ class TraceChecker:
                                     )
                                 )
                             inflight_writes[lineage] = call.call_id
+        return violations
+
+    # CS-15 (blueprint line 2312): "No write is emitted before settle_ms
+    # after its committing turn, or while floor open, triage, or
+    # interpretation pending." P1 (docs/original_design_audit.md):
+    # previously unimplementable offline -- a write CommitGate blocked
+    # left no trace at all in the emitted-action stream, so there was no
+    # way to tell "correctly held back" from "never existed yet". Now
+    # checkable directly against `StepReport.gate_rejections` (added this
+    # package) plus emission timestamps. Two halves: (a) a call must
+    # never be both rejected and admitted in the *same* step (a
+    # structural sanity check on CommitGate's own single-pass semantics);
+    # (b) when `settle_barrier_enabled`, a WRITE TOOL_CALL's own emission
+    # step must be at or after `last EOT + settle_ms`. The floor/triage
+    # halves of CS-15 are covered by CS-28 (floor) and the triage-hold
+    # oracle in `sim/explorer.py`, not duplicated here.
+    def _check_cs15(self, reports: list, store) -> list[Violation]:
+        if store is None or not store.config.settle_barrier_enabled:
+            return []
+        violations = []
+        last_eot_ts: int | None = None
+        settle_us = store.config.settle_ms * 1000
+        for report in reports:
+            for env in report.batch:
+                if env.payload_type == "end_of_turn":
+                    last_eot_ts = env.ts_us
+            rejected_ids = {r.call_id for r in report.gate_rejections}
+            for er in report.emit_report.emitted:
+                if er.action.action_type != ActionType.TOOL_CALL or er.action.body.mutability.name != "STATE_CHANGING":
+                    continue
+                call_id = er.action.body.call_id
+                if call_id in rejected_ids:
+                    violations.append(
+                        Violation("CS-15", f"call {call_id} both rejected and admitted in step {report.step_no}", report.step_no)
+                    )
+                if last_eot_ts is not None and (report.now_us - last_eot_ts) < settle_us:
+                    violations.append(
+                        Violation(
+                            "CS-15",
+                            f"write {call_id} emitted only {report.now_us - last_eot_ts}us after EOT at {last_eot_ts} (settle_ms={store.config.settle_ms})",
+                            report.step_no,
+                        )
+                    )
         return violations
 
     # CS-33: Every CANCEL targets an issued, non-terminal call.

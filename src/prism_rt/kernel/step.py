@@ -23,7 +23,7 @@ from typing import Callable
 from prism_rt.adapters.clock import ClockPort
 from prism_rt.adapters.output_writer import OutputWriter
 from prism_rt.config import Config
-from prism_rt.kernel.commit import CommitGate
+from prism_rt.kernel.commit import CommitGate, GateRejection
 from prism_rt.kernel.emission import EmissionGate, EmitReport
 from prism_rt.kernel.executor import PlanExecutor
 from prism_rt.kernel.invalidation import InvalidationEngine, InvalidationReport
@@ -49,6 +49,9 @@ class StepReport:
     invalidation: InvalidationReport
     emit_report: EmitReport
     next_wake_us: int | None = None  # V2: earliest time a driver must call step() again (settle liveness)
+    # P1 (docs/original_design_audit.md): every PROPOSED call CommitGate
+    # blocked this step, and why (unblocks CS-15 offline).
+    gate_rejections: tuple[GateRejection, ...] = ()
 
 
 class Kernel:
@@ -122,6 +125,9 @@ class Kernel:
             # the ordinary INVALIDATE phase below, same step, same as any
             # other fact change (P3).
             self._perception_scheduler.expire_leases(txn, now_us, step_no)
+            # Same clock-driven shape: a held ASR transcript whose dedupe
+            # window has elapsed is released even if no event arrived.
+            self._asr_scheduler.release_due(txn, now_us, step_no)
 
             # Phase 3: INVALIDATE
             changed_keys = txn.changed_keys()
@@ -131,12 +137,16 @@ class Kernel:
             # PerceptionScheduler, PlanExecutor, CommitGate, FastResponder.
             intended = []
             intended.extend(self._invalidation_engine.cancellation_actions(invalidation, self.store))
+            # P0.4: a call sitting IN_FLIGHT past its deadline with no
+            # result is treated as dropped (D4) -- an ordinary CANCEL,
+            # same channel as the line above, not a direct status write.
+            intended.extend(self._plan_executor.expire_deadlines(self.store, now_us))
             dispatch_requests = list(self._task_state_machine.decide(self.store, now_us, step_no))
             dispatch_requests.extend(self._perception_scheduler.decide(self.store, now_us, step_no))
             dispatch_requests.extend(self._asr_scheduler.decide(self.store, now_us, step_no))
             dispatch_requests.extend(self._frame_scheduler.decide(self.store, now_us, step_no))
             self._plan_executor.propose_ready_calls(self.store, now_us, step_no)
-            admitted_actions, admitted_call_ids = self._commit_gate.scan_and_admit(self.store, now_us)
+            admitted_actions, admitted_call_ids, gate_rejections = self._commit_gate.scan_and_admit(self.store, now_us)
             intended.extend(admitted_actions)
             intended.extend(self._fast_responder.decide(self.store, now_us, step_no, skip_call_ids=admitted_call_ids))
 
@@ -171,4 +181,5 @@ class Kernel:
             invalidation=invalidation,
             emit_report=emit_report,
             next_wake_us=self.store.timers.next_due_us(),
+            gate_rejections=tuple(gate_rejections),
         )

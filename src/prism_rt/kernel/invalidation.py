@@ -20,6 +20,18 @@ class InvalidationReport:
     changed_keys: frozenset[str]
     invalidated_call_ids: tuple[str, ...]
     discarded_call_ids: tuple[str, ...]
+    # P1 (docs/original_design_audit.md, "StepReport instrumentation...
+    # the per-call invalidation cause (unblocks evidence-anchored
+    # latency)"): call_id -> the specific changed key whose digest
+    # mismatch invalidated it (the first match against that call's own
+    # read set, deterministic since read sets are built from sorted
+    # keys). Previously only the aggregate `changed_keys`/`invalidated_
+    # call_ids` sets were recorded, with no link from one specific
+    # envelope/fact-change to one specific call -- `observability/
+    # metrics.py`'s own docstring names this exact gap as why evidence-
+    # anchored cancel latency and cancel-delay-for-transitive-dependents
+    # aren't implemented.
+    invalidation_cause: "tuple[tuple[str, str], ...]" = ()
 
 
 class InvalidationEngine:
@@ -33,8 +45,9 @@ class InvalidationEngine:
         all_changed = set(changed_keys)
         invalidated: list[str] = []
         discarded: list[str] = []
+        cause: list[tuple[str, str]] = []
 
-        invalidated.extend(self._mark_dependents(all_changed, store, discarded))
+        invalidated.extend(self._mark_dependents(all_changed, store, discarded, cause))
 
         if txn is not None and store.config.transitive_invalidation:
             # Fixpoint: a fact derived from something that just went stale
@@ -47,15 +60,18 @@ class InvalidationEngine:
                 if not newly_retracted:
                     break
                 all_changed.update(newly_retracted)
-                invalidated.extend(self._mark_dependents(set(newly_retracted), store, discarded))
+                invalidated.extend(self._mark_dependents(set(newly_retracted), store, discarded, cause))
 
         return InvalidationReport(
             changed_keys=frozenset(all_changed),
             invalidated_call_ids=tuple(invalidated),
             discarded_call_ids=tuple(discarded),
+            invalidation_cause=tuple(cause),
         )
 
-    def _mark_dependents(self, keys: set[str], store: SessionStore, discarded: list[str]) -> list[str]:
+    def _mark_dependents(
+        self, keys: set[str], store: SessionStore, discarded: list[str], cause: list[tuple[str, str]]
+    ) -> list[str]:
         dep_ids = store.dep_index.dependents(keys)
         invalidated: list[str] = []
         for dep_id in dep_ids:
@@ -64,6 +80,14 @@ class InvalidationEngine:
                 continue  # a dependent that isn't a call (future: jobs, utterances)
             if call.status in TERMINAL_CALL_STATUSES:
                 continue  # terminal calls never change state again
+
+            # P1: which of this round's changed keys is actually in this
+            # call's own read set -- deterministic (read sets are built
+            # from sorted keys, `store/facts.py.build_read_set`), so the
+            # first match is stable across replays.
+            causing_key = next((entry.key for entry in call.read_set.entries if entry.key in keys), None)
+            if causing_key is not None:
+                cause.append((dep_id, causing_key))
 
             if call.status == CallStatus.IN_FLIGHT:
                 store.call_ledger.set_status(dep_id, CallStatus.INVALIDATED)

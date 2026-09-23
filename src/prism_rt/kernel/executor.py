@@ -19,7 +19,10 @@ import re
 from dataclasses import dataclass
 
 from prism_rt.kernel.interpret_apply import active_goal_id
+from prism_rt.model.actions import CancelBody, IntendedAction
 from prism_rt.model.types import (
+    EMPTY_READ_SET,
+    ActionType,
     BindingKind,
     CallRecord,
     CallStatus,
@@ -60,6 +63,67 @@ class BindResult:
 
 
 class PlanExecutor:
+    def expire_deadlines(self, store, now_us: int) -> list[IntendedAction]:
+        """P0.4 (call deadlines, docs/original_design_audit.md D4,
+        blueprint §5.9): a call still `IN_FLIGHT` past its deadline
+        (`Config.call_deadline_read_ms`/`call_deadline_write_ms`) is
+        treated as dropped instead of silently hanging until the
+        scenario-wide watchdog. Clock-driven -- checked every step
+        regardless of events; the timer scheduled in `kernel/emission.py.
+        _apply_side_effects` is a pure liveness hint (P0.1 is what makes
+        the driver actually re-step often enough for this to matter with
+        no further external event).
+
+        Emits an ordinary CANCEL (reason `"deadline_expired"`) for each
+        expired call, through the *same* channel every other cancellation
+        in this architecture uses (`kernel/invalidation.py.
+        cancellation_actions`'s `IntendedAction`/`EmissionGate` path) --
+        not a direct internal status mutation. This matters for real
+        reasons, not just trace tidiness: nothing in the trace otherwise
+        tells a real harness (or `sim/checker.py`'s CS-14) that this
+        specific call has been given up on before a replacement might be
+        proposed, and the call's real-world side effect could still be
+        genuinely in flight. Emitting CANCEL also means a late, real
+        result -- if the drop was actually just slow, not permanent --
+        is correctly routed through `ResultRouter`'s existing
+        `CANCEL_REQUESTED -> completed_after_cancel` branch and W4's
+        reconciliation (`kernel/responder.py._reconcile_completed_after_
+        cancel`), instead of being silently discarded as a duplicate of
+        an already-terminal call.
+
+        The retry-table decision itself (§5.9: reads retry bounded by
+        `max_read_retries`; writes get an honest, ambiguous-outcome
+        INFORM + CLARIFY instead of auto-retrying) happens in
+        `propose_ready_calls`'s `CANCEL_REQUESTED` branch, once this
+        CANCEL has actually been emitted and applied (`cancel_reason ==
+        "deadline_expired"` distinguishes it from an ordinary correction-
+        triggered cancel, which gets an immediate fresh attempt with no
+        such gating).
+
+        Only ever acts on a call still `CallStatus.IN_FLIGHT` -- a call
+        already `CANCEL_REQUESTED` (an interruption/correction in
+        flight, R-04's shape) is a different status and is silently
+        skipped here, so its own late "deliver anyway" result is never
+        misread as a timeout."""
+        read_deadline_us = store.config.call_deadline_read_ms * 1000
+        write_deadline_us = store.config.call_deadline_write_ms * 1000
+        actions: list[IntendedAction] = []
+        for call in store.call_ledger.all():
+            if call.status != CallStatus.IN_FLIGHT or call.emitted_ts_us is None:
+                continue
+            deadline_us = write_deadline_us if call.kind == StepKind.WRITE else read_deadline_us
+            if now_us - call.emitted_ts_us < deadline_us:
+                continue
+            actions.append(
+                IntendedAction(
+                    action_type=ActionType.CANCEL,
+                    body=CancelBody(target_call_id=call.call_id, reason="deadline_expired"),
+                    read_set=EMPTY_READ_SET,
+                    rule_id="P0.4",
+                )
+            )
+        return actions
+
     def propose_ready_calls(self, store, now_us: int, step_no: int) -> list[str]:
         gid = active_goal_id(store)
         if gid is None:
@@ -115,11 +179,91 @@ class PlanExecutor:
                     continue  # still correct — carry over, nothing to do
                 attempt = latest.attempt + 1
             elif latest is not None and latest.status == CallStatus.FAILED:
-                max_retries = store.config.max_write_retries if step.kind == StepKind.WRITE else store.config.max_read_retries
+                # S-01 / §5.9 (P0.2, docs/original_design_audit.md D3): a
+                # write is retried only when the failed result explicitly
+                # said `retryable: true` -- absent or `false` means the
+                # tool told us this outcome is final. Retrying anyway was
+                # exactly D3: a second call with the identical fingerprint
+                # got created, was immediately blocked by CommitGate G5
+                # (the first attempt's effect, now FAILED/UNKNOWN, still
+                # occupies that fingerprint), and sat PROPOSED forever --
+                # while FastResponder spoke a false "already taken care
+                # of". Reads are the mirror image: absent still retries
+                # (bounded by max_read_retries), only an explicit `false`
+                # blocks it -- §5.9's retry table gives reads and writes
+                # opposite defaults for the absent case.
+                if step.kind == StepKind.WRITE:
+                    if latest.retryable is not True:
+                        self._fail_goal(
+                            store, gid, step, now_us, step_no,
+                            reason=f"{step.tool} failed and can't be safely retried",
+                        )
+                        continue
+                    max_retries = store.config.max_write_retries
+                else:
+                    if latest.retryable is False:
+                        self._fail_goal(store, gid, step, now_us, step_no)
+                        continue
+                    max_retries = store.config.max_read_retries
                 if latest.attempt > max_retries:
                     self._fail_goal(store, gid, step, now_us, step_no)
                     continue
                 attempt = latest.attempt + 1
+            elif latest is not None and latest.status == CallStatus.CANCEL_REQUESTED and latest.cancel_reason == "deadline_expired":
+                # P0.4 (S-01/S-02, docs/original_design_audit.md D4):
+                # distinct from an ordinary correction-triggered cancel
+                # just below -- this call was cancelled because its
+                # deadline expired (kernel/executor.py.PlanExecutor.
+                # expire_deadlines), not because a correction made it
+                # stale. §5.9's retry table applies, not "immediate fresh
+                # attempt, no gating".
+                if step.kind == StepKind.WRITE:
+                    lineage = f"{gid}:{step.step_key}"
+                    declined = store.facts.get(f"retry_declined.{lineage}")
+                    if declined is not None and declined.status != FactStatus.RETRACTED and declined.value:
+                        # kernel/interpret_apply.py: the user already said
+                        # "no" to retrying this exact lineage -- ending
+                        # the wait must not mean asking again forever.
+                        # The effect stays UNKNOWN (permanently
+                        # unresolved); this project builds no automatic
+                        # retry path for a declined confirmation.
+                        self._fail_goal(
+                            store, gid, step, now_us, step_no,
+                            reason=f"you asked me not to retry {step.tool}, so I stopped — its outcome is still unknown",
+                        )
+                        continue
+                    effect = store.effect_ledger.by_fingerprint(latest.fingerprint)
+                    if effect is not None and effect.status == EffectStatus.PENDING:
+                        # The outcome is genuinely unknown, not a definite
+                        # failure (never FAILED here -- that's P0.2's
+                        # definite-error case).
+                        store.effect_ledger.set_status(latest.fingerprint, EffectStatus.UNKNOWN)
+                        effect = store.effect_ledger.by_fingerprint(latest.fingerprint)
+                    if effect is not None and effect.status == EffectStatus.UNKNOWN:
+                        # Still unresolved. Bounded exactly like a
+                        # retryable write error (P0.2, max_write_retries)
+                        # -- a *confirmed* retry that also times out must
+                        # not ask again forever.
+                        if latest.attempt > store.config.max_write_retries:
+                            self._fail_goal(store, gid, step, now_us, step_no)
+                            continue
+                        # No auto-retry; ask the user (kernel/responder.py
+                        # renders this as INFORM + CLARIFY) and wait.
+                        # Re-entering this branch on a later step (still
+                        # unanswered) is a harmless no-op -- _ask_for only
+                        # speaks once per target.
+                        self._ask_for(store, gid, f"retry:{lineage}", now_us, step_no)
+                        continue
+                    # The user has since confirmed (kernel/interpret_
+                    # apply.py flipped the effect UNKNOWN -> FAILED) --
+                    # exactly one further attempt, same as an ordinary
+                    # correction-triggered cancel below.
+                    attempt = latest.attempt + 1
+                else:
+                    if latest.attempt > store.config.max_read_retries:
+                        self._fail_goal(store, gid, step, now_us, step_no)
+                        continue
+                    attempt = latest.attempt + 1
             elif latest is not None and latest.status == CallStatus.CANCEL_REQUESTED:
                 # A step whose call was just cancelled (a correction
                 # invalidated it) gets a fresh attempt immediately — this is
@@ -360,9 +504,20 @@ class PlanExecutor:
                         read_keys.append(derived_key)
                         continue
 
-                result_key = f"result.{upstream.call_id}"
+                # P0.3 (C5 core, docs/original_design_audit.md D2): read
+                # the step-key-scoped fact (kernel/reducers.py._write_
+                # stepout_fact), not `result.<call_id>` directly — that
+                # key is pinned to one specific call forever and never
+                # goes stale, so a downstream step bound to it silently
+                # kept reading a superseded upstream call's result after a
+                # correction re-ran that step under a new call_id. This
+                # fact is stable across re-executions of the same step and
+                # carries the producing call's own read set, so it's
+                # retracted/changed exactly when the upstream step
+                # actually re-runs with different bindings.
+                result_key = f"stepout.{goal_id}.{binding.step_key}"
                 fact = store.facts.get(result_key)
-                if fact is None:
+                if fact is None or fact.status == FactStatus.RETRACTED:
                     return None, result_key
                 value = fact.value
                 if binding.path:
@@ -392,8 +547,56 @@ class PlanExecutor:
                     return None, key
                 read_keys.append(key)
 
+            read_keys.extend(self._schema_complete_absence_keys(store, goal_id, step, args))
+
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return BindResult(args=args, read_set=read_set), None
+
+    def _schema_complete_absence_keys(self, store, goal_id: str, step, args: dict) -> list[str]:
+        """C6 (`docs/prompt 3.txt`): schema-complete read sets. A call's
+        read set must cover every parameter in its tool's schema, not just
+        the ones this plan step's bindings happened to mention -- otherwise
+        a consumed result stays valid after the user states an optional
+        constraint the call never read at all (the "omission escape" bug
+        class, L2: "results consumed despite a later-set optional parameter
+        in the same goal before FINAL"). Every OPTIONAL schema parameter
+        not already in `args` gets tracked too, at the same `slot.$G.<name>`
+        key every FACT binding and `step.absence_keys` entry already use --
+        `build_read_set` below resolves each to whatever it currently is
+        (present or absent), so this is "track the key," not "force
+        absent." Required parameters are excluded: `validate_args` already
+        refuses to create a call missing one, so a required param is
+        always already bound by the time a call is actually created --
+        adding it here would be a harmless no-op at best, never a gap.
+
+        absence_sensitivity (policy default in the architecture doc: user-
+        sourced facts only) -- a slot name currently targeted by the
+        goal's tracked perception question is deliberately excluded. V3's
+        own claim-acceptance path (`kernel/perception.py.on_perception_
+        result`) already governs exactly those names (conflict handling,
+        clarify-resolution, leases); the only non-user writer of
+        `slot.<goal>.<name>` facts in this codebase is perception, so
+        without this exemption a HIGH-confidence vision claim landing on
+        an unrelated optional parameter would retroactively invalidate
+        already-completed work purely because no call ever happened to
+        bind that name -- exactly the perception-driven churn the doc
+        calls out as the default policy to avoid."""
+        perception_governed: frozenset[str] = frozenset()
+        if store.config.vision_enabled:
+            question = store.evidence.latest_active_question(goal_id)
+            if question is not None:
+                perception_governed = frozenset(t.name for t in question.targets)
+        spec = store.catalog.get(step.tool)
+        if spec is None:
+            return []
+        schema = spec.params_schema or {}
+        required = frozenset(schema.get("required") or ())
+        properties = schema.get("properties") or {}
+        return [
+            f"slot.{goal_id}.{name}"
+            for name in properties
+            if name not in args and name not in required and name not in perception_governed
+        ]
 
     def _param_schema(self, store, tool: str, param: str) -> dict:
         spec = store.catalog.get(tool)

@@ -98,6 +98,28 @@ def drain(harness, max_us: int, *, step_us: int = 10_000, stop_on_final: bool = 
     return actions
 
 
+def drain_liveness_only(harness, *, max_iterations: int = 50, stop_on_final: bool = True) -> tuple[list, int]:
+    """P0.1 (C9c): like `drain`, but advances *only* via
+    `SimHarness.fire_liveness_if_due()` -- never a blind fixed-`step_us`
+    tick. Proves a scenario can make progress on TimerWheel liveness alone
+    (T-05), the same "harness sends nothing more" shape D1 was found under
+    (`docs/original_design_audit.md`). Returns (actions, liveness_fire_count);
+    stops once no timer is due (nothing left to wait for) or `max_iterations`
+    is hit, whichever comes first."""
+    actions = []
+    fires = 0
+    for _ in range(max_iterations):
+        report = harness.fire_liveness_if_due()
+        if report is None:
+            break
+        fires += 1
+        for er in report.emit_report.emitted:
+            actions.append(er.action)
+            if stop_on_final and er.action.action_type.value == "final":
+                return actions, fires
+    return actions, fires
+
+
 @pytest.fixture
 def config() -> Config:
     """V0/V1 test files were written and timed against V1-era semantics

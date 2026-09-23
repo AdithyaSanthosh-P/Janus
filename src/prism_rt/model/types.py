@@ -264,6 +264,14 @@ class CallRecord:
     created_step: int = 0
     emitted_ts_us: int | None = None
     cancel_reason: str | None = None
+    # P0.2 (S-01, docs/original_design_audit.md D3): the `retryable` flag
+    # the tool's own error result carried, persisted here since it's the
+    # one thing PlanExecutor needs to decide *whether* to retry a FAILED
+    # call and ResultRouter (which sees the raw result) is the only place
+    # that ever knows it. None means "absent from the error payload" (a
+    # distinct case from an explicit False -- see kernel/executor.py's
+    # retry-eligibility check) or "not yet failed".
+    retryable: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -410,6 +418,7 @@ class ComposeProposal:
 class ChunkRecord:
     ts_us: int
     text: str
+    source: str = "text"  # "text" (harness transcript) | "asr" (our own transcription) -- AUTO-mode dedupe needs to tell them apart
 
 
 @dataclass(frozen=True)
