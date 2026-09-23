@@ -1,0 +1,77 @@
+{
+  "scenario_id": "conf_14_disfluent_text",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L2",
+    "description": "Fillers splitting the preposition from its place."
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 1500
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "I want to, uh, go to, um, ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 900,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Oslo I think, Friday.",
+        "end_of_turn": true
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "searched_city",
+        "type": "tool_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "oslo"
+          ]
+        },
+        "must_complete": true,
+        "weight": 0.5
+      },
+      {
+        "id": "final_grounded",
+        "type": "final_response_contains",
+        "any_of": [
+          "oslo",
+          "fl-osl"
+        ],
+        "weight": 0.25
+      },
+      {
+        "id": "state_destination",
+        "type": "state_snapshot",
+        "path": "slots.destination",
+        "any_of": [
+          "oslo"
+        ],
+        "weight": 0.25
+      }
+    ],
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    }
+  }
+}

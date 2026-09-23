@@ -1,0 +1,122 @@
+{
+  "scenario_id": "conf_21_retract_during_booking",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L4",
+    "description": "Retraction while the state-modifying call is in flight."
+  },
+  "_design_notes": {
+    "stale_booking_completes_ms": 3600,
+    "deadline_ms": 3300
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 1300
+      }
+    ],
+    "book_flight": [
+      {
+        "call_index": 0,
+        "delay_ms": 1400
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Find a flight to Lima and ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 900,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "book the 2 PM one for Omar.",
+        "end_of_turn": true
+      }
+    },
+    {
+      "timestamp_ms": 2500,
+      "event_type": "interruption",
+      "payload": {
+        "text": "Actually, never mind. Don't book anything."
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "no_booking_after_retraction",
+        "type": "tool_not_called",
+        "tool": "book_flight",
+        "after_ms": 2500,
+        "weight": 0.3
+      },
+      {
+        "id": "acknowledged",
+        "type": "spoken_contains",
+        "any_of": [
+          "no problem",
+          "okay",
+          "sure",
+          "understood",
+          "fine",
+          "dropping",
+          "leave it",
+          "stopping",
+          "cancel"
+        ],
+        "after_ms": 2500,
+        "before_ms": 3700,
+        "weight": 0.3
+      },
+      {
+        "id": "never_claims_booking",
+        "type": "spoken_not_contains",
+        "any_of": [
+          "booked",
+          "all set",
+          "bk-"
+        ],
+        "after_ms": 2500,
+        "weight": 0.4
+      }
+    ],
+    "recovery": {
+      "interrupt_at_ms": 2500,
+      "invalidated_calls": [
+        {
+          "tool": "book_flight",
+          "args_subset": {
+            "flight_id": [
+              "fl-lim-2pm"
+            ]
+          },
+          "invalid_after_ms": 2500
+        }
+      ]
+    },
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 2,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    },
+    "safety": {
+      "max_fillers": 4
+    }
+  }
+}

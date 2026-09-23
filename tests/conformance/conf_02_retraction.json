@@ -1,0 +1,119 @@
+{
+  "scenario_id": "conf_02_retraction",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L2",
+    "description": "User retracts the request outright. Work must be abandoned and no results reported."
+  },
+  "_design_notes": {
+    "stale_completes_ms": 3110,
+    "deadline_ms": 2400,
+    "margin_ms": 710
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 2400
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Can you find flights to ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 700,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Miami next Friday?",
+        "end_of_turn": true
+      }
+    },
+    {
+      "timestamp_ms": 1600,
+      "event_type": "interruption",
+      "payload": {
+        "text": "Actually, never mind. Forget it."
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "no_search_after_retraction",
+        "type": "tool_not_called",
+        "tool": "flight_search",
+        "after_ms": 1600,
+        "weight": 0.3
+      },
+      {
+        "id": "acknowledged_retraction",
+        "type": "spoken_contains",
+        "any_of": [
+          "no problem",
+          "okay",
+          "sure",
+          "understood",
+          "fine",
+          "dropping",
+          "leave it",
+          "stopping",
+          "nothing sent",
+          "never mind",
+          "forget"
+        ],
+        "after_ms": 1600,
+        "before_ms": 2800,
+        "weight": 0.3
+      },
+      {
+        "id": "no_false_results_reported",
+        "type": "spoken_not_contains",
+        "any_of": [
+          "i found",
+          "here are the flights",
+          "fl-mia",
+          "departing",
+          "price"
+        ],
+        "after_ms": 1600,
+        "weight": 0.4
+      }
+    ],
+    "recovery": {
+      "interrupt_at_ms": 1600,
+      "invalidated_calls": [
+        {
+          "tool": "flight_search",
+          "args_subset": {
+            "destination": [
+              "miami",
+              "mia"
+            ]
+          },
+          "invalid_after_ms": 1600
+        }
+      ]
+    },
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 2,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    }
+  }
+}

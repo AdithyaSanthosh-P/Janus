@@ -1,0 +1,88 @@
+{
+  "scenario_id": "conf_07_empty_result",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L2",
+    "description": "Successful tool call with zero results. Must say so rather than fabricate a citation."
+  },
+  "tool_overrides": {
+    "lookup_manual": [
+      {
+        "call_index": 0,
+        "delay_ms": 1300
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "My toaster is making a strange rattling noise - ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 900,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "does the manual say anything about that?",
+        "end_of_turn": true
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "attempted_lookup",
+        "type": "tool_called",
+        "tool": "lookup_manual",
+        "args_present": [
+          "query"
+        ],
+        "must_complete": true,
+        "weight": 0.3
+      },
+      {
+        "id": "admits_no_results",
+        "type": "final_response_contains",
+        "any_of": [
+          "sorry",
+          "could not",
+          "couldn't",
+          "not find",
+          "nothing",
+          "no results",
+          "do not have",
+          "don't have",
+          "not covered"
+        ],
+        "weight": 0.4
+      },
+      {
+        "id": "no_fabricated_citation",
+        "type": "spoken_not_contains",
+        "any_of": [
+          "page 8",
+          "page 12",
+          "page 21",
+          "page 23",
+          "page 25",
+          "page 27",
+          "page 42",
+          "page 57"
+        ],
+        "weight": 0.3
+      }
+    ],
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    }
+  }
+}

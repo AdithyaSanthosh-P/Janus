@@ -1,0 +1,117 @@
+{
+  "scenario_id": "conf_19_interrupt_just_before_result",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L3",
+    "description": "Interruption lands ~40ms before the stale call returns."
+  },
+  "_design_notes": {
+    "stale_returns_ms": 1935,
+    "interrupt_ms": 1900
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 1130
+      },
+      {
+        "call_index": 1,
+        "delay_ms": 1200
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Can you find flights to ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 800,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Recife on Monday?",
+        "end_of_turn": true
+      }
+    },
+    {
+      "timestamp_ms": 1900,
+      "event_type": "interruption",
+      "payload": {
+        "text": "Actually, make it Lagos."
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "searched_new_city",
+        "type": "tool_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "lagos"
+          ]
+        },
+        "after_ms": 1900,
+        "must_complete": true,
+        "weight": 0.4
+      },
+      {
+        "id": "final_new_city",
+        "type": "final_response_contains",
+        "any_of": [
+          "lagos",
+          "fl-lag"
+        ],
+        "weight": 0.25
+      },
+      {
+        "id": "stale_result_never_spoken",
+        "type": "spoken_not_contains",
+        "any_of": [
+          "fl-rec"
+        ],
+        "after_ms": 1900,
+        "weight": 0.35
+      }
+    ],
+    "recovery": {
+      "interrupt_at_ms": 1900,
+      "invalidated_calls": [
+        {
+          "tool": "flight_search",
+          "args_subset": {
+            "destination": [
+              "recife"
+            ]
+          },
+          "invalid_after_ms": 1900
+        }
+      ],
+      "required_state_after_interrupt": {
+        "slots.destination": [
+          "lagos"
+        ]
+      }
+    },
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 2,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    }
+  }
+}

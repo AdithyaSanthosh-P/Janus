@@ -1,0 +1,148 @@
+{
+  "scenario_id": "conf_04_interrupt_during_booking",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L4",
+    "description": "Interruption lands while a state-modifying call is in flight. Exactly one booking may succeed."
+  },
+  "_design_notes": {
+    "stale_booking_completes_ms": 4620,
+    "deadline_ms": 3400,
+    "margin_ms": 1220
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 1200
+      }
+    ],
+    "book_flight": [
+      {
+        "call_index": 0,
+        "delay_ms": 2500
+      },
+      {
+        "call_index": 1,
+        "delay_ms": 900
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Find a flight to Denver and ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 900,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "book the 8 AM one for Alice.",
+        "end_of_turn": true
+      }
+    },
+    {
+      "timestamp_ms": 2600,
+      "event_type": "interruption",
+      "payload": {
+        "text": "Wait, make it the 2 PM flight instead."
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "booked_corrected_flight",
+        "type": "tool_called",
+        "tool": "book_flight",
+        "args_subset": {
+          "flight_id": [
+            "fl-den-2pm"
+          ],
+          "passenger_name": [
+            "alice"
+          ]
+        },
+        "after_ms": 2600,
+        "must_complete": true,
+        "weight": 0.4
+      },
+      {
+        "id": "no_superseded_booking_after",
+        "type": "tool_not_called",
+        "tool": "book_flight",
+        "args_subset": {
+          "flight_id": [
+            "fl-den-8am"
+          ]
+        },
+        "after_ms": 2600,
+        "weight": 0.25
+      },
+      {
+        "id": "final_confirms_correct_flight",
+        "type": "final_response_contains",
+        "any_of": [
+          "bk-",
+          "2 pm",
+          "2pm",
+          "14:00"
+        ],
+        "weight": 0.2
+      },
+      {
+        "id": "ack_names_correction",
+        "type": "spoken_contains",
+        "any_of": [
+          "2 pm",
+          "2pm",
+          "14:00",
+          "afternoon"
+        ],
+        "after_ms": 2600,
+        "before_ms": 3800,
+        "weight": 0.15
+      }
+    ],
+    "recovery": {
+      "interrupt_at_ms": 2600,
+      "invalidated_calls": [
+        {
+          "tool": "book_flight",
+          "args_subset": {
+            "flight_id": [
+              "fl-den-8am"
+            ]
+          },
+          "invalid_after_ms": 2600
+        }
+      ],
+      "required_state_after_interrupt": {
+        "slots.flight_id": [
+          "fl-den-2pm"
+        ]
+      }
+    },
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 2,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    },
+    "safety": {
+      "max_fillers": 4
+    }
+  }
+}
