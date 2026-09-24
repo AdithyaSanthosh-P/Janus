@@ -57,14 +57,40 @@ def build_prompt(view: dict) -> str:
     tools = view.get("tools") or []
     tools_block = ""
     if tools:
-        lines = "\n".join(f"  - {t['name']}: requires {t['required_params']}" for t in tools)
+        # Day 1 (docs/fdb_v3_implementation_plan.md §4.1, §9): `params`
+        # (type/description/optional/default per parameter, added
+        # alongside `kernel/task.py._build_interpret_request`'s own
+        # change) is rendered here when present -- absent for any older
+        # or test-constructed `view` that only sets `required_params`
+        # (e.g. ScriptedProvider-driven tests), so this stays additive
+        # and doesn't change any existing test's matched substring.
+        def _tool_line(t: dict) -> str:
+            line = f"  - {t['name']}: requires {t['required_params']}"
+            params = t.get("params") or {}
+            if params:
+                bits = []
+                for pname, pinfo in params.items():
+                    bit = pname
+                    if pinfo.get("type"):
+                        bit += f" ({pinfo['type']})"
+                    if not pinfo.get("required", True):
+                        default = pinfo.get("default")
+                        bit += " [optional" + ("" if default is None else f", default={default!r}") + "]"
+                    if pinfo.get("description"):
+                        bit += f": {pinfo['description']}"
+                    bits.append(bit)
+                line += "\n      params: " + "; ".join(bits)
+            return line
+
+        lines = "\n".join(_tool_line(t) for t in tools)
         tools_block = (
             "\nAvailable tools (a slot_deltas[].name MUST exactly match one of "
             f"these required_params, never a synonym):\n{lines}\n"
             "Example: for a tool requiring [\"destination\"], \"book me a flight to "
             "Pune\" -> slot_deltas: [{\"name\": \"destination\", \"scope\": \"goal\", "
             "\"op\": \"set\", \"value\": \"Pune\"}], not {\"name\": \"city\", ...} or "
-            "{\"name\": \"to\", ...}.\n"
+            "{\"name\": \"to\", ...}. An optional parameter's slot name is legal too "
+            "(same rule) -- don't skip it just because it isn't required.\n"
         )
     # V3 (found by directly running the live multimodal demo, not by
     # design review): `visual_candidates` had zero prompt guidance --

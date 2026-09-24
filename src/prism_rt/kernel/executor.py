@@ -57,6 +57,51 @@ def _is_identifier_param(param: str, prop_schema: dict) -> bool:
 
 
 @dataclass(frozen=True)
+class _FieldSearchResult:
+    found: bool
+    ambiguous: bool
+    value: object = None
+
+
+def _bfs_find_field(root: object, field_name: str) -> _FieldSearchResult:
+    """Breadth-first, schema-free search for a dict key named
+    `field_name` anywhere under `root` (docs/fdb_v3_implementation_plan.md
+    §5.8): a live Planner names a chained-call binding's `path` from the
+    upstream tool's *name* alone -- FDB publishes no result schemas, so a
+    literal dotted path like "product_id" routinely doesn't match the
+    real nesting (e.g. `search_products` returns
+    `{"products": [{"product_id": ...}]}`, not a top-level `product_id`).
+    Used only as a fallback once the literal path has already failed to
+    resolve (`_bind`'s STEP_OUTPUT branch) -- never overrides a path that
+    already worked. Two or more *distinct* matches are reported
+    ambiguous rather than picking one: the step must block and clarify,
+    never guess silently."""
+    queue: list = [root]
+    matches: list = []
+    seen_ids: set[int] = set()
+    while queue:
+        node = queue.pop(0)
+        if id(node) in seen_ids:
+            continue
+        seen_ids.add(id(node))
+        if isinstance(node, dict):
+            if field_name in node:
+                matches.append(node[field_name])
+            queue.extend(node.values())
+        elif isinstance(node, list):
+            queue.extend(node)
+    if not matches:
+        return _FieldSearchResult(found=False, ambiguous=False)
+    distinct = []
+    for m in matches:
+        if m not in distinct:
+            distinct.append(m)
+    if len(distinct) > 1:
+        return _FieldSearchResult(found=True, ambiguous=True)
+    return _FieldSearchResult(found=True, ambiguous=False, value=distinct[0])
+
+
+@dataclass(frozen=True)
 class BindResult:
     args: dict
     read_set: ReadSet
@@ -521,16 +566,32 @@ class PlanExecutor:
                     return None, result_key
                 value = fact.value
                 if binding.path:
+                    resolved = value
                     for part in binding.path.split("."):
-                        if isinstance(value, dict):
-                            value = value.get(part)
-                        elif isinstance(value, list) and part.lstrip("-").isdigit():
+                        if isinstance(resolved, dict):
+                            resolved = resolved.get(part)
+                        elif isinstance(resolved, list) and part.lstrip("-").isdigit():
                             index = int(part)
-                            value = value[index] if -len(value) <= index < len(value) else None
+                            resolved = resolved[index] if -len(resolved) <= index < len(resolved) else None
                         else:
-                            value = None
-                        if value is None:
+                            resolved = None
+                        if resolved is None:
                             break
+                    if resolved is None:
+                        # Day 1 (docs/fdb_v3_implementation_plan.md §5.8):
+                        # the literal path didn't resolve -- fall back to
+                        # a generic, schema-free search for a field with
+                        # that name anywhere in the upstream result,
+                        # rather than silently binding None. Never guess
+                        # on an ambiguous match: block the step for a
+                        # clarify instead (same path a missing fact takes).
+                        field_name = binding.path.rsplit(".", 1)[-1]
+                        found = _bfs_find_field(value, field_name)
+                        if found.ambiguous:
+                            return None, f"ambiguous_field.{step.tool}.{param}.{field_name}"
+                        if found.found:
+                            resolved = found.value
+                    value = resolved
                 args[param] = value
                 read_keys.append(result_key)
                 continue

@@ -240,8 +240,38 @@ class TaskStateMachine:
         # added to the read set to match (a manifest change mid-turn should
         # invalidate an in-flight INTERPRET job the same way it already
         # invalidates PLAN/calls).
+        # Day 1 (docs/fdb_v3_implementation_plan.md §4.1, §9): the block
+        # above only ever showed *required* parameter names -- a live
+        # model had no way to know a tool also accepts an optional
+        # parameter, what type any parameter is, or what it means (e.g.
+        # "3-letter currency code" for `to_currency`), so it either
+        # omitted optional args entirely or guessed at formatting the
+        # judge then had to tolerate. `params` carries everything
+        # `fdb_manifest.py`'s introspection already put on each tool's
+        # `params_schema.properties` -- purely additive, `required_params`
+        # itself is untouched so existing callers/tests keep matching.
+        def _param_summary(schema: dict) -> dict:
+            required = set((schema or {}).get("required", []))
+            out: dict = {}
+            for name, prop in ((schema or {}).get("properties") or {}).items():
+                if not isinstance(prop, dict):
+                    continue
+                info: dict = {"required": name in required}
+                if "type" in prop:
+                    info["type"] = prop["type"]
+                if "description" in prop:
+                    info["description"] = prop["description"]
+                if "default" in prop:
+                    info["default"] = prop["default"]
+                out[name] = info
+            return out
+
         tool_summary = [
-            {"name": tool.name, "required_params": (tool.params_schema or {}).get("required", [])}
+            {
+                "name": tool.name,
+                "required_params": (tool.params_schema or {}).get("required", []),
+                "params": _param_summary(tool.params_schema),
+            }
             for tool in store.catalog.usable_tools()
         ]
 
