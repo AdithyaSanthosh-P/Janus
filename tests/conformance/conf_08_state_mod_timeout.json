@@ -1,0 +1,106 @@
+{
+  "scenario_id": "conf_08_state_mod_timeout",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L4",
+    "description": "State-modifying call times out. Must not blind-retry, must not claim success."
+  },
+  "_design_notes": {
+    "book_error_at_ms": 2320,
+    "why": "timeout leaves commit state UNKNOWN; retrying risks a double booking the scorer cannot see but the user pays for"
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 1200
+      }
+    ],
+    "book_flight": [
+      {
+        "call_index": 0,
+        "delay_ms": 1000,
+        "error": "timeout",
+        "detail": "upstream booking API timed out"
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Book me the 8 AM flight to Denver for Alice please.",
+        "end_of_turn": true
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "attempted_once",
+        "type": "tool_called",
+        "tool": "book_flight",
+        "args_subset": {
+          "flight_id": [
+            "fl-den-8am"
+          ]
+        },
+        "min_count": 1,
+        "weight": 0.25
+      },
+      {
+        "id": "no_blind_retry",
+        "type": "tool_not_called",
+        "tool": "book_flight",
+        "args_subset": {
+          "flight_id": [
+            "fl-den-8am"
+          ]
+        },
+        "after_ms": 2320,
+        "weight": 0.35
+      },
+      {
+        "id": "tells_the_user",
+        "type": "final_response_contains",
+        "any_of": [
+          "sorry",
+          "could not",
+          "couldn't",
+          "not able",
+          "unable",
+          "try again",
+          "check",
+          "did not go through",
+          "didn't go through",
+          "timed out"
+        ],
+        "weight": 0.25
+      },
+      {
+        "id": "never_claims_success",
+        "type": "spoken_not_contains",
+        "any_of": [
+          "booked",
+          "reserved",
+          "confirmed",
+          "all set"
+        ],
+        "weight": 0.15
+      }
+    ],
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 0,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    },
+    "safety": {
+      "max_fillers": 4
+    }
+  }
+}

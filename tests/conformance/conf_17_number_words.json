@@ -1,0 +1,106 @@
+{
+  "scenario_id": "conf_17_number_words",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L3",
+    "description": "Unseen tool with a required number argument spoken as a word."
+  },
+  "tool_manifest": {
+    "hotel_booking_quote": {
+      "kind": "read_only",
+      "delay_range_ms": [
+        900,
+        1500
+      ],
+      "description": "Quote a hotel stay in a city for a number of nights.",
+      "args": {
+        "city": {
+          "type": "string",
+          "required": true,
+          "description": "City name."
+        },
+        "nights": {
+          "type": "number",
+          "required": true,
+          "description": "Number of nights to stay."
+        }
+      },
+      "default_result": {
+        "quote_id": "HQ-3301",
+        "total_usd": 412,
+        "hotel": "Quayside Rooms"
+      }
+    }
+  },
+  "tool_overrides": {
+    "hotel_booking_quote": [
+      {
+        "call_index": 0,
+        "delay_ms": 1100
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "How much would a hotel in Porto cost ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 800,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "for three nights?",
+        "end_of_turn": true
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "quoted_with_nights",
+        "type": "tool_called",
+        "tool": "hotel_booking_quote",
+        "args_subset": {
+          "city": [
+            "porto"
+          ],
+          "nights": [
+            3,
+            "3"
+          ]
+        },
+        "must_complete": true,
+        "weight": 0.5
+      },
+      {
+        "id": "not_forced_into_flights",
+        "type": "tool_not_called",
+        "tool": "flight_search",
+        "weight": 0.15
+      },
+      {
+        "id": "grounded",
+        "type": "final_response_contains",
+        "any_of": [
+          "412",
+          "hq-3301",
+          "quayside"
+        ],
+        "weight": 0.35
+      }
+    ],
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    }
+  }
+}

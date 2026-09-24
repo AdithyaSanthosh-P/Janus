@@ -1,0 +1,160 @@
+{
+  "scenario_id": "conf_23_correction_inside_commit_hold",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L4",
+    "description": "Second correction arrives while the corrected booking is still held behind the commitment gate."
+  },
+  "_design_notes": {
+    "stale_booking_completes_ms": 3600,
+    "hold_ends_ms": 2770
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 1200
+      }
+    ],
+    "book_flight": [
+      {
+        "call_index": 0,
+        "delay_ms": 1500
+      },
+      {
+        "call_index": 1,
+        "delay_ms": 1000
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Find a flight to Denver and ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 900,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "book the 8 AM one for Alice.",
+        "end_of_turn": true
+      }
+    },
+    {
+      "timestamp_ms": 2500,
+      "event_type": "interruption",
+      "payload": {
+        "text": "Wait, make it the 2 PM flight instead."
+      }
+    },
+    {
+      "timestamp_ms": 2650,
+      "event_type": "interruption",
+      "payload": {
+        "text": "Oh, and it's for Priya, not Alice."
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "booked_final_version",
+        "type": "tool_called",
+        "tool": "book_flight",
+        "args_subset": {
+          "flight_id": [
+            "fl-den-2pm"
+          ],
+          "passenger_name": [
+            "priya"
+          ]
+        },
+        "must_complete": true,
+        "weight": 0.4
+      },
+      {
+        "id": "held_booking_dropped",
+        "type": "tool_not_called",
+        "tool": "book_flight",
+        "args_subset": {
+          "flight_id": [
+            "fl-den-2pm"
+          ],
+          "passenger_name": [
+            "alice"
+          ]
+        },
+        "weight": 0.25
+      },
+      {
+        "id": "no_8am_after_correction",
+        "type": "tool_not_called",
+        "tool": "book_flight",
+        "args_subset": {
+          "flight_id": [
+            "fl-den-8am"
+          ]
+        },
+        "after_ms": 2500,
+        "weight": 0.15
+      },
+      {
+        "id": "final_confirms",
+        "type": "final_response_contains",
+        "any_of": [
+          "bk-",
+          "priya"
+        ],
+        "weight": 0.2
+      }
+    ],
+    "recovery": {
+      "interrupt_at_ms": 2650,
+      "invalidated_calls": [
+        {
+          "tool": "book_flight",
+          "args_subset": {
+            "flight_id": [
+              "fl-den-8am"
+            ]
+          },
+          "invalid_after_ms": 2500
+        }
+      ],
+      "required_state_after_interrupt": {
+        "slots.passenger_name": [
+          "priya"
+        ],
+        "slots.flight_id": [
+          "fl-den-2pm"
+        ]
+      }
+    },
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 2,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 3,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    },
+    "safety": {
+      "max_fillers": 4
+    }
+  }
+}

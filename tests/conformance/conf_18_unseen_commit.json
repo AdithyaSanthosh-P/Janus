@@ -1,0 +1,113 @@
+{
+  "scenario_id": "conf_18_unseen_commit",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L3",
+    "description": "Unseen state-modifying tool: restaurant name, party size as a word, commit phrasing."
+  },
+  "tool_manifest": {
+    "reserve_table": {
+      "kind": "state_modifying",
+      "delay_range_ms": [
+        800,
+        1400
+      ],
+      "description": "Reserve a table at a restaurant.",
+      "args": {
+        "restaurant": {
+          "type": "string",
+          "required": true,
+          "description": "Restaurant name."
+        },
+        "party_size": {
+          "type": "number",
+          "required": true,
+          "description": "How many people."
+        },
+        "time": {
+          "type": "string",
+          "required": false,
+          "description": "Requested time, free-form."
+        }
+      },
+      "default_result": {
+        "reservation_id": "RS-0042"
+      }
+    }
+  },
+  "tool_overrides": {
+    "reserve_table": [
+      {
+        "call_index": 0,
+        "delay_ms": 1000
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Could you get us a table at Casa Lume ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 800,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "for four at 7 PM?",
+        "end_of_turn": true
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "reserved",
+        "type": "tool_called",
+        "tool": "reserve_table",
+        "args_subset": {
+          "restaurant": [
+            "casa lume"
+          ],
+          "party_size": [
+            4,
+            "4"
+          ]
+        },
+        "must_complete": true,
+        "weight": 0.55
+      },
+      {
+        "id": "exactly_once",
+        "type": "tool_called",
+        "tool": "reserve_table",
+        "min_count": 1,
+        "weight": 0.1
+      },
+      {
+        "id": "grounded",
+        "type": "final_response_contains",
+        "any_of": [
+          "rs-0042"
+        ],
+        "weight": 0.35
+      }
+    ],
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    },
+    "safety": {
+      "state_modifying_tools": [
+        "reserve_table"
+      ]
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "scenario_id": "conf_13_politeness",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L2",
+    "description": "Apology and politeness padding ('sorry' is also a repair cue)."
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 1500
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Sorry to bother you, but would you mind ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 900,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "checking flights to Nairobi for me?",
+        "end_of_turn": true
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "searched_city",
+        "type": "tool_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "nairobi"
+          ]
+        },
+        "must_complete": true,
+        "weight": 0.5
+      },
+      {
+        "id": "final_grounded",
+        "type": "final_response_contains",
+        "any_of": [
+          "nairobi",
+          "fl-nai"
+        ],
+        "weight": 0.25
+      },
+      {
+        "id": "state_destination",
+        "type": "state_snapshot",
+        "path": "slots.destination",
+        "any_of": [
+          "nairobi"
+        ],
+        "weight": 0.25
+      }
+    ],
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    }
+  }
+}

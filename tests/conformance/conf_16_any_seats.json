@@ -1,0 +1,77 @@
+{
+  "scenario_id": "conf_16_any_seats",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L2",
+    "description": "'Any seats' phrasing with city and day run together."
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 1500
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Any seats to Halifax ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 700,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Friday for Priya?",
+        "end_of_turn": true
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "searched_city",
+        "type": "tool_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "halifax"
+          ]
+        },
+        "must_complete": true,
+        "weight": 0.5
+      },
+      {
+        "id": "final_grounded",
+        "type": "final_response_contains",
+        "any_of": [
+          "halifax",
+          "fl-hal"
+        ],
+        "weight": 0.25
+      },
+      {
+        "id": "state_destination",
+        "type": "state_snapshot",
+        "path": "slots.destination",
+        "any_of": [
+          "halifax"
+        ],
+        "weight": 0.25
+      }
+    ],
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    }
+  }
+}

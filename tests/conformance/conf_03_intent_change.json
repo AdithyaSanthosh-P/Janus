@@ -1,0 +1,126 @@
+{
+  "scenario_id": "conf_03_intent_change",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L3",
+    "description": "User abandons the whole domain mid-execution. Stale work cancelled, slots cleared, new tool chosen."
+  },
+  "_design_notes": {
+    "stale_completes_ms": 2910,
+    "deadline_ms": 2100,
+    "margin_ms": 810
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 2200
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "I need a flight to ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 700,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Denver on Friday.",
+        "end_of_turn": true
+      }
+    },
+    {
+      "timestamp_ms": 1300,
+      "event_type": "interruption",
+      "payload": {
+        "text": "Forget the flight. My TV is showing a blinking red light."
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "pivoted_to_manual",
+        "type": "tool_called",
+        "tool": "lookup_manual",
+        "args_present": [
+          "query"
+        ],
+        "after_ms": 1300,
+        "must_complete": true,
+        "weight": 0.35
+      },
+      {
+        "id": "no_flight_work_after_pivot",
+        "type": "tool_not_called",
+        "tool": "flight_search",
+        "after_ms": 1300,
+        "weight": 0.25
+      },
+      {
+        "id": "final_addresses_new_problem",
+        "type": "final_response_contains",
+        "any_of": [
+          "led",
+          "blinking",
+          "light",
+          "status",
+          "page",
+          "manual"
+        ],
+        "weight": 0.2
+      },
+      {
+        "id": "abandoned_slot_not_leaked",
+        "type": "spoken_not_contains",
+        "any_of": [
+          "denver"
+        ],
+        "after_ms": 1300,
+        "weight": 0.2
+      }
+    ],
+    "recovery": {
+      "interrupt_at_ms": 1300,
+      "invalidated_calls": [
+        {
+          "tool": "flight_search",
+          "args_subset": {
+            "destination": [
+              "denver",
+              "den"
+            ]
+          },
+          "invalid_after_ms": 1300
+        }
+      ],
+      "required_state_after_interrupt": {
+        "intent": [
+          "lookup_manual",
+          "create_support_ticket",
+          "device_help"
+        ]
+      }
+    },
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 2,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    }
+  }
+}

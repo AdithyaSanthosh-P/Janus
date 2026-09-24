@@ -1,0 +1,176 @@
+{
+  "scenario_id": "conf_01_double_interrupt",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L3",
+    "description": "Two interruptions 800ms apart. Both superseded searches must be cancelled and neither re-issued."
+  },
+  "_design_notes": {
+    "stale_A_completes_ms": 2610,
+    "interrupt_1_deadline_ms": 2300,
+    "stale_B_completes_ms": 3310,
+    "interrupt_2_deadline_ms": 3100,
+    "why": "both margins positive, so an uncancelled call is always a violation"
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 1800
+      },
+      {
+        "call_index": 1,
+        "delay_ms": 1800
+      },
+      {
+        "call_index": 2,
+        "delay_ms": 1500
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Please book a flight to ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 800,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Boston for tomorrow.",
+        "end_of_turn": true
+      }
+    },
+    {
+      "timestamp_ms": 1500,
+      "event_type": "interruption",
+      "payload": {
+        "text": "Wait, actually make it New York."
+      }
+    },
+    {
+      "timestamp_ms": 2300,
+      "event_type": "interruption",
+      "payload": {
+        "text": "No sorry, Chicago. Chicago is right."
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "search_final_city",
+        "type": "tool_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "chicago",
+            "chi"
+          ]
+        },
+        "after_ms": 2300,
+        "must_complete": true,
+        "weight": 0.35
+      },
+      {
+        "id": "no_first_city_after_i1",
+        "type": "tool_not_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "boston",
+            "bos"
+          ]
+        },
+        "after_ms": 1500,
+        "weight": 0.2
+      },
+      {
+        "id": "no_second_city_after_i2",
+        "type": "tool_not_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "new york",
+            "nyc"
+          ]
+        },
+        "after_ms": 2300,
+        "weight": 0.2
+      },
+      {
+        "id": "final_names_final_city",
+        "type": "final_response_contains",
+        "any_of": [
+          "chicago",
+          "fl-chi"
+        ],
+        "weight": 0.15
+      },
+      {
+        "id": "ack_names_final_city",
+        "type": "spoken_contains",
+        "any_of": [
+          "chicago"
+        ],
+        "after_ms": 2300,
+        "before_ms": 3500,
+        "weight": 0.1
+      }
+    ],
+    "recovery": {
+      "interrupt_at_ms": 2300,
+      "invalidated_calls": [
+        {
+          "tool": "flight_search",
+          "args_subset": {
+            "destination": [
+              "boston",
+              "bos"
+            ]
+          },
+          "invalid_after_ms": 1500
+        },
+        {
+          "tool": "flight_search",
+          "args_subset": {
+            "destination": [
+              "new york",
+              "nyc"
+            ]
+          },
+          "invalid_after_ms": 2300
+        }
+      ],
+      "required_state_after_interrupt": {
+        "slots.destination": [
+          "chicago",
+          "chi"
+        ]
+      }
+    },
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 2,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 3,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    }
+  }
+}

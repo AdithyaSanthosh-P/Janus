@@ -1,0 +1,193 @@
+{
+  "scenario_id": "conf_22_three_corrections",
+  "metadata": {
+    "modality": "text",
+    "difficulty": "L4",
+    "description": "Three corrections 400ms apart; each supersedes the last."
+  },
+  "tool_overrides": {
+    "flight_search": [
+      {
+        "call_index": 0,
+        "delay_ms": 1600
+      },
+      {
+        "call_index": 1,
+        "delay_ms": 1600
+      },
+      {
+        "call_index": 2,
+        "delay_ms": 1600
+      },
+      {
+        "call_index": 3,
+        "delay_ms": 1200
+      }
+    ]
+  },
+  "events": [
+    {
+      "timestamp_ms": 100,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "Flights to Accra ",
+        "end_of_turn": false
+      }
+    },
+    {
+      "timestamp_ms": 700,
+      "event_type": "user_speech_chunk",
+      "payload": {
+        "text": "for Tuesday please.",
+        "end_of_turn": true
+      }
+    },
+    {
+      "timestamp_ms": 1300,
+      "event_type": "interruption",
+      "payload": {
+        "text": "Make it Lagos."
+      }
+    },
+    {
+      "timestamp_ms": 1700,
+      "event_type": "interruption",
+      "payload": {
+        "text": "No wait, Dakar."
+      }
+    },
+    {
+      "timestamp_ms": 2100,
+      "event_type": "interruption",
+      "payload": {
+        "text": "Actually, Nairobi."
+      }
+    }
+  ],
+  "ground_truth": {
+    "checkpoints": [
+      {
+        "id": "searched_final_city",
+        "type": "tool_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "nairobi"
+          ]
+        },
+        "after_ms": 2100,
+        "must_complete": true,
+        "weight": 0.35
+      },
+      {
+        "id": "final_names_final_city",
+        "type": "final_response_contains",
+        "any_of": [
+          "nairobi",
+          "fl-nai"
+        ],
+        "weight": 0.2
+      },
+      {
+        "id": "no_accra_after_first",
+        "type": "tool_not_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "accra"
+          ]
+        },
+        "after_ms": 1300,
+        "weight": 0.15
+      },
+      {
+        "id": "no_lagos_after_second",
+        "type": "tool_not_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "lagos"
+          ]
+        },
+        "after_ms": 1700,
+        "weight": 0.15
+      },
+      {
+        "id": "no_dakar_after_third",
+        "type": "tool_not_called",
+        "tool": "flight_search",
+        "args_subset": {
+          "destination": [
+            "dakar"
+          ]
+        },
+        "after_ms": 2100,
+        "weight": 0.15
+      }
+    ],
+    "recovery": {
+      "interrupt_at_ms": 2100,
+      "invalidated_calls": [
+        {
+          "tool": "flight_search",
+          "args_subset": {
+            "destination": [
+              "accra"
+            ]
+          },
+          "invalid_after_ms": 1300
+        },
+        {
+          "tool": "flight_search",
+          "args_subset": {
+            "destination": [
+              "lagos"
+            ]
+          },
+          "invalid_after_ms": 1700
+        },
+        {
+          "tool": "flight_search",
+          "args_subset": {
+            "destination": [
+              "dakar"
+            ]
+          },
+          "invalid_after_ms": 2100
+        }
+      ],
+      "required_state_after_interrupt": {
+        "slots.destination": [
+          "nairobi"
+        ]
+      }
+    },
+    "latency": {
+      "respond_to": [
+        {
+          "event_index": 1,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 2,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 3,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        },
+        {
+          "event_index": 4,
+          "full_credit_ms": 800,
+          "zero_credit_ms": 2500
+        }
+      ]
+    },
+    "safety": {
+      "max_fillers": 4
+    }
+  }
+}
