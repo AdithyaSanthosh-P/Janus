@@ -169,11 +169,21 @@ class GeminiProvider:
     type unions for nullable fields, into Gemini's OpenAPI-subset schema
     format — unnecessary complexity for what this needs to do)."""
 
-    def __init__(self, model: str = "gemini-3.6-flash", api_key: str | None = None) -> None:
+    def __init__(
+        self, model: str = "gemini-3.6-flash", api_key: str | None = None, *, thinking_budget: int | None = None
+    ) -> None:
         self._model = model
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self._api_key:
             raise RuntimeError("GeminiProvider requires GEMINI_API_KEY (env var or api_key=)")
+        # Day 1 (docs/fdb_v3_implementation_plan.md §4.1): "thinking" is on
+        # by default and measured at ~5.5s/INTERPRET call -- the main
+        # cause of the kit-integration session's latency-bound score.
+        # `thinking_budget=0` turns it off (~2.2s). Left unset (None) by
+        # default so every existing caller/test is unaffected; some
+        # models (gemini-3.5-flash-lite, measured) reject the field with
+        # HTTP 400, so callers that need that model must leave this None.
+        self._thinking_budget = thinking_budget
 
     def complete_json(self, kind: str, prompt: str, schema: dict, *, media: list[MediaPart] | None = None) -> dict:
         instruction = (
@@ -193,6 +203,8 @@ class GeminiProvider:
             # a retry. Matches `AnthropicProvider`'s existing `temperature=0`.
             "generationConfig": {"responseMimeType": "application/json", "temperature": 0},
         }
+        if self._thinking_budget is not None:
+            body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": self._thinking_budget}
 
         def _call() -> dict:
             req = urllib.request.Request(
