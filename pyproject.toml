@@ -24,4 +24,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-pythonpath = ["src", "."]
+# "tests": the evaluation-kit merge (commit 7da1fd1) added tests/__init__.py,
+# which makes pytest import tests/ as a package and stop putting tests/ on
+# sys.path -- every Janus test's `from conftest import ...` then failed to
+# collect. Listing it here restores that without deleting the kit file.
+pythonpath = ["src", ".", "tests"]

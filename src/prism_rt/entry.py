@@ -90,10 +90,20 @@ class RunSummary:
     watchdog_fired: bool = False
 
 
+class Codec(Protocol):
+    """What `run_scenario` needs from a wire codec: `HarnessCodec` (Janus's
+    own dialect) or `adapters/kit_codec.py.KitCodec` (the evaluation kit's)."""
+
+    def timestamp_us(self, raw: dict) -> int | None: ...
+    def decode(self, raw: dict, *, seq: int) -> list: ...
+    def encode(self, action: Action) -> dict: ...
+
+
 @dataclass
 class Runtime:
     config: Config
     provider: Provider
+    codec: Codec | None = None  # None -> HarnessCodec (unchanged default)
 
     async def run_scenario(
         self,
@@ -109,7 +119,12 @@ class Runtime:
         meta = meta or {}
         session = SessionStore.new(self.config, IdGenerator(meta.get("seed", 0)))
         clock: ClockPort = CoupledClock() if self.config.clock_model == "A" else SteppedClock()
-        codec = HarnessCodec()
+        # Two roles: `codec` speaks the harness's wire format (external
+        # events in, actions out); `internal` decodes the events this loop
+        # synthesizes itself (worker_result, timer_fired, watchdog), which
+        # are always in Janus's own dialect whatever the wire format is.
+        internal = HarnessCodec()
+        codec = self.codec if self.codec is not None else internal
         writer = _QueueWriter(actions, codec)
         log = DecisionLogger(meta.get("log_path")) if self.config.log_decisions else None
         runner = AsyncWorkerRunner(ModelGateway(self.provider))
@@ -134,7 +149,7 @@ class Runtime:
                 seq += 1
                 wall_elapsed_s = time.monotonic() - wall_start
                 self._step_safely(
-                    kernel, codec, {"ts_us": clock.now_us(), "type": "watchdog", "payload": {"wall_elapsed_s": wall_elapsed_s}}, seq, summary
+                    kernel, internal, {"ts_us": clock.now_us(), "type": "watchdog", "payload": {"wall_elapsed_s": wall_elapsed_s}}, seq, summary
                 )
                 break
 
@@ -149,7 +164,7 @@ class Runtime:
                     "type": "worker_result",
                     "payload": {"job_id": result.job_id, "kind": result.kind, "status": result.status, "proposal": result.proposal},
                 }
-                report = self._step_safely(kernel, codec, raw, seq, summary)
+                report = self._step_safely(kernel, internal, raw, seq, summary)
                 if report is not None:
                     next_wake_us = report.next_wake_us
 
@@ -168,8 +183,12 @@ class Runtime:
                         "type": "timer_fired",
                         "payload": {"timer_id": "liveness", "timer_kind": "liveness", "liveness_fire": True},
                     }
-                    report = self._step_safely(kernel, codec, raw, seq, summary)
+                    report = self._step_safely(kernel, internal, raw, seq, summary)
                     next_wake_us = report.next_wake_us if report is not None else None
+                    # Yield before looping: this loop shares the harness's
+                    # event loop (docs/PROTOCOL.md §5), so this branch must
+                    # never be able to spin without letting it run.
+                    await asyncio.sleep(0)
                     continue  # re-check watchdog + workers before waiting on events again
 
             try:
@@ -180,23 +199,24 @@ class Runtime:
             if not raw:
                 break
             seq += 1
-            self._advance_clock(clock, raw)
+            self._advance_clock(clock, codec, raw)
             report = self._step_safely(kernel, codec, raw, seq, summary)
             if report is not None:
                 next_wake_us = report.next_wake_us
 
         return summary
 
-    def _advance_clock(self, clock: SteppedClock, raw: dict) -> None:
+    def _advance_clock(self, clock: ClockPort, codec: Codec, raw: dict) -> None:
+        # The codec owns which wire field carries the timestamp (`ts_us`/
+        # `ts_ms`/... for HarnessCodec, `timestamp_ms` for KitCodec).
         try:
-            if "ts_us" in raw:
-                clock.advance_to(int(raw["ts_us"]))
-            elif "ts_ms" in raw:
-                clock.advance_to(int(raw["ts_ms"]) * 1000)
+            ts_us = codec.timestamp_us(raw) if isinstance(raw, dict) else None
+            if ts_us is not None:
+                clock.advance_to(ts_us)
         except (TypeError, ValueError):
-            pass  # unparseable timestamp -> clock just doesn't advance; decode below still degrades gracefully
+            pass  # unparseable or backward timestamp -> clock just doesn't advance; decode below still degrades gracefully
 
-    def _step_safely(self, kernel: Kernel, codec: HarnessCodec, raw: dict, seq: int, summary: RunSummary) -> StepReport | None:
+    def _step_safely(self, kernel: Kernel, codec: Codec, raw: dict, seq: int, summary: RunSummary) -> StepReport | None:
         """P-02: one bad event, or one bug the codec's own tolerance
         didn't anticipate, must never end the scenario. `codec.decode`
         already returns `[]` for anything it can't make sense of rather
@@ -255,9 +275,9 @@ class Runtime:
         return summary
 
 
-def setup(config: Config | None = None, *, provider: Provider | None = None) -> Runtime:
+def setup(config: Config | None = None, *, provider: Provider | None = None, codec: Codec | None = None) -> Runtime:
     if provider is None:
         from prism_rt.workers.gateway import ScriptedProvider
 
         provider = ScriptedProvider()
-    return Runtime(config=config or DEFAULT_CONFIG, provider=provider)
+    return Runtime(config=config or DEFAULT_CONFIG, provider=provider, codec=codec)

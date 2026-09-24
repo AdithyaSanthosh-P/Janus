@@ -1,59 +1,78 @@
-"""Submission entry point.
+"""Submission entry point: `entry_point: agent.agent:ParticipantAgent`.
 
-`entry_point: agent.agent:ParticipantAgent` in submission.yaml. The harness
-constructs this class with the two queues, optionally awaits setup(), then
-runs run() as a task on its own event loop.
+The evaluation harness constructs `ParticipantAgent(in_queue, out_queue)`,
+optionally awaits `setup()`, then runs `run()` as a task on its own event
+loop (`docs/PROTOCOL.md` §5). `ParticipantAgent` is only an adapter: it
+hands both queues to Janus's own async entry point
+(`src/prism_rt/entry.py`, `Runtime.run_scenario`) with `KitCodec`
+(`src/prism_rt/adapters/kit_codec.py`) translating the kit's wire format.
+All decisions are made by the Janus kernel; nothing here reads or writes
+agent state.
 
-This file is deliberately a thin shell. All behaviour lives in duet/, which
-has no dependency on the grading harness so that the same agent core can be
-driven by the live-microphone and sandbox adapters in app/.
+Model provider: `GeminiProvider` when `SECRET_GEMINI_API_KEY` (the kit's
+convention for portal-injected secrets, `docs/SUBMISSION.md`) or
+`GEMINI_API_KEY` is set. Without a key Janus falls back to an empty
+`ScriptedProvider`: every worker job fails, the agent stays silent, and a
+warning is printed to stderr.
 
-BaselineAgent below is the kit's original reference agent, kept unchanged as
-a scoring floor to compare against. It is not part of the submission path.
+`BaselineAgent` below is the kit's reference agent, unchanged, kept as a
+comparison point. It is not part of the submission path.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import sys
 from typing import Any, Dict, List, Optional
 
-import sys
-import os
+# The evaluator imports this module in-process without installing the
+# package, so put Janus's `src/` (the `prism_rt` package) and the repo root
+# (the top-level `config` package) on sys.path.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _path in (os.path.join(_ROOT, "src"), _ROOT):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
-# Ensure src is on sys.path if not already
-src_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
+from prism_rt.adapters.kit_codec import KitCodec  # noqa: E402
+from prism_rt.entry import setup as setup_janus_runtime  # noqa: E402
+from prism_rt.workers.gateway import GeminiProvider  # noqa: E402
 
-try:
-    from prism_rt.entry import setup as setup_janus_runtime
-except ImportError:
-    setup_janus_runtime = None
+_KEY_ENV_VARS = ("SECRET_GEMINI_API_KEY", "GEMINI_API_KEY")
+
+
+def _provider():
+    for name in _KEY_ENV_VARS:
+        key = os.environ.get(name)
+        if key:
+            return GeminiProvider(api_key=key)
+    print(
+        f"[janus] no model API key ({' / '.join(_KEY_ENV_VARS)}); workers will fail and the agent will stay silent",
+        file=sys.stderr,
+    )
+    return None  # entry.setup() -> empty ScriptedProvider
 
 
 class ParticipantAgent:
-    """Janus (prism_rt), wired to the harness contract."""
+    """Janus, wired to the evaluation kit's two-queue contract."""
 
     def __init__(self, in_queue: asyncio.Queue, out_queue: asyncio.Queue) -> None:
         self.in_q = in_queue
         self.out_q = out_queue
-        self.runtime = setup_janus_runtime() if setup_janus_runtime else None
+        self.runtime = setup_janus_runtime(provider=_provider(), codec=KitCodec())
 
     async def setup(self) -> None:
-        """Model setup hook before scenario clock starts."""
-        pass
+        """Nothing to warm: the provider is a stateless HTTP client."""
 
     async def run(self) -> None:
-        if self.runtime is not None:
-            await self.runtime.run_scenario(self.in_q, self.out_q)
-        else:
-            raise RuntimeError("Janus prism_rt runtime could not be loaded.")
+        await self.runtime.run_scenario(self.in_q, self.out_q)
 
 
 # ---------------------------------------------------------------------------
-# The kit's reference agent, retained verbatim as a baseline for comparison.
-# Scores ~57/100 on the public set and 0 on both audio scenarios.
+# The kit's reference agent (KIT_README.md: "a minimal reference that handles
+# only the two simplest scenarios"), unchanged, kept for comparison runs:
+#   python run_local.py --all --agent agent.agent:BaselineAgent
 # ---------------------------------------------------------------------------
 CITY_CANON = {
     "boston": "Boston", "bos": "Boston",

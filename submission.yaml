@@ -1,29 +1,20 @@
 # Samsung PRISM GenAI Hackathon 3.0 - Theme 05: Interruptible Real-Time Agents
+# Janus submission metadata (format: docs/SUBMISSION.md).
 #
-# CollegeName_TeamName, as FAQ Q21 requires. SRM, team SE7EN.
-team: "SRM_SE7EN"
+# TEAM NAME IS NOT SET. FAQ Q12 requires CollegeName_TeamName; the real
+# value is not recorded anywhere in this repository, so this is an explicit
+# placeholder, not a team identity. Replace it before any real submission.
+team: "UNSET_CollegeName_TeamName"
 
 entry_point: "agent.agent:ParticipantAgent"   # module:Class
-python: "3.12"                                 # 3.10-3.12 supported
+python: "3.11"                                 # the version Janus is verified on (Docker, python:3.11-slim)
 
-# Public PyPI only, every version pinned to the one we tested. Identical to
-# requirements.txt (tests/test_packaging.py enforces it; the reasons for each
-# pin are documented there). The microphone and sandbox dependencies live in
-# requirements-app.txt and are deliberately NOT listed here, because duet/
-# never imports app/ and a failure to install one must not be able to affect
-# the scored run.
-requirements:
-  - torch==2.10.0
-  - torchvision==0.25.0
-  - faster-whisper==1.2.1
-  - ctranslate2==4.8.2
-  - transformers==5.4.0
-  - accelerate==1.15.0
-  - sentence-transformers==5.3.0
-  - huggingface-hub==1.8.0
-  - numpy==1.26.4
-  - pillow==12.2.0
+# Janus's runtime path (agent/, src/prism_rt/, config/) imports only the
+# standard library: the Gemini provider talks to the REST API via urllib.
+requirements: []
 
-# No secrets are read. Every model is loaded from a public checkpoint, so
-# there is no API key to register and no network dependency at scoring time.
-env: []
+# Gemini API key for the live model provider. agent/agent.py reads
+# SECRET_GEMINI_API_KEY (the kit's convention for portal-injected secrets),
+# falling back to GEMINI_API_KEY for local runs. Values are never committed.
+env:
+  - SECRET_GEMINI_API_KEY

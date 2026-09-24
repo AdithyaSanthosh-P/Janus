@@ -153,6 +153,11 @@ class Kernel:
             # Phase 5: EMIT
             emit_report = self._emission_gate.emit(intended, self.store, now_us, self.store.ids)
 
+            # Every liveness timer due by now_us has been honoured by this
+            # very step (TimerWheel.retire_due's docstring); only future
+            # ones may surface as next_wake_us.
+            self.store.timers.retire_due(now_us)
+
             # Phase 6: COMMIT
             change_set = txn.commit()
 

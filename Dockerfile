@@ -9,6 +9,11 @@ COPY pyproject.toml ./
 COPY src ./src
 COPY config ./config
 COPY tests ./tests
+# Evaluation-kit files the test suite imports (tests/test_kit_*.py drive the
+# kit's own harness/scorer and eval_submission.py stages 1-2 against agent/).
+COPY harness ./harness
+COPY agent ./agent
+COPY eval_submission.py submission.yaml ./
 
 RUN pip install --no-cache-dir .[dev]
 
