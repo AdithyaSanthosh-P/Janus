@@ -61,11 +61,21 @@ RUN pip install --no-cache-dir \
 # container in Day 2+ (LiveKit voice worker); T3/T4 offline harnesses
 # (scripts/fdb_v3/) also run from here so the whole pipeline is
 # reproducible from one pinned environment (§14, one-command repro).
+# `pip install /janus` (building its own pyproject.toml-based wheel) is
+# deliberately *not* done here -- found live: the huge nemo_toolkit
+# dependency chain above pulls in a very new setuptools (84.x) that's
+# incompatible with Ubuntu/deadsnakes' patched distutils for a legacy
+# setup-based build ("AttributeError: install_layout"), and it's
+# unnecessary anyway -- Janus's only runtime deps (pydantic, PyYAML,
+# pyproject.toml) are already satisfied by this environment's existing
+# package set (pydantic/pyyaml both already installed above, as
+# dependencies of nemo_toolkit/livekit-agents themselves). PYTHONPATH
+# below makes `prism_rt` importable directly from source, the same way
+# `PYTHONPATH=src:.` works for local development (see CLAUDE.md).
 COPY pyproject.toml /janus/pyproject.toml
 COPY src /janus/src
 COPY config /janus/config
 COPY scripts /janus/scripts
-RUN pip install --no-cache-dir /janus
 
 ENV PYTHONPATH=/janus/src:/janus
 
