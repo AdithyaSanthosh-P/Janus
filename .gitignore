@@ -9,3 +9,4 @@ dist/
 run_output/
 tests/scenarios/fixtures/*.png
 .env
+.fdb_cache/
