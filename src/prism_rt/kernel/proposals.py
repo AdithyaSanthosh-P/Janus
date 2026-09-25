@@ -56,6 +56,31 @@ def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnI
     )
 
 
+def _normalize_fact_key(raw_key: str | None) -> str | None:
+    """Day 1 (docs/fdb_v3_implementation_plan.md, found live: a real
+    PLAN response from gemini-3.6-flash with thinking off): the schema's
+    own instruction and example (`workers/planner.py.PLAN_SCHEMA`:
+    `{"type": "fact", "key": "slot.$G.destination"}`) is not always
+    enough -- a live model can return the bare slot name ("query")
+    instead of the fully-qualified key ("slot.$G.query"). `_bind` then
+    looks up a fact that will never exist, and the step blocks on a
+    clarify forever, even though the Interpreter correctly committed
+    the slot moments earlier (confirmed by direct reproduction: the
+    INTERPRET job set `slot.<gid>.query`; the PLAN job's own binding
+    was the bare string "query", not "slot.$G.query").
+
+    Every legitimate fact-key scheme this codebase uses (`slot.`,
+    `derived.`, `claim.`, `goal.`, `hyp.`, `stepout.`, `result.`) is
+    always dotted, so a bare name with no "." at all is unambiguous --
+    there is no other sensible reading of it than "this goal's own slot
+    of that name," the same convention `slot_deltas[].name` already
+    uses. A key that already has a "." (even if malformed some other
+    way) is left untouched rather than guessed at."""
+    if raw_key is None or "." in raw_key:
+        return raw_key
+    return f"slot.$G.{raw_key}"
+
+
 def parse_plan(raw: dict, *, goal_id: str, plan_rev: int) -> Plan:
     """`step.kind` here is provisional; the caller (kernel/reducers.py)
     overwrites it from the authoritative ToolCatalog mutability right after
@@ -70,7 +95,7 @@ def parse_plan(raw: dict, *, goal_id: str, plan_rev: int) -> Plan:
             binding_kind = BindingKind(raw_binding["type"])
             bindings[param] = Binding(
                 kind=binding_kind,
-                fact_key=raw_binding.get("key"),
+                fact_key=_normalize_fact_key(raw_binding.get("key")),
                 value=raw_binding.get("value"),
                 step_key=raw_binding.get("step_key"),
                 path=raw_binding.get("path"),

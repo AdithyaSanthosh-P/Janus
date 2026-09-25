@@ -164,7 +164,12 @@ async def run_one_scenario(
     await events.put({"type": "text_chunk", "ts_us": _now_us(), "payload": {"text": transcript_in}})
     await events.put({"type": "end_of_turn", "ts_us": _now_us(), "payload": {}})
 
-    run_task = asyncio.create_task(runtime.run_scenario(events, actions, meta={"seed": seed}))
+    meta = {"seed": seed}
+    if config.log_decisions:
+        meta["log_path"] = f"/tmp/janus_fdb_decision_log_{example_dir.name}.jsonl"
+        if os.path.exists(meta["log_path"]):
+            os.remove(meta["log_path"])
+    run_task = asyncio.create_task(runtime.run_scenario(events, actions, meta=meta))
 
     try:
         await asyncio.wait_for(final_event.wait(), timeout=final_timeout_s)
