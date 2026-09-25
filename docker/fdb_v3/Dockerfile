@@ -21,9 +21,18 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
+# Ubuntu 22.04's own "jammy" universe python3.11 package is a frozen
+# release-candidate build (3.11.0~rc1) -- found live: it's missing a
+# stdlib attribute (sys.get_int_max_str_digits) modern PyTorch's
+# _dynamo module imports at load time, so `import torch` alone crashed
+# with an AttributeError. The deadsnakes PPA carries a real final
+# Python 3.11 release build.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 python3.11-venv python3-pip \
-        ffmpeg git curl ca-certificates \
+        software-properties-common ca-certificates \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 python3.11-venv python3.11-distutils python3-pip \
+        ffmpeg git curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
