@@ -205,7 +205,7 @@ async def main_async(args: argparse.Namespace) -> None:
     mock_apis_module = _import_fdb_module(args.fdb_root, "mock_apis")
 
     provider = GeminiProvider(model=args.model, thinking_budget=args.thinking_budget)
-    config = Config(log_decisions=args.debug)
+    config = Config(log_decisions=args.debug, g4_exempt_undeclared_mutability=args.g4_exempt_undeclared_mutability)
 
     example_dirs = sorted(p for p in Path(args.data_root).iterdir() if p.is_dir() and (p / "metadata.json").is_file())
     if args.only:
@@ -283,6 +283,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--timeout", type=float, default=60.0, help="seconds to wait for a scenario's FINAL")
     p.add_argument("--use-llm", action="store_true", help="use the gpt-4o judge (needs OPENAI_API_KEY); default is exact-match")
     p.add_argument("--debug", action="store_true", help="enable per-scenario decision logs")
+    p.add_argument(
+        "--g4-exempt-undeclared-mutability", action="store_true",
+        help="Day 2 (§5.2): don't require explicit commit_intent for tools FDB never declared mutability for",
+    )
     p.add_argument("--out-dir", default=str(REPO_ROOT / "run_output" / "fdb_v3_text_replay"))
     return p.parse_args()
 

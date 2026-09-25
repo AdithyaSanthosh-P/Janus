@@ -131,6 +131,28 @@ class Config:
     # of dispatching a non-speculative job and waiting for it.
     speculative_interpretation_enabled: bool = False
 
+    # Day 2 (docs/fdb_v3_implementation_plan.md §5.2): G4 (commit_intent)
+    # applies to every WRITE-kind call, including a tool whose mutability
+    # was never declared and therefore defaults to STATE_CHANGING (the
+    # catalog's own safe default, W5 -- see store/catalog.py). FDB-v3
+    # declares no mutability for any of its 12 tools, so every one of
+    # them -- including plain reads like search_flights -- needs an
+    # explicit Interpreter-set commit_intent=true or the call sits
+    # PROPOSED forever with no clarify, no retry, total silence (found
+    # live, reproduced directly: travel_21's search_flights call, 2026-
+    # 09-25 session, see currentStatus.md's FDB-v3 Day 1 section).
+    # Requiring commit_intent for "search for flights" would incorrectly
+    # block a read the user plainly asked for -- the plan's own stated
+    # decision: "an accepted interpretation of a completed, settled turn
+    # counts as commit intent for undeclared tools." When on, G4 is
+    # skipped for a call whose tool has `mutability_source == "DEFAULTED"`
+    # -- G3 (floor closed) and, if enabled, G10/G11 (settle) still gate
+    # it exactly as before; this flag only removes the *additional*
+    # explicit-commit_intent requirement for tools nobody ever declared
+    # mutability for. A tool that *does* declare mutability (DECLARED)
+    # is completely unaffected either way.
+    g4_exempt_undeclared_mutability: bool = False
+
     # Observability
     log_decisions: bool = True
     record_trace: bool = True

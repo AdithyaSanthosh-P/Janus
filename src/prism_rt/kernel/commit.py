@@ -99,10 +99,19 @@ class CommitGate:
         # G3: floor closed (no commit while the user may still be correcting)
         if store.floor_state != FloorState.USER_TURN_CLOSED:
             return GateDecision(False, "floor_open", "G3")
-        # G4: commit_intent true for the call's goal
-        intent_fact = store.facts.get(f"goal.{call.goal_id}.commit_intent")
-        if intent_fact is None or intent_fact.status == FactStatus.RETRACTED or intent_fact.value is not True:
-            return GateDecision(False, "commit_intent_false", "G4")
+        # G4: commit_intent true for the call's goal. Day 2 (§5.2,
+        # Config.g4_exempt_undeclared_mutability's own docstring): a tool
+        # whose mutability was never declared (DEFAULTED to STATE_CHANGING,
+        # the catalog's safe default -- e.g. every FDB-v3 tool) doesn't
+        # need an *explicit* commit_intent when this flag is on; G3 (floor
+        # closed, already checked above) and G10/G11 (settle, checked
+        # below) still gate it. A tool whose mutability *was* declared is
+        # unaffected either way -- this never weakens a real write.
+        undeclared_exempt = store.config.g4_exempt_undeclared_mutability and tool.mutability_source == "DEFAULTED"
+        if not undeclared_exempt:
+            intent_fact = store.facts.get(f"goal.{call.goal_id}.commit_intent")
+            if intent_fact is None or intent_fact.status == FactStatus.RETRACTED or intent_fact.value is not True:
+                return GateDecision(False, "commit_intent_false", "G4")
 
         # G5: no existing effect with the same fingerprint (non-FAILED)
         existing_fp = store.effect_ledger.by_fingerprint(call.fingerprint)
