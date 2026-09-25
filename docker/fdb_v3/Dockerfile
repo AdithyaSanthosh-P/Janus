@@ -31,13 +31,19 @@ RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
 
 WORKDIR /fdb
 
-# Pinned per docs/fdb_v3_implementation_plan.md §8.
+# Pinned per docs/fdb_v3_implementation_plan.md §8. §8 itself recorded
+# livekit==1.1.20 from an earlier session's `~=1.0` resolve, taken
+# independently of livekit-agents's own exact pin -- building this image
+# for real found that livekit-agents==1.8.3 requires livekit==1.1.18
+# exactly (pip's resolver: "livekit-agents[...] 1.8.3 depends on
+# livekit==1.1.18"), so 1.1.20 is a real, previously-unverified pin
+# error, not an environment issue. Corrected here.
 RUN pip install --no-cache-dir \
         "livekit-agents[openai,google,xai]==1.8.3" \
         "livekit-plugins-ultravox==1.8.3" \
         "livekit-plugins-silero==1.8.3" \
         "livekit-plugins-openai==1.8.3" \
-        "livekit[crypto]==1.1.20" \
+        "livekit[crypto]==1.1.18" \
         "nemo_toolkit[asr]==3.0.0" \
         "openai" \
         "pydub" "ffmpeg-python" "numpy" "python-dotenv" "gdown"
