@@ -1,0 +1,153 @@
+"""VoiceBridge: pure translation between a speech transport (segment
+finals with real-time timing) and Janus's own event/action queues (Day
+2 WP4, docs/fdb_v3_day2_plan.md).
+
+Never imports livekit. Both the offline audio-replay harness (WP5,
+scripts/fdb_v3/run_audio_replay.py) and the live LiveKit host (WP6) feed
+this exact same class -- so the timing logic that runs live (the T_eot
+end-of-turn timer, barge-in detection) is proven by WP5's offline runs
+too, not first exercised live.
+
+Translation only -- this never drops, delays, or rewrites a Janus
+action, and it never decides anything the kernel is supposed to decide
+(no commit/settle logic lives here; that's CommitGate's G10/G11). Its
+only piece of owned timing is T_eot: the transport's own "user stopped
+talking" signal, exactly like the old evaluation kit's `end_of_turn`
+flag on a chunk -- not a semantic decision about task completion.
+
+Every event pushed to `events` always carries `ts_us` (Day 1 lesson,
+docs/fdb_v3_implementation_plan.md's T3 harness: `HarnessCodec.decode`
+silently drops any event with no resolvable timestamp -- see
+scripts/fdb_v3/run_text_replay.py's own `_now_us` for the same fix
+applied there). Timestamps are monotonic microseconds since the bridge
+was constructed, matching `CoupledClock`'s own model (`adapters/clock.py`:
+"last event timestamp + real monotonic elapsed") so events pushed here
+and Janus's own internal clock stay on one time base.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from dataclasses import dataclass, field
+from typing import Awaitable, Callable
+
+
+@dataclass
+class VoiceBridge:
+    events: "asyncio.Queue[dict | None]"
+    actions: "asyncio.Queue[dict]"
+    say: Callable[[str], Awaitable[None]]
+    execute_tool: Callable[[str, dict], Awaitable[dict]]  # (tool_name, args) -> result dict
+    t_eot_ms: int = 1000
+    clock: Callable[[], float] = field(default=time.monotonic)
+    on_interruption_logged: Callable[[str], None] = field(default=lambda msg: None)
+
+    _start_wall: float = field(init=False, repr=False)
+    _eot_task: "asyncio.Task | None" = field(default=None, init=False, repr=False)
+    _consumer_task: "asyncio.Task | None" = field(default=None, init=False, repr=False)
+    _agent_speaking: bool = field(default=False, init=False, repr=False)
+    _stopped: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._start_wall = self.clock()
+
+    def now_us(self) -> int:
+        return int(round((self.clock() - self._start_wall) * 1_000_000))
+
+    def start(self) -> None:
+        """Begins consuming Janus's own emitted actions (SPEAK/CLARIFY/
+        FINAL -> say(); TOOL_CALL -> execute_tool() -> tool_result).
+        Call once, after `events`/`actions` are wired to a running
+        `Runtime.run_scenario` task."""
+        self._consumer_task = asyncio.create_task(self._consume_actions())
+
+    async def stop(self) -> None:
+        self._stopped = True
+        self._cancel_eot_timer()
+        if self._consumer_task is not None:
+            self._consumer_task.cancel()
+            try:
+                await self._consumer_task
+            except asyncio.CancelledError:
+                pass
+            self._consumer_task = None
+
+    async def on_manifest(self, tools: list[dict]) -> None:
+        await self.events.put({"type": "manifest", "ts_us": self.now_us(), "payload": {"tools": tools}})
+
+    async def on_speech_start(self) -> None:
+        """User speech started. Cancels any pending end-of-turn timer
+        (the user is still talking); if the agent was speaking, this is
+        a barge-in -- FDB's own recordings never do this, but a real
+        voice call will."""
+        self._cancel_eot_timer()
+        if self._agent_speaking:
+            await self.events.put({"type": "interruption", "ts_us": self.now_us(), "payload": {}})
+            self.on_interruption_logged("user started speaking while the agent was speaking")
+
+    async def on_segment_final(self, text: str) -> None:
+        """A finalized STT segment. Janus chunks are append-only -- an
+        interim/partial transcript is never sent here, only a segment
+        the STT layer itself considers final. Restarts the T_eot timer:
+        speech has clearly continued past any earlier silence."""
+        stripped = text.strip()
+        if stripped:
+            await self.events.put({"type": "text_chunk", "ts_us": self.now_us(), "payload": {"text": stripped}})
+        self._restart_eot_timer()
+
+    async def on_speech_end(self) -> None:
+        """The transport's own end-of-utterance/silence-start signal
+        (e.g. VAD dropping to not-speaking). Starts (or restarts) the
+        T_eot countdown if it isn't already running."""
+        if self._eot_task is None or self._eot_task.done():
+            self._restart_eot_timer()
+
+    def on_agent_speaking_changed(self, speaking: bool) -> None:
+        """Wired to the TTS/session's own speaking-state signal so
+        `on_speech_start` can tell a barge-in from ordinary silence."""
+        self._agent_speaking = speaking
+
+    def _restart_eot_timer(self) -> None:
+        self._cancel_eot_timer()
+        if not self._stopped:
+            self._eot_task = asyncio.create_task(self._eot_after_silence())
+
+    def _cancel_eot_timer(self) -> None:
+        if self._eot_task is not None and not self._eot_task.done():
+            self._eot_task.cancel()
+        self._eot_task = None
+
+    async def _eot_after_silence(self) -> None:
+        try:
+            await asyncio.sleep(self.t_eot_ms / 1000)
+        except asyncio.CancelledError:
+            return
+        await self.events.put({"type": "end_of_turn", "ts_us": self.now_us(), "payload": {}})
+
+    async def _consume_actions(self) -> None:
+        while True:
+            action = await self.actions.get()
+            action_type = action.get("action_type")
+            body = action.get("body") or {}
+            if action_type in ("speak", "clarify", "final"):
+                text = body.get("text")
+                if text:
+                    await self.say(text)
+            elif action_type == "tool_call":
+                await self._run_tool_call(body)
+            # "cancel": FDB's mock tool calls can't be cancelled once
+            # executed, and under the settle-barrier profile a call is
+            # never executed before it's final (§5.1) -- a no-op here is
+            # correct, not a gap.
+
+    async def _run_tool_call(self, body: dict) -> None:
+        call_id = body.get("call_id")
+        tool_name = body.get("tool_name")
+        args = body.get("arguments") or {}
+        try:
+            result = await self.execute_tool(tool_name, args)
+            payload = {"call_id": call_id, "status": "ok", "result": result}
+        except Exception as exc:  # noqa: BLE001 - one bad call must not kill the bridge
+            payload = {"call_id": call_id, "status": "error", "result": {"error": str(exc)}}
+        await self.events.put({"type": "tool_result", "ts_us": self.now_us(), "payload": payload})
