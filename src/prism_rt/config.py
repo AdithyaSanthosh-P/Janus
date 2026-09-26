@@ -23,6 +23,15 @@ class Config:
     # elapsed time.
     clock_model: str = "A"
     settle_ms: int = 300  # 0 = disabled
+    # Day 2 (docs/fdb_v3_day2_plan.md WP1): when the latest closed user
+    # turn's last word looks unfinished (config/lexicons.py's
+    # TRAILING_CONNECTIVES, or an inert token, or a HOLD_CUES phrase),
+    # G10 waits settle_ms_incomplete instead of settle_ms. Gated by
+    # incomplete_turn_settle_enabled (default off) so it never changes
+    # any existing test/behavior; only meaningful with
+    # settle_barrier_enabled=True.
+    incomplete_turn_settle_enabled: bool = False
+    settle_ms_incomplete: int = 2500
     watchdog_timeout_ms: int = 105_000
     # P0.4 (call deadlines, docs/original_design_audit.md D4, blueprint
     # §5.9's own defaults): an IN_FLIGHT call past this many ms with no

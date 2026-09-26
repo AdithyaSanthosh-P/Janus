@@ -62,6 +62,7 @@ _load_dotenv(REPO_ROOT / ".env")
 from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest  # noqa: E402
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter  # noqa: E402
 from prism_rt.config import Config  # noqa: E402
+from prism_rt.profiles import fdb_v3_config  # noqa: E402
 from prism_rt.entry import setup  # noqa: E402
 from prism_rt.workers.gateway import GeminiProvider  # noqa: E402
 
@@ -205,7 +206,10 @@ async def main_async(args: argparse.Namespace) -> None:
     mock_apis_module = _import_fdb_module(args.fdb_root, "mock_apis")
 
     provider = GeminiProvider(model=args.model, thinking_budget=args.thinking_budget)
-    config = Config(log_decisions=args.debug, g4_exempt_undeclared_mutability=args.g4_exempt_undeclared_mutability)
+    if args.profile == "fdb":
+        config = fdb_v3_config(log_decisions=args.debug)
+    else:
+        config = Config(log_decisions=args.debug, g4_exempt_undeclared_mutability=args.g4_exempt_undeclared_mutability)
 
     example_dirs = sorted(p for p in Path(args.data_root).iterdir() if p.is_dir() and (p / "metadata.json").is_file())
     if args.only:
@@ -283,6 +287,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--timeout", type=float, default=60.0, help="seconds to wait for a scenario's FINAL")
     p.add_argument("--use-llm", action="store_true", help="use the gpt-4o judge (needs OPENAI_API_KEY); default is exact-match")
     p.add_argument("--debug", action="store_true", help="enable per-scenario decision logs")
+    p.add_argument(
+        "--profile", choices=["none", "fdb"], default="none",
+        help="Day 2 WP1: 'fdb' applies prism_rt.profiles.fdb_v3_config() (G4 exemption, settle "
+             "barrier + incomplete-turn extension, zero retries) instead of the individual flags below",
+    )
     p.add_argument(
         "--g4-exempt-undeclared-mutability", action="store_true",
         help="Day 2 (§5.2): don't require explicit commit_intent for tools FDB never declared mutability for",

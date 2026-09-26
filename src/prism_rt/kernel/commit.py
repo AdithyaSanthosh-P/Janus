@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from config.lexicons import HOLD_CUES, INERT_TOKENS, TRAILING_CONNECTIVES
 from prism_rt.kernel.interpret_apply import user_content_pending
 from prism_rt.model.actions import IntendedAction, ToolCallBody
 from prism_rt.model.types import (
@@ -50,6 +51,39 @@ class GateRejection:
     tool: str
     rule_id: str
     blocked_reason: str | None
+
+
+def _turn_looks_incomplete(store: SessionStore) -> bool:
+    """Day 2 (docs/fdb_v3_day2_plan.md WP1): does the latest *closed*
+    user turn's own text end mid-thought ("...add two apples and",
+    "...to the")? Checked against the turn's real chunk text
+    (`store.turn_log`), not the `turn.<id>.prefix` fact -- that fact's
+    value is a digest (read-set validity only), never the raw text.
+    A turn with no chunks or empty text is never "incomplete" -- there's
+    nothing to judge."""
+    turns = store.turn_log.all()
+    if not turns:
+        return False
+    turn = turns[-1]
+    if not turn.chunks:
+        return False
+    text = " ".join(chunk.text for chunk in turn.chunks).strip()
+    if not text:
+        return False
+    stripped = text.rstrip(" .,!?;:\"'").lower()
+    if not stripped:
+        return False
+    for cue in HOLD_CUES:
+        if stripped.endswith(cue.rstrip(",")):
+            return True
+    last_word = stripped.split()[-1]
+    return last_word in INERT_TOKENS or last_word in TRAILING_CONNECTIVES
+
+
+def _effective_settle_us(store: SessionStore) -> int:
+    if store.config.incomplete_turn_settle_enabled and _turn_looks_incomplete(store):
+        return store.config.settle_ms_incomplete * 1000
+    return store.config.settle_ms * 1000
 
 
 class CommitGate:
@@ -141,7 +175,7 @@ class CommitGate:
         if store.config.settle_barrier_enabled:
             last_eot = store.facts.get("session.last_eot_ts")
             last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else None
-            settle_us = store.config.settle_ms * 1000
+            settle_us = _effective_settle_us(store)
             if last_eot_ts is None or (now_us - last_eot_ts) < settle_us:
                 return GateDecision(False, "settle_not_elapsed", "G10")
             if store.turn_log.open_turn_id() is not None:
@@ -224,5 +258,5 @@ class CommitGate:
         goes unread in production, which is all D1 was ever about."""
         last_eot = store.facts.get("session.last_eot_ts")
         last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else now_us
-        due_us = last_eot_ts + store.config.settle_ms * 1000
+        due_us = last_eot_ts + _effective_settle_us(store)
         store.timers.schedule(f"settle:{call.call_id}", due_us)
