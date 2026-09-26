@@ -366,6 +366,17 @@ class TaskStateMachine:
         plan = store.plans.current(goal_id)
         facts: dict = {}
         effects: dict = {}
+        # Day 2 WP3 (docs/fdb_v3_day2_plan.md): found live -- COMPOSE saw
+        # only raw result facts, never which tools actually ran, so it
+        # could (and did) write "your flight has been successfully
+        # confirmed" when only search_flights executed (book_flight
+        # never got planned/run). `executed_calls` names exactly what
+        # ran; `not_done` (only meaningful with multi_action_enabled)
+        # names what the turn asked for that never got a call at all --
+        # the prompt below is told to report only the former and admit
+        # the latter honestly.
+        executed_calls: list[dict] = []
+        executed_tools: set[str] = set()
         read_keys = ["goal.active"]
         if plan is not None:
             for step in plan.steps:
@@ -377,12 +388,27 @@ class TaskStateMachine:
                     facts[step.step_key] = result_fact.value
                     read_keys.append(f"result.{call.call_id}")
                 read_keys.extend(entry.key for entry in call.read_set.entries)
+                executed_calls.append({"tool": step.tool, "args": dict(call.args)})
+                executed_tools.add(step.tool)
                 if step.kind == StepKind.WRITE:
                     effect = store.effect_ledger.by_fingerprint(call.fingerprint)
                     if effect is not None:
                         effects[step.step_key] = effect.status.value
 
-        view = {"facts": facts, "effects": effects, "open_questions": []}
+        not_done: list[str] = []
+        if store.config.multi_action_enabled:
+            actions_fact = store.facts.get(f"goal.{goal_id}.actions")
+            if actions_fact is not None and actions_fact.status != FactStatus.RETRACTED:
+                not_done = [t for t in (actions_fact.value or []) if t not in executed_tools]
+                read_keys.append(f"goal.{goal_id}.actions")
+
+        view = {
+            "facts": facts,
+            "effects": effects,
+            "open_questions": [],
+            "executed_calls": executed_calls,
+            "not_done": not_done,
+        }
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return self._make_request(store, JobKind.COMPOSE, view, goal_id, None, read_set)
 
