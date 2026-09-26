@@ -31,6 +31,10 @@ INTERPRET_SCHEMA = {
             },
         },
         "commit_intent": {"type": "boolean"},
+        "requested_actions": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
         "resume_goal_id": {"type": ["string", "null"]},
         "ack_phrase": {"type": ["string", "null"]},
         "visual_reference": {"type": "string", "enum": ["none", "at_utterance", "current_state"]},
@@ -124,6 +128,33 @@ def build_prompt(view: dict) -> str:
             "\"bottom_half_color\", \"description\": \"the color of the bottom "
             "half\"}].\n"
         )
+    # Day 2 WP2 (docs/fdb_v3_day2_plan.md): found live (gemini-3.5-flash-
+    # lite, a real 3-action FDB recording) that the Interpreter only ever
+    # populates `intent`/`slot_deltas` for the *first* action a turn
+    # asks for -- "search X, then add it to my cart, and also track
+    # order Y" produced only the search's slot. `requested_actions`
+    # (added alongside `intent`, which keeps naming the first/primary
+    # action exactly as before -- no existing test's matched substring
+    # changes) tells the Planner every tool the turn actually asked for,
+    # in order, so it can plan one step per action instead of one step
+    # total. Gated on `multi_action_enabled` so this is a no-op prompt
+    # change unless Day 2's profile turns it on.
+    multi_action_block = ""
+    if view.get("multi_action_enabled"):
+        multi_action_block = (
+            "\nThis turn may ask for more than one action (e.g. \"search for X, "
+            "then add it to my cart, and also track order Y\"). List EVERY tool "
+            "name the turn asks for, in the order asked, in requested_actions -- "
+            "intent should be the *first* one (same value, not a summary). "
+            "Extract slot_deltas for *every* action's parameters, not just the "
+            "first -- if two different actions need the same parameter name "
+            "with two different values (e.g. two order lookups), name the "
+            "second occurrence with a \"_2\" suffix (e.g. \"order_id_2\") so "
+            "they don't collide. A parameter whose value must come from an "
+            "earlier action's own result (a chained argument, e.g. \"the "
+            "cheapest one you just found\") is NOT a slot_delta -- leave it "
+            "out; the planner resolves it from the prior step's result.\n"
+        )
     return (
         f"transcript: {view.get('transcript', '')!r}\n"
         f"active_intent: {view.get('active_intent')}\n"
@@ -132,6 +163,7 @@ def build_prompt(view: dict) -> str:
         f"pending_clarification: {view.get('pending_clarification')}\n"
         f"{tools_block}"
         f"{visual_block}"
+        f"{multi_action_block}"
         "Classify the act and return JSON matching the schema."
     )
 

@@ -38,6 +38,9 @@ def fdb_v3_config(**overrides) -> Config:
       implementation_plan.md §5.6, "No automatic retries under the
       profile") -- a retry would only ever be an extra logged call,
       which fails FDB's strict pass-rate check outright.
+    - multi_action_enabled: FDB-v3 scenarios routinely ask for 2-3
+      actions in one turn (34 of 100 recordings) -- found live that 0 of
+      those got their full tool set without this (Day 2 WP2).
 
     `**overrides` lets a caller tune settle_ms/settle_ms_incomplete/etc.
     per run without editing this function -- passed straight to
@@ -52,5 +55,6 @@ def fdb_v3_config(**overrides) -> Config:
         settle_ms_incomplete=2500,
         max_read_retries=0,
         max_write_retries=0,
+        multi_action_enabled=True,
     )
     return dataclasses.replace(base, **overrides) if overrides else base

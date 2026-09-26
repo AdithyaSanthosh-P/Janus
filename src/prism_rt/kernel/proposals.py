@@ -42,6 +42,7 @@ def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnI
         VisualCandidate(name=c["name"], description=c.get("description", ""))
         for c in raw.get("visual_candidates") or ()
     )
+    requested_actions = tuple(a for a in (raw.get("requested_actions") or ()) if isinstance(a, str))
     return TurnInterpretation(
         turn_id=turn_id,
         input_digest=input_digest,
@@ -53,6 +54,7 @@ def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnI
         ack_phrase=raw.get("ack_phrase"),
         visual_reference=raw.get("visual_reference") or "none",
         visual_candidates=visual_candidates,
+        requested_actions=requested_actions,
     )
 
 

@@ -283,6 +283,7 @@ class TaskStateMachine:
             "pending_clarification": None,
             "tools": tool_summary,
             "vision_enabled": store.config.vision_enabled,
+            "multi_action_enabled": store.config.multi_action_enabled,
         }
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return self._make_request(store, JobKind.INTERPRET, view, gid, turn_id, read_set)
@@ -293,6 +294,20 @@ class TaskStateMachine:
         facts = self._goal_slots(store, goal_id)
         read_keys = ["goal.active", f"goal.{goal_id}.intent", "catalog.version"]
         read_keys.extend(f"slot.{goal_id}.{name}" for name in facts)
+
+        # Day 2 WP2 (docs/fdb_v3_day2_plan.md): every action the turn
+        # asked for, so the Planner emits one step per action instead of
+        # just one (found live: 0 of 34 multi-action FDB-v3 recordings
+        # got their full tool set before this). In the read set like
+        # `intent` -- a correction that changes the action list mid-turn
+        # must invalidate an in-flight PLAN job the same way a slot
+        # change already does.
+        requested_actions: list[str] = []
+        if store.config.multi_action_enabled:
+            actions_fact = store.facts.get(f"goal.{goal_id}.actions")
+            if actions_fact is not None and actions_fact.status != FactStatus.RETRACTED:
+                requested_actions = list(actions_fact.value or [])
+                read_keys.append(f"goal.{goal_id}.actions")
 
         catalog_summary = [
             {
@@ -327,6 +342,7 @@ class TaskStateMachine:
             "catalog": catalog_summary,
             "change_context": None,
             "pending_visual_targets": pending_visual_targets,
+            "requested_actions": requested_actions,
         }
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return self._make_request(store, JobKind.PLAN, view, goal_id, None, read_set)

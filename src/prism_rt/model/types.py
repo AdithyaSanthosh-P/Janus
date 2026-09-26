@@ -358,6 +358,11 @@ class TurnInterpretation:
     ack_phrase: str | None = None
     visual_reference: str = "none"  # V3: "none" | "at_utterance" | "current_state"
     visual_candidates: tuple[VisualCandidate, ...] = ()
+    # Day 2 WP2 (docs/fdb_v3_day2_plan.md): ordered tool names for every
+    # action the turn asked for, `intent` included as the first entry
+    # when set. Gated by Config.multi_action_interpretation_enabled --
+    # only stored/used when that's on (kernel/interpret_apply.py).
+    requested_actions: tuple[str, ...] = ()
 
 
 class BindingKind(str, Enum):

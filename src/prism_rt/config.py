@@ -32,6 +32,12 @@ class Config:
     # settle_barrier_enabled=True.
     incomplete_turn_settle_enabled: bool = False
     settle_ms_incomplete: int = 2500
+    # Day 2 WP2 (docs/fdb_v3_day2_plan.md): the Interpreter/Planner see
+    # every action a turn asks for, not just the first (found live: 0 of
+    # 34 FDB-v3 multi-action recordings got their full tool set before
+    # this). See workers/interpreter.py's own docstring at the
+    # multi_action_block for exactly what changes.
+    multi_action_enabled: bool = False
     watchdog_timeout_ms: int = 105_000
     # P0.4 (call deadlines, docs/original_design_audit.md D4, blueprint
     # §5.9's own defaults): an IN_FLIGHT call past this many ms with no

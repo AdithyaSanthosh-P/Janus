@@ -374,6 +374,18 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.intent",
             )
+        # Day 2 WP2 (docs/fdb_v3_day2_plan.md): every tool the turn asked
+        # for, in order -- tells the Planner to emit one step per action
+        # instead of just one for `intent`. Additive fact; a plan built
+        # without this flag never reads it.
+        if txn.store.config.multi_action_enabled and interp.requested_actions:
+            txn.facts.set(
+                f"goal.{gid}.actions",
+                list(interp.requested_actions),
+                FactStatus.COMMITTED,
+                Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
+                rule="interpret_apply.requested_actions",
+            )
         _apply_slot_deltas(txn, gid, interp.slot_deltas, now_us, step_no, event_id=event_id)
         if interp.commit_intent:
             txn.facts.set(
