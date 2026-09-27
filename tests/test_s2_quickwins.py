@@ -221,6 +221,45 @@ def test_never_silent_unclear_covers_a_genuinely_empty_transcript():
     assert_clean(h)
 
 
+def test_delayed_reask_fires_once_the_user_stays_quiet():
+    config = Config(never_silent_unclear_enabled=True, unclear_reask_delay_ms=2000)
+    provider = ScriptedProvider()
+    provider.register("interpret", "um so uh", {"act": "unclear"})
+    h = SimHarness(config, seed=1, provider=provider, tools={}, worker_latency_us=FAST_LATENCY)
+    h.send(0, [manifest_event([SEARCH_TOOL])])
+    h.send(100_000, [chunk_event("um so uh")])
+    h.send(150_000, [eot_event()])
+    early = drain(h, 1_500_000, stop_on_final=False)
+    assert [a for a in early if a.action_type == ActionType.SPEAK] == []  # still inside the grace period
+    late = drain(h, 3_000_000, stop_on_final=False)
+    speaks = [a for a in late if a.action_type == ActionType.SPEAK]
+    assert len(speaks) == 1 and "didn't quite catch" in speaks[0].body.text
+    assert_clean(h)
+
+
+def test_delayed_reask_is_dropped_when_the_user_continues():
+    """The live finding: a hesitant fragment closed as its own turn, then
+    the real request a moment later. No re-ask about the fragment."""
+    config = Config(never_silent_unclear_enabled=True, unclear_reask_delay_ms=2000)
+    provider = ScriptedProvider()
+    provider.register("interpret", "um so uh", {"act": "unclear"})
+    provider.register("interpret", "Find flights to Pune", {"act": "new_goal", "intent": "search_flights",
+        "slot_deltas": [{"name": "destination", "scope": "goal", "op": "set", "value": "Pune"}]})
+    provider.register("plan", "search_flights", flat_plan("search_flights"))
+    provider.register("compose", "s1", {"text": "Found flights.", "claims": ["result:s1"]})
+    h = SimHarness(config, seed=1, provider=provider, tools={"search_flights": {"latency_ms": 100, "response": {"flight_id": "AI-1"}}}, worker_latency_us=FAST_LATENCY)
+    h.send(0, [manifest_event([SEARCH_TOOL])])
+    h.send(100_000, [chunk_event("um so uh")])
+    h.send(150_000, [eot_event()])
+    drain(h, 1_000_000, stop_on_final=False)
+    h.send(1_100_000, [chunk_event("Find flights to Pune")])
+    h.send(1_150_000, [eot_event()])
+    actions = drain(h, 5_000_000, stop_on_final=False)
+    assert [a for a in actions if a.action_type == ActionType.SPEAK and "didn't quite catch" in a.body.text] == []
+    assert len([a for a in actions if a.action_type == ActionType.FINAL]) == 1
+    assert_clean(h)
+
+
 # ---------------------------------------------------------------------------
 # Q6b: turn-stall salvage
 # ---------------------------------------------------------------------------

@@ -61,7 +61,7 @@ Python project (`pyproject.toml`, deps: pydantic, PyYAML, pytest, pytest-asyncio
 
 ```bash
 source .venv/bin/activate                     # venv already has all deps installed
-python -m pytest tests/ -v                    # full suite (328 tests as of 2026-09-27)
+python -m pytest tests/ -v                    # full suite (359 tests as of 2026-09-27)
 python -m pytest tests/test_v3.py -v           # single version's scenario tests
 PYTHONPATH=src:. python demo/run_v1_demo.py    # interactive demo with real spoken output (scripted)
 PYTHONPATH=src:. python demo/run_v1_live_demo.py  # same demo against the real Gemini API (GEMINI_API_KEY in .env)
@@ -77,6 +77,8 @@ PYTHONPATH=src:. python scripts/fdb_v3/run_text_replay.py --profile fdb --model 
 ```
 
 `src/prism_rt/voice/` (the LiveKit worker, `python -m prism_rt.voice.agent start`) imports `livekit`, `faster_whisper` and `kokoro`; nothing else in the package may import it, so the pytest suite runs without those dependencies. With no LLM configured the LiveKit session only transcribes — every utterance and tool call comes from the Janus kernel via `adapters/voice_bridge.py`.
+
+**Do not run LiveKit voice runs (`dev_livekit_run.sh`) on the dev laptop** (8 GB GPU, 14 GB RAM): they repeatedly OOM-killed the terminal or froze the machine on 2026-09-27. Voice runs go on a rented cloud GPU (see `currentStatus.md` → Next Task); text-replay and the pytest suite are safe locally. Run long jobs with `run_in_background`, never in the foreground. Voice-worker env knobs are documented in `src/prism_rt/voice/agent.py`'s docstring (`JANUS_JOB_EXECUTOR`, `JANUS_WHISPER_COMPUTE`, …).
 
 Note `pyproject.toml`'s `pythonpath = ["src", "."]` — both the `prism_rt` package under `src/` and the top-level `config/` package need to be importable; scripts run outside pytest need `PYTHONPATH=src:.` set the same way.
 

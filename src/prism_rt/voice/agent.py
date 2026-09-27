@@ -17,9 +17,11 @@ Environment:
   JANUS_EOT_MS            silence that closes a user turn (default 1000)
   JANUS_MIN_INTERRUPTION_WORDS  words needed to cut the agent off (default 2, so
                           background noise in a recording cannot truncate an answer)
-  JANUS_IDLE_PROCESSES    prewarmed job runners (default 1); they share one set of models
-  JANUS_JOB_EXECUTOR      "thread" (default: jobs share one model copy) or "process"
-                          (each job process loads its own -- OOMs an 8 GB GPU)
+  JANUS_IDLE_PROCESSES    prewarmed job processes, each with its own models (default 1)
+  JANUS_JOB_EXECUTOR      "process" (default) or "thread" (jobs share one model copy;
+                          saves VRAM, but was flaky over long runs -- see _SHARED)
+  JANUS_WHISPER_COMPUTE   CTranslate2 compute type on GPU (default float16; the dev
+                          script uses int8_float16 to fit an 8 GB GPU)
   JANUS_DECISION_LOG_DIR  optional: one decision-log JSONL per room
   GEMINI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 
@@ -105,14 +107,15 @@ def fdb_toolset() -> Toolset:
     return Toolset(manifest=manifest, make_executor=make_executor)
 
 
-# Loaded once per worker process and shared by every job. With the THREAD
-# job executor (below), every job -- including the prewarmed idle one --
-# runs in this same process, so this cache means one copy of Whisper and
-# Kokoro on the GPU instead of one per job process. Found live
-# (2026-09-27): with the default PROCESS executor, the active job and the
-# prewarmed idle process each held their own copy, and Whisper's encoder
-# intermittently hit CUDA OOM mid-recognition on an 8 GB GPU; LiveKit's STT
-# adapter swallowed the error, so the turn produced no transcript at all.
+# One model set per worker process. Under the default PROCESS executor each
+# job process (the active one and the prewarmed idle one) loads its own
+# copy -- ~5 GB of VRAM for two, fine on the organizers' 48 GB GPU. On an
+# 8 GB dev GPU that also hosts FDB's scorer, Whisper hit CUDA OOM mid-
+# recognition (found live 2026-09-27); scripts/fdb_v3/dev_livekit_run.sh
+# shrinks Whisper to int8 for local runs instead (JANUS_WHISPER_COMPUTE).
+# JANUS_JOB_EXECUTOR=thread shares one copy across jobs, but in a 26-job run
+# it produced client aborts and silent output in later jobs, so it is not
+# the default.
 _SHARED: dict = {}
 _SHARED_LOCK = threading.Lock()
 
@@ -136,7 +139,7 @@ _load_dotenv(REPO_ROOT / ".env")
 server = AgentServer(
     setup_fnc=prewarm,
     job_executor_type=(
-        JobExecutorType.PROCESS if os.environ.get("JANUS_JOB_EXECUTOR") == "process" else JobExecutorType.THREAD
+        JobExecutorType.THREAD if os.environ.get("JANUS_JOB_EXECUTOR") == "thread" else JobExecutorType.PROCESS
     ),
     num_idle_processes=_int_env("JANUS_IDLE_PROCESSES", 1),
     initialize_process_timeout=300.0,

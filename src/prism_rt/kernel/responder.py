@@ -450,6 +450,18 @@ class FastResponder:
         already = store.facts.get(f"unclear.{turn_id}.sent")
         if already is not None and already.status != FactStatus.RETRACTED:
             return []
+        # Superseded: the user has already said more (a newer turn exists) or
+        # a goal now exists -- their follow-up is being handled; re-asking
+        # about the fragment would talk over it.
+        turns = store.turn_log.all()
+        if (turns and turns[-1].turn_id != turn_id) or active_goal_id(store) is not None:
+            return []
+        delay_ms = store.config.unclear_reask_delay_ms
+        if delay_ms:
+            due_us = fact.provenance.ts_us + delay_ms * 1000
+            if now_us < due_us:
+                store.timers.schedule(f"unclear_reask:{turn_id}", due_us)
+                return []
         store.facts.set(
             f"unclear.{turn_id}.sent",
             True,

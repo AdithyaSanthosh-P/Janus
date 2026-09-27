@@ -199,6 +199,13 @@ class Config:
     # with no goal would also trigger it -- fine for a task-oriented
     # benchmark, a judgment call for a general assistant.
     never_silent_unclear_enabled: bool = False
+    # How long the Q6a re-ask waits after the unclear turn was interpreted,
+    # and it is dropped if the user has started another turn by then. Found
+    # live (2026-09-27): a hesitant opener ("Um so uh...") followed by a
+    # pause longer than the end-of-turn silence gets closed as its own
+    # turn, reads as UNCLEAR, and an immediate re-ask talks over the user
+    # who is about to state the real request. 0 = speak immediately.
+    unclear_reask_delay_ms: int = 0
     # Q6b: an honest safety-net salvage independent of the whole-scenario
     # ScenarioWatchdog (which is a single budget from scenario start, per
     # `observability/watchdog.py` -- wrong shape for "this turn is taking

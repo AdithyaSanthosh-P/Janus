@@ -68,7 +68,8 @@ def load_whisper(device: str | None = None):
     path = snapshot_download(WHISPER_REPO, revision=WHISPER_REVISION)
     device = device or ("cuda" if _cuda_available() else "cpu")
     try:
-        model = WhisperModel(path, device=device, compute_type="float16" if device == "cuda" else "int8")
+        gpu_compute = os.environ.get("JANUS_WHISPER_COMPUTE") or "float16"
+        model = WhisperModel(path, device=device, compute_type=gpu_compute if device == "cuda" else "int8")
         _transcribe(model, np.zeros(WHISPER_SAMPLE_RATE, dtype=np.float32))
     except Exception:
         if device != "cuda":

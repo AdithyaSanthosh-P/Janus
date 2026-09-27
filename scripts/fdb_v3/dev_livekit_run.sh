@@ -5,6 +5,12 @@
 #   scripts/fdb_v3/dev_livekit_run.sh travel_01 finance_19 ...     # by example id
 #   scripts/fdb_v3/dev_livekit_run.sh --all                        # every recording
 #
+# GPU memory (8 GB dev laptop): LiveKit runs each job in its own process and
+# keeps one prewarmed, so two copies of Whisper+Kokoro sit on the GPU next to
+# FDB's own scoring ASR. Whisper therefore runs int8 here (override with
+# JANUS_WHISPER_COMPUTE=float16); the agent's own default stays float16,
+# which the organizers' 48 GB GPU has room for.
+#
 # LiveKit: uses LIVEKIT_URL/LIVEKIT_API_KEY/LIVEKIT_API_SECRET from the
 # environment or .env; if LIVEKIT_URL is unset it starts a local dev server.
 # The agent and FDB's runner share one container, so both see the same /tmp
@@ -71,6 +77,7 @@ docker run -d --name "$AGENT" --gpus all --network host \
   -v "$OUT/tmp:/tmp" \
   -e LIVEKIT_URL -e LIVEKIT_API_KEY -e LIVEKIT_API_SECRET -e GEMINI_API_KEY -e OPENAI_API_KEY \
   -e FDB_V3_ROOT="$FDB_ROOT" -e JANUS_DECISION_LOG_DIR=/janus/run_output/"$(basename "$OUT")"/decisions \
+  -e JANUS_WHISPER_COMPUTE="${JANUS_WHISPER_COMPUTE:-int8_float16}" \
   "$IMAGE" -c "cd /janus && python -m prism_rt.voice.agent start" >/dev/null
 
 echo -n "waiting for the worker to register"
