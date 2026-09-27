@@ -20,8 +20,9 @@ from conftest import chunk_event, drain, eot_event, manifest_event
 
 from prism_rt.config import Config
 from prism_rt.kernel.interpret_apply import canonicalize_spoken_id
-from prism_rt.model.types import ActionType, JobKind
+from prism_rt.model.types import ActionType, JobKind, JobStatus
 from prism_rt.observability import speechlint
+from prism_rt.profiles import fdb_v3_config
 from prism_rt.sim.checker import TraceChecker
 from prism_rt.sim.harness import SimHarness
 from prism_rt.workers.gateway import ScriptedProvider
@@ -171,6 +172,28 @@ def test_never_silent_unclear_does_not_fire_with_an_active_goal():
     all_actions = [er.action for er in r.emit_report.emitted] + rest
     unclear_speaks = [a for a in all_actions if a.action_type == ActionType.SPEAK and "didn't quite catch" in a.body.text]
     assert unclear_speaks == []
+    assert_clean(h)
+
+
+def test_never_silent_unclear_also_covers_slot_update_with_no_goal():
+    """Found live, 2026-09-27 (housing_13 re-validation): a real model
+    sometimes classifies a genuinely-first utterance as `slot_update`
+    rather than `new_goal` -- the exact same silent-stall shape as
+    BACKCHANNEL/SMALLTALK/UNCLEAR with no goal, but through the
+    _SLOT_UPDATE_ACTS branch's own separate `if gid is None: return None`,
+    which the original Q6a fix never touched."""
+    config = Config(never_silent_unclear_enabled=True)
+    provider = ScriptedProvider()
+    provider.register("interpret", "bump up", {"act": "slot_update",
+        "slot_deltas": [{"name": "bedrooms", "scope": "goal", "op": "set", "value": 3}]})
+    h = SimHarness(config, seed=1, provider=provider, tools={}, worker_latency_us=FAST_LATENCY)
+    h.send(0, [manifest_event([SEARCH_TOOL])])
+    h.send(100_000, [chunk_event("let's bump up the bedrooms")])
+    h.send(150_000, [eot_event()])
+    actions = drain(h, 400_000, stop_on_final=False)
+    speaks = [a for a in actions if a.action_type == ActionType.SPEAK]
+    assert len(speaks) == 1
+    assert "didn't quite catch" in speaks[0].body.text
     assert_clean(h)
 
 
@@ -373,6 +396,69 @@ def test_clarify_reextract_disabled_by_default_asks_immediately():
     actions = drain(h, 400_000, stop_on_final=False)
     clarifies = [a for a in actions if a.action_type == ActionType.CLARIFY]
     assert len(clarifies) == 1
+
+
+# ---------------------------------------------------------------------------
+# S2 validation finding: max_interpret_retries decoupled from
+# max_read_retries (housing_13 -- see currentStatus.md's S2 section for
+# the full live-run evidence that found this).
+# ---------------------------------------------------------------------------
+
+def test_fdb_profile_zeroes_tool_retries_but_not_interpret_retries():
+    config = fdb_v3_config()
+    assert config.max_read_retries == 0
+    assert config.max_interpret_retries == 2
+
+
+def test_transient_interpret_failures_recover_instead_of_giving_up():
+    """The exact bug found live on housing_13: under the FDB profile
+    (max_read_retries=0), a transient INTERPRET failure must not
+    permanently abandon the turn. max_interpret_retries (its own field,
+    still 2 by default) gives INTERPRET real retries independent of the
+    tool-call budget."""
+    config = fdb_v3_config()
+    provider = ScriptedProvider()
+    calls = {"n": 0}
+
+    def flaky(prompt):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("transient interpret failure")
+        return {
+            "act": "new_goal", "intent": "search_flights",
+            "slot_deltas": [{"name": "destination", "scope": "goal", "op": "set", "value": "Pune"}],
+        }
+
+    provider.register("interpret", "Pune", flaky)
+    provider.register("plan", "search_flights", flat_plan("search_flights"))
+    provider.register("compose", "s1", {"text": "Found flights.", "claims": ["result:s1"]})
+    h = SimHarness(config, seed=1, provider=provider, tools={"search_flights": {"latency_ms": 200, "response": {"flight_id": "AI-1"}}}, worker_latency_us=FAST_LATENCY)
+    h.send(0, [manifest_event([SEARCH_TOOL])])
+    h.send(100_000, [chunk_event("Find flights to Pune")])
+    h.send(150_000, [eot_event()])
+    actions = drain(h, 700_000, stop_on_final=False)
+    finals = [a for a in actions if a.action_type == ActionType.FINAL]
+    assert len(finals) == 1
+    assert calls["n"] == 3  # 2 failures + 1 success, exactly max_interpret_retries + 1 attempts
+    assert not [j for j in h.store.jobs.all() if j.status == JobStatus.RUNNING]
+    assert_clean(h)
+
+
+def test_interpret_still_gives_up_past_max_interpret_retries():
+    """Negative control: exceeding the budget still gives up honestly
+    (the pre-existing give-up path is untouched, just correctly scoped
+    now) -- matches tests/test_triage_hold.py's own equivalent check."""
+    config = Config(max_interpret_retries=1)
+    provider = ScriptedProvider()  # no "interpret" rule at all -> every attempt raises LookupError
+    h = SimHarness(config, seed=1, provider=provider, tools={}, worker_latency_us=FAST_LATENCY)
+    h.send(0, [manifest_event([SEARCH_TOOL])])
+    h.send(100_000, [chunk_event("zzqx unscripted")])
+    h.send(150_000, [eot_event()])
+    drain(h, 400_000, stop_on_final=False)
+    gave_up = [k for k, f in h.store.facts.by_prefix("interpret.").items() if k.endswith(".gave_up") and f.value]
+    assert len(gave_up) == 1
+    failures = [f.value for k, f in h.store.facts.by_prefix("interpret.").items() if k.endswith(".failures")]
+    assert failures == [config.max_interpret_retries + 1]
 
 
 # ---------------------------------------------------------------------------

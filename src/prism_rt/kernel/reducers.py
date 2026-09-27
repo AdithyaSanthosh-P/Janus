@@ -383,9 +383,14 @@ def _release_dropped_interpret(txn: StoreTxn, job, *, failed: bool, now_us: int,
       to an ordinary pending request.
     - A turn whose job keeps *failing* (not merely going stale) would be
       re-requested forever, and -- with the triage hold -- would hold every
-      reply to the user behind it. After `max_read_retries` failures the
-      turn is given up on (recorded, not silently dropped) and the queue
-      moves on, releasing the hold."""
+      reply to the user behind it. After `max_interpret_retries` failures
+      the turn is given up on (recorded, not silently dropped) and the
+      queue moves on, releasing the hold. Deliberately its own field, not
+      `max_read_retries` (a real conflation found and fixed 2026-09-27,
+      see `config.py`'s own docstring on `max_interpret_retries`) -- a
+      live INTERPRET call can fail transiently in a way FDB's own
+      deterministic mock tools never do, so the two must not share a
+      budget."""
     turn_id = job.turn_id
     prov = Provenance(source="system", event_id=event_id, turn_id=turn_id, step_no=step_no, ts_us=now_us)
     waiting_key = f"spec_interpret.{turn_id}.eot_waiting"
@@ -398,7 +403,7 @@ def _release_dropped_interpret(txn: StoreTxn, job, *, failed: bool, now_us: int,
         prev = txn.facts.get(count_key)
         count = (prev.value if prev is not None and prev.status != FactStatus.RETRACTED else 0) + 1
         txn.facts.set(count_key, count, FactStatus.COMMITTED, prov, rule="interpret.failure")
-        gave_up = count > txn.store.config.max_read_retries
+        gave_up = count > txn.store.config.max_interpret_retries
 
     if was_waiting:
         txn.facts.retract(waiting_key, rule="speculation.eot_waiting_dropped")

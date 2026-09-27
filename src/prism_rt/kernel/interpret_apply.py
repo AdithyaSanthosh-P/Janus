@@ -440,6 +440,18 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
     if interp.act in _SLOT_UPDATE_ACTS:
         gid = active_goal_id(txn.store)
         if gid is None:
+            # S2 validation finding (housing_13, 2026-09-27): a live model
+            # sometimes classifies a genuinely-first, no-goal-yet
+            # utterance as SLOT_UPDATE/ADDITION/etc. rather than NEW_GOAL
+            # -- superficially it reads like a correction ("let's raise
+            # the max price... and also bump up...") even with no prior
+            # turn to correct. This branch has the exact same silent-stall
+            # shape Q6a already fixed for BACKCHANNEL/SMALLTALK/UNCLEAR
+            # (`_flag_unclear_no_goal` below) -- found live: a standalone
+            # repro of the identical input returned `slot_update` on 2 of
+            # 4 attempts and `new_goal` on the other 2, so this is real
+            # response variance, not a one-off.
+            _flag_unclear_no_goal(txn, interp.turn_id, now_us, step_no, event_id=event_id)
             return None
         goal = txn.store.goals.get(gid)
         if goal is None or goal.status != GoalStatus.ACTIVE:
@@ -537,12 +549,26 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
     # correct for a task-oriented benchmark but a judgment call for a
     # general assistant.
     gid = active_goal_id(txn.store)
-    if gid is None and txn.store.config.never_silent_unclear_enabled:
-        txn.facts.set(
-            "session.unclear_no_goal_turn",
-            interp.turn_id,
-            FactStatus.COMMITTED,
-            Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
-            rule="interpret_apply.unclear_no_goal",
-        )
+    if gid is None:
+        _flag_unclear_no_goal(txn, interp.turn_id, now_us, step_no, event_id=event_id)
     return gid
+
+
+def _flag_unclear_no_goal(txn: StoreTxn, turn_id: str, now_us: int, step_no: int, *, event_id: str) -> None:
+    """Shared by both no-op-classification paths that can leave a turn
+    with no active goal and no further mutation: the BACKCHANNEL/
+    SMALLTALK/UNCLEAR fallthrough above, and `_SLOT_UPDATE_ACTS`'s own
+    `if gid is None: return None` -- found live (2026-09-27) that a
+    real model can emit SLOT_UPDATE for a genuinely-first utterance too,
+    the identical silent-stall shape under a different act value.
+    `kernel/responder.py.FastResponder._unclear_no_goal` speaks
+    `UNCLEAR_NO_GOAL` once per flagged turn_id."""
+    if not txn.store.config.never_silent_unclear_enabled:
+        return
+    txn.facts.set(
+        "session.unclear_no_goal_turn",
+        turn_id,
+        FactStatus.COMMITTED,
+        Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
+        rule="interpret_apply.unclear_no_goal",
+    )

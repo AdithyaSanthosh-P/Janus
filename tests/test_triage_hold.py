@@ -129,7 +129,10 @@ def test_persistently_failing_interpretation_is_given_up_and_releases_the_hold()
     gave_up = [k for k, f in h.store.facts.by_prefix("interpret.").items() if k.endswith(".gave_up") and f.value]
     assert len(gave_up) == 1
     failures = [f.value for k, f in h.store.facts.by_prefix("interpret.").items() if k.endswith(".failures")]
-    assert failures == [h.config.max_read_retries + 1]
+    # S2 (2026-09-27): give-up is gated by max_interpret_retries, its own
+    # field, decoupled from max_read_retries (which governs tool-call
+    # retries only) -- see config.py's docstring on max_interpret_retries.
+    assert failures == [h.config.max_interpret_retries + 1]
     assert [a.body.text for a in _emitted(h, ActionType.FINAL)] == ["Flights found."]
     assert not [j for j in h.store.jobs.all() if j.status == JobStatus.RUNNING]
 

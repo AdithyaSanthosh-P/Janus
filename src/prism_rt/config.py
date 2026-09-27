@@ -50,6 +50,22 @@ class Config:
 
     # Policies
     max_read_retries: int = 2
+    # A real, pre-existing conflation found and fixed 2026-09-27 (S2
+    # validation, win_plan §6.2): `kernel/reducers.py._release_dropped_
+    # interpret` used to reuse `max_read_retries` to gate give-up on a
+    # failed/stale INTERPRET *job* -- a live LLM call, which can fail
+    # transiently, is not the same thing as a tool call against FDB's own
+    # deterministic mock APIs (which never fail transiently, the actual
+    # reason FDB's profile sets max_read_retries=0). With that shared
+    # field, FDB's profile meant a single transient INTERPRET failure
+    # permanently abandoned the turn with zero recovery -- confirmed live
+    # on housing_13 (reproduced twice; a standalone same-input API call
+    # succeeded cleanly, ruling out a persistent content/schema issue) --
+    # and neither of S2's own new safety nets (never_silent_unclear_
+    # enabled, turn_stall_salvage_ms) could catch it, since both need
+    # something INTERPRET itself never produced. Decoupled here; the FDB
+    # profile deliberately does NOT zero this one out.
+    max_interpret_retries: int = 2
     max_write_retries: int = 1
     max_clarification_attempts: int = 2
     max_consecutive_holds: int = 3
@@ -168,16 +184,20 @@ class Config:
     # same fix).
     strict_value_rules_enabled: bool = False
     # Q6a: the confirmed fix for the housing_11/housing_13 class of silent
-    # stall -- when interpretation resolves to BACKCHANNEL/SMALLTALK/
-    # UNCLEAR and there is no active goal at all (nothing to backchannel
-    # or make smalltalk against), that almost certainly means real content
-    # was thrown away, not that the user said nothing worth a response.
-    # `kernel/interpret_apply.py` flags the turn; `kernel/responder.py.
-    # FastResponder._unclear_no_goal` speaks an honest re-ask once, per
-    # turn. Kept flagged (not unconditional like the write-honesty fixes)
-    # since a genuine "hi"/pure smalltalk turn with no goal would also
-    # trigger it -- fine for a task-oriented benchmark, a judgment call
-    # for a general assistant.
+    # stall -- when interpretation resolves to a no-op act (BACKCHANNEL/
+    # SMALLTALK/UNCLEAR, or -- found in the same live validation pass --
+    # SLOT_UPDATE/ADDITION/ANSWER_CLARIFICATION/CONFIRM/DENY) and there is
+    # no active goal at all for it to attach to, that almost certainly
+    # means real content was thrown away, not that the user said nothing
+    # worth a response (a standalone repro of housing_13's own transcript
+    # returned `slot_update` on 2 of 4 identical live calls -- real
+    # response variance, not a one-off). `kernel/interpret_apply.py._flag_
+    # unclear_no_goal` (called from both code paths) flags the turn;
+    # `kernel/responder.py.FastResponder._unclear_no_goal` speaks an
+    # honest re-ask once, per turn. Kept flagged (not unconditional like
+    # the write-honesty fixes) since a genuine "hi"/pure smalltalk turn
+    # with no goal would also trigger it -- fine for a task-oriented
+    # benchmark, a judgment call for a general assistant.
     never_silent_unclear_enabled: bool = False
     # Q6b: an honest safety-net salvage independent of the whole-scenario
     # ScenarioWatchdog (which is a single budget from scenario start, per

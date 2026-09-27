@@ -37,7 +37,13 @@ def fdb_v3_config(**overrides) -> Config:
       deterministic and never fail transiently (docs/fdb_v3_
       implementation_plan.md §5.6, "No automatic retries under the
       profile") -- a retry would only ever be an extra logged call,
-      which fails FDB's strict pass-rate check outright.
+      which fails FDB's strict pass-rate check outright. Deliberately
+      NOT the same budget as `max_interpret_retries` (config.py, still
+      its own default of 2 here) -- that gates give-up on a *live
+      INTERPRET call*, which can genuinely fail transiently, unlike
+      FDB's own mock tools; found and fixed 2026-09-27 after a S2
+      validation run silently lost an entire scenario (housing_13) to
+      exactly this conflation.
     - multi_action_enabled: FDB-v3 scenarios routinely ask for 2-3
       actions in one turn (34 of 100 recordings) -- found live that 0 of
       those got their full tool set without this (Day 2 WP2).
