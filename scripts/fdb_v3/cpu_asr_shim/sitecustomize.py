@@ -1,30 +1,41 @@
-"""Site-import shim: on a CUDA-less process, nn.Module.cuda() becomes a no-op.
+"""Site-import shim for FDB's own scorer process (loaded via PYTHONPATH by
+scripts/fdb_v3/dev_livekit_run.sh for that one `docker exec` only).
 
-FDB's own run_tool_benchmark(_all_released).py unconditionally calls
-model.cuda() when loading its NeMo Parakeet scoring model (every nn.Module
-has a `.cuda` attribute, so its own `hasattr(model, "cuda")` check never
-actually protects anything) -- there is no CPU-only code path in the eval
-kit as shipped. This process is launched with CUDA_VISIBLE_DEVICES="" so the
-offline scorer's ~5GB Parakeet model doesn't compete with the live agent's
-own GPU-resident Whisper/Kokoro for VRAM on an 8GB laptop GPU. Without this
-shim, `model.cuda()` still raises even with no GPU visible.
+FDB's run_tool_benchmark(_all_released).py loads a second ASR model (NeMo
+Parakeet, fp32) purely to transcribe recorded audio for its report. On an
+8 GB laptop GPU that shares the card with the live agent's Whisper+Kokoro,
+it OOM'd -- but only at *load time*: NeMo restores the checkpoint with
+`torch.load(..., map_location=<cuda>)` into a model that is already on the
+GPU, briefly holding two full copies (~5 GB). Steady state is ~2.55 GB,
+which fits.
 
-Only takes effect when CUDA genuinely isn't visible to this process, so it
-is a no-op everywhere else (e.g. running the same scorer on a GPU with
-enough VRAM to hold both models at once).
+So this shim redirects a CUDA `map_location` in `torch.load` to the CPU:
+the state dict lands in host RAM, NeMo copies it into the GPU-resident
+model once, and the peak VRAM is a single copy. Precision is unchanged
+(fp32, same as the organizers' scoring machine). An earlier version of
+this shim hid the GPU entirely and ran Parakeet on the CPU instead; that
+moved ~5 GB into *system* RAM on a 14 GB machine and got the terminal
+OOM-killed mid-run (2026-09-27), so it was replaced by this.
 """
 import torch
 
-if not torch.cuda.is_available():
-    _noop_cuda = lambda self, *a, **k: self  # noqa: E731
-    torch.nn.Module.cuda = _noop_cuda
-    # NeMo's ASRModel actually inherits its .cuda() from PyTorch Lightning's
-    # own mixin (lightning.fabric...DeviceDtypeModuleMixin), which shadows
-    # nn.Module's version in the MRO -- patching only nn.Module.cuda above
-    # never gets called for it.
-    try:
-        import lightning.fabric.utilities.device_dtype_mixin as _ddm
+_orig_torch_load = torch.load
 
-        _ddm._DeviceDtypeModuleMixin.cuda = _noop_cuda
-    except (ImportError, AttributeError):
-        pass
+
+def _is_cuda_location(loc) -> bool:
+    if loc is None:
+        return False
+    if isinstance(loc, torch.device):
+        return loc.type == "cuda"
+    if isinstance(loc, str):
+        return loc.startswith("cuda")
+    return False
+
+
+def _load_to_cpu_first(*args, **kwargs):
+    if _is_cuda_location(kwargs.get("map_location")):
+        kwargs["map_location"] = "cpu"
+    return _orig_torch_load(*args, **kwargs)
+
+
+torch.load = _load_to_cpu_first

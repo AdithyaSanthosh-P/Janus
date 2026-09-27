@@ -80,13 +80,15 @@ for _ in $(seq 1 180); do
   echo -n "."; sleep 2
 done
 
-# FDB's own scorer loads a second, separate ASR model (NeMo Parakeet) purely
-# to transcribe recorded audio for the benchmark report -- it never affects
-# the live conversation. On an 8GB laptop GPU that model competes with the
-# agent's own already-resident Whisper+Kokoro for VRAM and OOMs, so it's
-# forced onto CPU here (slower, but this step is offline post-hoc scoring,
-# not real-time, so correctness is unaffected).
-docker exec -e LIVEKIT_URL -e LIVEKIT_API_KEY -e LIVEKIT_API_SECRET -e CUDA_VISIBLE_DEVICES= \
+# FDB's own scorer loads a second ASR model (NeMo Parakeet, fp32) purely to
+# transcribe recorded audio for its report. Its steady state (~2.5 GB) fits
+# next to the agent's Whisper+Kokoro on an 8 GB GPU, but NeMo's checkpoint
+# restore briefly holds two copies (~5 GB) and OOM'd. The shim makes
+# torch.load land the checkpoint on the CPU first, so the GPU only ever
+# holds one copy -- same fp32 precision as the organizers' own scoring.
+# (Running the scorer on the CPU instead moved ~5 GB into system RAM and
+# got the terminal OOM-killed on this 14 GB machine.)
+docker exec -e LIVEKIT_URL -e LIVEKIT_API_KEY -e LIVEKIT_API_SECRET \
   -e PYTHONPATH="$REPO/scripts/fdb_v3/cpu_asr_shim" "$AGENT" bash -c \
   "cd '$FDB_ROOT' && python run_tool_benchmark_all_released.py --provider janus --root_dir '$OUT/data' --force" \
   | tee "$OUT/runner.log"

@@ -11,8 +11,10 @@ not in the middle of the first scenario.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
+import threading
 
 import numpy as np
 from livekit import rtc
@@ -29,6 +31,19 @@ WHISPER_SAMPLE_RATE = 16_000
 
 _DASHES = re.compile("[–—―]")
 _SPACES = re.compile(r"\s+")
+
+logger = logging.getLogger("janus.voice.speech")
+
+# Whisper and Kokoro share one 8 GB GPU with FDB's own scoring ASR. Running
+# an STT encode and a TTS synthesis at the same moment stacks both models'
+# activation memory; serializing them keeps the peak to one at a time. Both
+# are called from worker threads (asyncio.to_thread), hence a thread lock.
+_GPU_LOCK = threading.Lock()
+
+
+def _locked_transcribe(model, audio, **kwargs) -> str:
+    with _GPU_LOCK:
+        return _transcribe(model, audio, **kwargs)
 
 
 def clean_transcript(text: str) -> str:
@@ -123,8 +138,30 @@ class FasterWhisperSTT(stt.STT):
         language: NotGivenOr[str] = NOT_GIVEN,
         conn_options: APIConnectOptions,
     ) -> stt.SpeechEvent:
+        # Never raise out of here. `stt.StreamAdapter` swallows an exception
+        # from this method and emits no transcript event at all, so the
+        # kernel never learns the user spoke -- found live (2026-09-27): a
+        # CUDA OOM inside Whisper's encoder produced exactly that silence.
+        # On failure: retry once, then return an *empty* final transcript,
+        # which the kernel turns into an honest "didn't catch that" instead
+        # (never_silent_unclear_enabled).
         audio = _to_mono_16k(buffer)
-        text = await asyncio.to_thread(_transcribe, self._model, audio, language=self._language, beam_size=self._beam_size)
+        logger.info(
+            "janus.voice.speech: recognizing buffer -- %d samples (%.2fs at %dHz)",
+            len(audio), len(audio) / WHISPER_SAMPLE_RATE, WHISPER_SAMPLE_RATE,
+        )
+        text = ""
+        for attempt in (1, 2):
+            try:
+                text = await asyncio.to_thread(
+                    _locked_transcribe, self._model, audio, language=self._language, beam_size=self._beam_size
+                )
+                break
+            except Exception:
+                logger.exception("janus.voice.speech: transcription attempt %d failed", attempt)
+                if attempt == 1:
+                    await asyncio.sleep(0.2)
+        logger.info("janus.voice.speech: recognized text=%r", text)
         return stt.SpeechEvent(
             type=stt.SpeechEventType.FINAL_TRANSCRIPT,
             alternatives=[stt.SpeechData(language=self._language, text=text)],
@@ -170,6 +207,11 @@ def load_kokoro(device: str | None = None) -> KokoroEngine:
     return engine
 
 
+def _locked_synthesize(engine: KokoroEngine, text: str) -> bytes:
+    with _GPU_LOCK:
+        return engine.synthesize_pcm16(text)
+
+
 class KokoroTTS(tts.TTS):
     def __init__(self, engine: KokoroEngine) -> None:
         super().__init__(
@@ -191,7 +233,7 @@ class _KokoroStream(tts.ChunkedStream):
             num_channels=1,
             mime_type="audio/pcm",
         )
-        pcm = await asyncio.to_thread(self._tts._engine.synthesize_pcm16, self.input_text)
+        pcm = await asyncio.to_thread(_locked_synthesize, self._tts._engine, self.input_text)
         if pcm:
             output_emitter.push(pcm)
         output_emitter.flush()

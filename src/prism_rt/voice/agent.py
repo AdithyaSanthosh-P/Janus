@@ -17,7 +17,9 @@ Environment:
   JANUS_EOT_MS            silence that closes a user turn (default 1000)
   JANUS_MIN_INTERRUPTION_WORDS  words needed to cut the agent off (default 2, so
                           background noise in a recording cannot truncate an answer)
-  JANUS_IDLE_PROCESSES    prewarmed worker processes, each with its own models (default 1)
+  JANUS_IDLE_PROCESSES    prewarmed job runners (default 1); they share one set of models
+  JANUS_JOB_EXECUTOR      "thread" (default: jobs share one model copy) or "process"
+                          (each job process loads its own -- OOMs an 8 GB GPU)
   JANUS_DECISION_LOG_DIR  optional: one decision-log JSONL per room
   GEMINI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 
@@ -34,11 +36,12 @@ import importlib
 import logging
 import os
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, cli, stt
+from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobExecutorType, JobProcess, cli, stt
 from livekit.plugins import silero
 
 from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest
@@ -50,6 +53,13 @@ from prism_rt.voice.speech import FasterWhisperSTT, KokoroTTS, load_kokoro, load
 from prism_rt.workers.gateway import GeminiProvider
 
 logger = logging.getLogger("janus.voice")
+# Guarantees our own INFO-level diagnostic logging (voice/speech.py's
+# per-recognition logs, used to root-cause the third ASR silence layer,
+# 2026-09-27) is actually visible in `docker logs`/agent.log regardless
+# of whether livekit-agents' own CLI already configured logging --
+# `basicConfig` is a documented no-op if the root logger already has
+# handlers, so this never fights whatever's already there.
+logging.basicConfig(level=logging.INFO)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -95,17 +105,39 @@ def fdb_toolset() -> Toolset:
     return Toolset(manifest=manifest, make_executor=make_executor)
 
 
+# Loaded once per worker process and shared by every job. With the THREAD
+# job executor (below), every job -- including the prewarmed idle one --
+# runs in this same process, so this cache means one copy of Whisper and
+# Kokoro on the GPU instead of one per job process. Found live
+# (2026-09-27): with the default PROCESS executor, the active job and the
+# prewarmed idle process each held their own copy, and Whisper's encoder
+# intermittently hit CUDA OOM mid-recognition on an 8 GB GPU; LiveKit's STT
+# adapter swallowed the error, so the turn produced no transcript at all.
+_SHARED: dict = {}
+_SHARED_LOCK = threading.Lock()
+
+
+def _shared_models() -> dict:
+    with _SHARED_LOCK:
+        if not _SHARED:
+            _SHARED["vad"] = silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
+            _SHARED["whisper"] = load_whisper()
+            _SHARED["kokoro"] = load_kokoro()
+            _SHARED["toolset"] = fdb_toolset()
+        return _SHARED
+
+
 def prewarm(proc: JobProcess) -> None:
-    proc.userdata["vad"] = silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
-    proc.userdata["whisper"] = load_whisper()
-    proc.userdata["kokoro"] = load_kokoro()
-    proc.userdata["toolset"] = fdb_toolset()
+    proc.userdata.update(_shared_models())
 
 
 _load_dotenv(REPO_ROOT / ".env")
 
 server = AgentServer(
     setup_fnc=prewarm,
+    job_executor_type=(
+        JobExecutorType.PROCESS if os.environ.get("JANUS_JOB_EXECUTOR") == "process" else JobExecutorType.THREAD
+    ),
     num_idle_processes=_int_env("JANUS_IDLE_PROCESSES", 1),
     initialize_process_timeout=300.0,
     load_threshold=float(os.environ.get("JANUS_LOAD_THRESHOLD", "0.95")),
