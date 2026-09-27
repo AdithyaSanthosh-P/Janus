@@ -17,6 +17,8 @@ structural change, not currently executing) still replans.
 
 from __future__ import annotations
 
+import re
+
 from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.model.types import (
     BindingKind,
@@ -106,6 +108,26 @@ def _suspend_current_goal(txn: StoreTxn) -> None:
         txn.store.goals.update(current, status=GoalStatus.SUSPENDED)
 
 
+_SPOKEN_ID_SPLIT = re.compile(r"[\s\-.,]+")
+
+
+def canonicalize_spoken_id(value):
+    """Q1 (win_plan §6.2): a value spelled out one character at a time
+    ("X-Y-Z-8-8") is really one identifier and gets joined back into
+    "XYZ88" -- FDB-v3's own ASR frequently renders a spoken confirmation
+    code or order ID this way. A multi-character token anywhere in the
+    split (e.g. "FL-DEN-8AM") means this is a *structured* code with real
+    separators, not a spelled-out one, and is left untouched. Only
+    strings are ever touched; anything else (a number, a bool) passes
+    through unchanged."""
+    if not isinstance(value, str):
+        return value
+    tokens = [t for t in _SPOKEN_ID_SPLIT.split(value) if t]
+    if len(tokens) < 2 or not all(len(t) == 1 and t.isalnum() for t in tokens):
+        return value
+    return "".join(tokens)
+
+
 def _apply_slot_deltas(txn: StoreTxn, goal_id: str, slot_deltas, now_us: int, step_no: int, *, event_id: str) -> bool:
     changed = False
     for delta in slot_deltas:
@@ -114,8 +136,11 @@ def _apply_slot_deltas(txn: StoreTxn, goal_id: str, slot_deltas, now_us: int, st
             if txn.facts.retract(key, rule="interpret_apply.slot_clear"):
                 changed = True
         else:
+            value = delta.value
+            if txn.store.config.normalize_spoken_ids:
+                value = canonicalize_spoken_id(value)
             provenance = Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us)
-            if txn.facts.set(key, delta.value, FactStatus.COMMITTED, provenance, rule="interpret_apply.slot_set"):
+            if txn.facts.set(key, value, FactStatus.COMMITTED, provenance, rule="interpret_apply.slot_set"):
                 changed = True
         # V3: a fresh user statement about a slot name resolves whatever
         # perception conflict was open on it (§9.1's "answer binding" —
@@ -395,6 +420,20 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.commit_intent",
             )
+        # Q7 (win_plan §6.2): the Interpreter's own `ack_phrase` (already
+        # parsed onto `TurnInterpretation.ack_phrase` in kernel/proposals.py
+        # but never consumed anywhere before this) is stored as a fact so
+        # `kernel/responder.py.FastResponder._ack_plan_dispatch` can speak
+        # it verbatim once the plan actually dispatches, instead of the
+        # generic ACK_DEFAULT string.
+        if interp.ack_phrase and txn.store.config.echo_ack_enabled:
+            txn.facts.set(
+                f"goal.{gid}.ack_phrase",
+                interp.ack_phrase,
+                FactStatus.COMMITTED,
+                Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
+                rule="interpret_apply.ack_phrase",
+            )
         _apply_visual_reference(txn, interp, gid, now_us, step_no)
         return gid
 
@@ -486,5 +525,24 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         _apply_visual_reference(txn, interp, gid, now_us, step_no)
         return gid
 
-    # BACKCHANNEL / SMALLTALK / UNCLEAR: nothing further to do.
-    return active_goal_id(txn.store)
+    # BACKCHANNEL / SMALLTALK / UNCLEAR: nothing further to do -- except
+    # when there is no active goal at all to backchannel/make smalltalk
+    # against, which is the exact shape of the housing_11/housing_13
+    # silent stalls (Q4, win_plan §6.2): a heavily disfluent, self-
+    # correcting first utterance the live model failed to extract any
+    # goal from. With no goal, nothing else in this project ever produces
+    # output for the turn -- the whole scenario would otherwise run out
+    # the clock in total silence. Gated (not unconditional): a genuinely
+    # contentless first turn ("hi") would also trip this, which is
+    # correct for a task-oriented benchmark but a judgment call for a
+    # general assistant.
+    gid = active_goal_id(txn.store)
+    if gid is None and txn.store.config.never_silent_unclear_enabled:
+        txn.facts.set(
+            "session.unclear_no_goal_turn",
+            interp.turn_id,
+            FactStatus.COMMITTED,
+            Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
+            rule="interpret_apply.unclear_no_goal",
+        )
+    return gid

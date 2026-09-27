@@ -17,3 +17,9 @@ INFORM_UNKNOWN_WRITE_OUTCOME = "I haven't received confirmation for that yet."
 CLARIFY_RETRY_WRITE = "Should I try again?"
 FINAL_FALLBACK = "Here's what I found."
 WATCHDOG_FALLBACK = "I wasn't able to finish in time — here's where things stood."
+# Q6a (win_plan §6.2): spoken when interpretation classified the turn as
+# BACKCHANNEL/SMALLTALK/UNCLEAR with no active goal to attach it to --
+# almost certainly real content a live model failed to extract a goal
+# from (confirmed via housing_11/housing_13's saved decision logs), not
+# actual noise. Never claims anything was understood.
+UNCLEAR_NO_GOAL = "Sorry, I didn't quite catch what you'd like me to do — could you say that again?"

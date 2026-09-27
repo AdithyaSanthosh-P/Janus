@@ -154,6 +154,7 @@ class JobKind(str, Enum):
     VISION = "vision"
     ASR = "asr"
     FRAME = "frame"  # Phase 5 (docs/post_v4_implementation_plan.md): C2 response frames
+    EXTRACT = "extract"  # Q5 (win_plan §6.2): one-parameter targeted re-extraction before a clarify
 
 
 class Confidence(str, Enum):
@@ -458,6 +459,10 @@ class JobRecord:
     read_set: ReadSet
     status: JobStatus = JobStatus.RUNNING
     dispatched_step: int = 0
+    # Q5 (win_plan §6.2): the fact key an EXTRACT job's result should be
+    # applied to, e.g. "slot.g1.destination" -- unused by every other job
+    # kind, default None so nothing else is affected.
+    target: str | None = None
 
 
 # ---------------------------------------------------------------------------

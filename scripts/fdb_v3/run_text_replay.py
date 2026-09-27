@@ -63,7 +63,9 @@ from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest 
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter, fill_schema_defaults  # noqa: E402
 from prism_rt.config import Config  # noqa: E402
 from prism_rt.profiles import fdb_v3_config  # noqa: E402
+from prism_rt.adapters.transcript_segmenter import segment_transcript  # noqa: E402
 from prism_rt.entry import setup  # noqa: E402
+from prism_rt.observability import speechlint  # noqa: E402
 from prism_rt.workers.gateway import GeminiProvider  # noqa: E402
 
 DEFAULT_FDB_ROOT = os.environ.get(
@@ -93,6 +95,8 @@ async def run_one_scenario(
     *,
     seed: int,
     final_timeout_s: float,
+    segmented: bool = False,
+    segment_gap_ms: int = 180,
 ) -> dict:
     metadata = json.loads((example_dir / "metadata.json").read_text())
     transcript_in = metadata["dialogue"][0]["user"]
@@ -164,7 +168,14 @@ async def run_one_scenario(
     consumer = asyncio.create_task(consume_actions())
 
     await events.put({"type": "manifest", "ts_us": _now_us(), "payload": {"tools": manifest}})
-    await events.put({"type": "text_chunk", "ts_us": _now_us(), "payload": {"text": transcript_in}})
+    if segmented:
+        pieces = segment_transcript(transcript_in) or [transcript_in]
+        for i, piece in enumerate(pieces):
+            if i:
+                await asyncio.sleep(segment_gap_ms / 1000)
+            await events.put({"type": "text_chunk", "ts_us": _now_us(), "payload": {"text": piece}})
+    else:
+        await events.put({"type": "text_chunk", "ts_us": _now_us(), "payload": {"text": transcript_in}})
     await events.put({"type": "end_of_turn", "ts_us": _now_us(), "payload": {}})
 
     meta = {"seed": seed}
@@ -229,6 +240,7 @@ async def main_async(args: argparse.Namespace) -> None:
             result = await run_one_scenario(
                 example_dir, manifest, provider, config, mock_apis_module,
                 seed=i, final_timeout_s=args.timeout,
+                segmented=args.segmented, segment_gap_ms=args.segment_gap_ms,
             )
         except Exception as exc:  # noqa: BLE001 - one scenario's crash must not kill the whole run
             print(f"CRASHED: {exc!r}")
@@ -268,6 +280,34 @@ async def main_async(args: argparse.Namespace) -> None:
     (out_dir / "pass_rate_report.json").write_text(json.dumps(pass_report, indent=2, default=str))
     (out_dir / "tool_calls_report.json").write_text(json.dumps(tool_report, indent=2, default=str))
 
+    # Q11 (win_plan §6.2): a lint summary reusing the same speechlint.lint
+    # this project's own EmissionGate applies live (Config.speechlint_
+    # enabled) -- run here regardless of whether that flag was on for
+    # this particular run, so a run with the live gate *off* still shows
+    # how often each violation class would have fired. Linted as one
+    # kind="final" pass over each scenario's whole spoken transcript
+    # (every ACK/CLARIFY/FINAL concatenated) -- catches jargon/internal-
+    # word leaks precisely; won't flag an ACK-specific premature-
+    # completion-claim in isolation (that check is kind-scoped and this
+    # pass doesn't know which words came from which action), which is a
+    # known, documented narrowing of the live check, not a bug.
+    lint_by_scenario: dict[str, list[str]] = {}
+    violation_counts: dict[str, int] = {}
+    for result in per_scenario_results:
+        violations = speechlint.lint(result["transcript"], "final").violations
+        if violations:
+            lint_by_scenario[result["example_id"]] = list(violations)
+            for v in violations:
+                label = v.split(":", 1)[0]
+                violation_counts[label] = violation_counts.get(label, 0) + 1
+    lint_summary = {
+        "scenarios_with_violations": len(lint_by_scenario),
+        "total_violations": sum(violation_counts.values()),
+        "violations_by_type": violation_counts,
+        "by_scenario": lint_by_scenario,
+    }
+    (out_dir / "speechlint_report.json").write_text(json.dumps(lint_summary, indent=2, default=str))
+
     print("\n=== T3 TEXT REPLAY SUMMARY ===")
     print(f"model: {args.model}  thinking_budget: {args.thinking_budget}")
     print(f"scenarios run: {len(entries)}")
@@ -275,7 +315,28 @@ async def main_async(args: argparse.Namespace) -> None:
     print(f"turn_take_rate: {tool_report['turn_taking']['turn_take_rate']}")
     print(f"tool_selection_acc: {tool_report['by_metric']['tool_selection_acc']}")
     print(f"argument_acc: {tool_report['by_metric']['argument_acc']}")
-    print(f"reports written to {out_dir}")
+    print(f"speechlint: {lint_summary['scenarios_with_violations']}/{len(entries)} scenarios with violations, "
+          f"{lint_summary['total_violations']} total ({violation_counts})")
+
+    # Q11: per-bucket failure table -- domain/difficulty breakdown from
+    # FDB's own evaluators, printed here since run_text_replay.py's own
+    # summary previously showed only the aggregate numbers above.
+    print("\nper-bucket pass rate (strict) / tool_selection_acc / argument_acc:")
+    for domain, rate in sorted(pass_report.get("by_domain", {}).items()):
+        tool_bucket = tool_report.get("by_domain", {}).get(domain, {})
+        print(
+            f"  {domain:24s} pass={rate:.1%}"
+            f"  tool_sel={tool_bucket.get('tool_selection_acc', float('nan')):.1%}"
+            f"  arg_acc={tool_bucket.get('argument_acc', float('nan')):.1%}"
+        )
+    for difficulty, rate in sorted(pass_report.get("by_difficulty", {}).items()):
+        tool_bucket = tool_report.get("by_difficulty", {}).get(difficulty, {})
+        print(
+            f"  {difficulty:24s} pass={rate:.1%}"
+            f"  tool_sel={tool_bucket.get('tool_selection_acc', float('nan')):.1%}"
+            f"  arg_acc={tool_bucket.get('argument_acc', float('nan')):.1%}"
+        )
+    print(f"\nreports written to {out_dir}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -289,6 +350,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--timeout", type=float, default=60.0, help="seconds to wait for a scenario's FINAL")
     p.add_argument("--use-llm", action="store_true", help="use the gpt-4o judge (needs OPENAI_API_KEY); default is exact-match")
     p.add_argument("--debug", action="store_true", help="enable per-scenario decision logs")
+    p.add_argument(
+        "--segmented", action="store_true",
+        help="Q10 (win_plan §6.2): split each transcript at pause markers (..., em/en dash, "
+             "comma) and send the pieces as separate text_chunk events with a realistic gap, "
+             "instead of one whole-transcript chunk -- a cheap proxy for the voice path's "
+             "many-chunk/mid-utterance-pause behavior",
+    )
+    p.add_argument("--segment-gap-ms", type=int, default=180, help="gap between segmented chunks (--segmented only)")
     p.add_argument(
         "--profile", choices=["none", "fdb"], default="none",
         help="Day 2 WP1: 'fdb' applies prism_rt.profiles.fdb_v3_config() (G4 exemption, settle "

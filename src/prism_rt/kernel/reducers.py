@@ -16,6 +16,7 @@ from prism_rt.kernel.interpret_apply import (
     active_goal_id,
     advance_interpretation_queue,
     apply_interpretation,
+    canonicalize_spoken_id,
     enqueue_interpretation,
     set_grounded_compose_text,
     transcription_pending,
@@ -514,6 +515,38 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
         except (KeyError, ValueError):
             return
         _FRAMES.on_frame_result(txn, job, template, step_no, now_us, event_id=env.event_id)
+
+    elif kind == JobKind.EXTRACT:
+        # Q5 (win_plan §6.2): read-set validity (already checked above, K4)
+        # already covers "the clarify was resolved some other way while
+        # this was in flight" via goal.<gid>.clarify_target being in the
+        # job's own read set -- a stale result never reaches here at all.
+        if job.goal_id is None or job.target is None:
+            return
+        goal = txn.store.goals.get(job.goal_id)
+        if goal is None or goal.status != GoalStatus.ACTIVE:
+            return
+        txn.facts.set(
+            f"reextract.{job.goal_id}.{job.target}",
+            True,
+            FactStatus.COMMITTED,
+            Provenance(source="system", event_id=env.event_id, step_no=step_no, ts_us=now_us),
+            rule="reducers.extract_tried",
+        )
+        value = proposal.get("value") if isinstance(proposal, dict) else None
+        if value is None:
+            return  # genuinely not stated -- falls through to the ordinary clarify
+        if txn.store.config.normalize_spoken_ids:
+            value = canonicalize_spoken_id(value)
+        txn.facts.set(
+            job.target,
+            value,
+            FactStatus.COMMITTED,
+            Provenance(source="user", event_id=env.event_id, step_no=step_no, ts_us=now_us),
+            rule="reducers.extract_applied",
+        )
+        txn.facts.retract(f"goal.{job.goal_id}.clarify_target", rule="reducers.extract_resolved")
+        txn.store.goals.update(job.goal_id, task_state=TaskState.PLANNING)
 
 
 _HANDLERS = {

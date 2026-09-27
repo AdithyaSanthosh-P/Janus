@@ -146,6 +146,76 @@ class Config:
     # of dispatching a non-speculative job and waiting for it.
     speculative_interpretation_enabled: bool = False
 
+    # Day 2 S2 (docs-personal/private-docs/win_plan_2026-09-27.md §6.2,
+    # "quick-win pack"). Each Q-item is its own flag, additive and off by
+    # default, matching every prior version's own rule.
+    #
+    # Q1: a slot value that's really a spelled-out identifier ("X-Y-Z-8-8")
+    # gets joined back into one token (XYZ88) before being written --
+    # `kernel/interpret_apply.py._canonicalize_spoken_id`. A value with any
+    # multi-character token (e.g. "FL-DEN-8AM") is left untouched -- that's
+    # a structured code, not a spelled-out one.
+    normalize_spoken_ids: bool = False
+    # Q2: extra Interpreter-prompt guidance (workers/interpreter.py) --
+    # copy values verbatim, never invent a year, only the final corrected
+    # value after a self-correction, no unstated optional params -- plus
+    # explicit guidance against misclassifying a disfluent-but-real first
+    # utterance as BACKCHANNEL/SMALLTALK/UNCLEAR (the confirmed root cause
+    # of the housing_11/housing_13 silent stalls, found by reading their
+    # saved decision logs: interpretation resolved to a no-op act with no
+    # active goal to attach to, and NOTHING spoke -- see
+    # never_silent_unclear_enabled below for the safety-net half of this
+    # same fix).
+    strict_value_rules_enabled: bool = False
+    # Q6a: the confirmed fix for the housing_11/housing_13 class of silent
+    # stall -- when interpretation resolves to BACKCHANNEL/SMALLTALK/
+    # UNCLEAR and there is no active goal at all (nothing to backchannel
+    # or make smalltalk against), that almost certainly means real content
+    # was thrown away, not that the user said nothing worth a response.
+    # `kernel/interpret_apply.py` flags the turn; `kernel/responder.py.
+    # FastResponder._unclear_no_goal` speaks an honest re-ask once, per
+    # turn. Kept flagged (not unconditional like the write-honesty fixes)
+    # since a genuine "hi"/pure smalltalk turn with no goal would also
+    # trigger it -- fine for a task-oriented benchmark, a judgment call
+    # for a general assistant.
+    never_silent_unclear_enabled: bool = False
+    # Q6b: an honest safety-net salvage independent of the whole-scenario
+    # ScenarioWatchdog (which is a single budget from scenario start, per
+    # `observability/watchdog.py` -- wrong shape for "this turn is taking
+    # too long", and never fires at all when no goal is active, exactly
+    # like Q6a's own gap). If this many ms have elapsed since the last EOT
+    # and the active goal still hasn't produced FINAL text,
+    # `kernel/task.py.TaskStateMachine` forces one through the same
+    # salvage path `reducers._apply_watchdog` uses (WATCHDOG_FALLBACK
+    # wording, task_completed=False) rather than let the scenario run out
+    # the full ScenarioWatchdog budget in silence. 0 = disabled.
+    turn_stall_salvage_ms: int = 0
+    # Q5: when a required slot is missing and CLARIFYING is about to speak
+    # a generic "what should X be" question, dispatch one narrow EXTRACT
+    # job first (one parameter, the transcript, that parameter's own
+    # schema) -- the user may already have said it in words the broader
+    # INTERPRET pass didn't bind to this exact parameter name. Only tried
+    # once per (goal, target); a null/no-value result falls through to
+    # the ordinary clarify.
+    clarify_reextract_enabled: bool = False
+    # Q8: a deterministic post-lint (`observability/speechlint.py`) over
+    # every SPEAK/CLARIFY/FINAL body right before it's written --
+    # humanizes a leaked raw schema/parameter identifier (M-09's own
+    # known bug class: "what should indicator_state be?") and flags an
+    # ACK that claims something is already done before any call has run.
+    # Reused, not duplicated, by `scripts/fdb_v3/run_text_replay.py`'s own
+    # report (Q11) to lint a whole run's transcripts after the fact too.
+    speechlint_enabled: bool = False
+    # Q7: the Interpreter names every requested action and its key values
+    # in one future-tense sentence (`TurnInterpretation.ack_phrase`,
+    # already parsed in `kernel/proposals.py` but never consumed before
+    # this); `kernel/responder.py.FastResponder._ack_plan_dispatch` speaks
+    # it in place of the generic ACK once a plan actually dispatches,
+    # falling back to the existing content-ack/generic chain when the
+    # model didn't provide one. Also gates the prompt guidance that tells
+    # the model `ack_phrase` exists at all (`workers/interpreter.py`).
+    echo_ack_enabled: bool = False
+
     # Day 2 (docs/fdb_v3_implementation_plan.md §5.2): G4 (commit_intent)
     # applies to every WRITE-kind call, including a tool whose mutability
     # was never declared and therefore defaults to STATE_CHANGING (the

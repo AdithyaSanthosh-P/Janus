@@ -155,6 +155,60 @@ def build_prompt(view: dict) -> str:
             "cheapest one you just found\") is NOT a slot_delta -- leave it "
             "out; the planner resolves it from the prior step's result.\n"
         )
+    # Q2 (win_plan §6.2): value-copying rules found necessary against real
+    # FDB-v3 recordings (self-corrections, unstated optional params), plus
+    # explicit guidance against the confirmed root cause of the
+    # housing_11/housing_13 silent stalls (Q4) -- a heavily disfluent,
+    # self-correcting first utterance classified as BACKCHANNEL/SMALLTALK/
+    # UNCLEAR instead of NEW_GOAL, with no active_intent to fall back on
+    # and nothing left to say for the rest of the scenario. Additive,
+    # gated on strict_value_rules_enabled so it doesn't touch any existing
+    # test's matched substring.
+    value_rules_block = ""
+    if view.get("strict_value_rules_enabled"):
+        value_rules_block = (
+            "\nValue rules:\n"
+            "- Copy slot values in the user's own words; never reformat, "
+            "reorder, or convert them (dates, IDs, names stay exactly as "
+            "spoken).\n"
+            "- Never invent a year, unit, or any value the user didn't "
+            "say.\n"
+            "- If the user corrects themselves mid-turn (\"a 1-bedroom... "
+            "actually no, 2-bedroom\"), only the FINAL corrected value is "
+            "a slot_delta -- never emit the rejected earlier value.\n"
+            "- Never add a slot_delta for an optional parameter the user "
+            "did not state.\n"
+            "- If a required parameter has no stated value at all, still "
+            "extract everything else and leave that parameter unbound "
+            "rather than inventing one -- the system will ask.\n"
+            "- Disfluency (\"uh\", \"you know\", false starts, "
+            "self-corrections) is never a reason to classify the turn as "
+            "backchannel, smalltalk, or unclear when active_intent is "
+            "null and the transcript states or implies a real request -- "
+            "extract new_goal from whatever real content is present. "
+            "backchannel/smalltalk/unclear are for turns with no active "
+            "goal to attach to AND no actionable content at all (e.g. "
+            "\"ok\", \"hello\", pure noise) -- not for a genuine request "
+            "that happens to be spoken haltingly.\n"
+        )
+    # Q7 (win_plan §6.2): tells the model `ack_phrase` exists and what it's
+    # for -- the field was already in the schema and already parsed onto
+    # `TurnInterpretation.ack_phrase`, but nothing ever told a live model
+    # to fill it, so it was always null in practice. Gated on
+    # echo_ack_enabled so the prompt (and therefore every ScriptedProvider
+    # test's matched substring) is unchanged unless this is on.
+    ack_phrase_block = ""
+    if view.get("echo_ack_enabled"):
+        ack_phrase_block = (
+            "\nAlso set ack_phrase: one future-tense sentence naming EVERY "
+            "action this turn asks for and its key values, to speak back "
+            "to the user before any of it runs (e.g. \"I'll search "
+            "flights to Dubai for April 10th and book the cheapest one "
+            "for Casey Lee.\"). Never claim anything is already done, "
+            "booked, or confirmed -- only what you're about to do. Null "
+            "if there's nothing to acknowledge yet (a clarifying "
+            "question, backchannel, etc.).\n"
+        )
     return (
         f"transcript: {view.get('transcript', '')!r}\n"
         f"active_intent: {view.get('active_intent')}\n"
@@ -164,6 +218,8 @@ def build_prompt(view: dict) -> str:
         f"{tools_block}"
         f"{visual_block}"
         f"{multi_action_block}"
+        f"{value_rules_block}"
+        f"{ack_phrase_block}"
         "Classify the act and return JSON matching the schema."
     )
 

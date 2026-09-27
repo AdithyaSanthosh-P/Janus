@@ -32,6 +32,7 @@ from config.templates import (
     FRESH_VIEW_REQUEST,
     INFORM_DUPLICATE_WRITE,
     INFORM_UNKNOWN_WRITE_OUTCOME,
+    UNCLEAR_NO_GOAL,
 )
 from prism_rt.kernel.commit import CommitGate
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, user_content_pending
@@ -107,6 +108,7 @@ class FastResponder:
         actions.extend(self._inform_blocked_writes(store, now_us, step_no, skip_call_ids))
         actions.extend(self._inform_write_timeout(store, now_us, step_no))
         actions.extend(self._reconcile_completed_after_cancel(store, now_us, step_no))
+        actions.extend(self._unclear_no_goal(store, now_us, step_no))
 
         gid = active_goal_id(store)
         if gid is None:
@@ -142,7 +144,7 @@ class FastResponder:
             rule="responder.ack",
         )
         grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
-        text = self._content_ack_text(store) or ACK_DEFAULT
+        text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
         return [
             IntendedAction(
                 action_type=ActionType.SPEAK,
@@ -151,6 +153,19 @@ class FastResponder:
                 rule_id="responder.ack",
             )
         ]
+
+    def _echo_ack_text(self, store, goal_id: str) -> str | None:
+        """Q7 (win_plan §6.2): the Interpreter's own `ack_phrase`, when the
+        model provided one — takes priority over the single-value
+        `_content_ack_text` since it names every requested action, not
+        just the one HIGH-confidence value QuickDetector happened to
+        catch."""
+        if not store.config.echo_ack_enabled:
+            return None
+        fact = store.facts.get(f"goal.{goal_id}.ack_phrase")
+        if fact is None or fact.status == FactStatus.RETRACTED or not fact.value:
+            return None
+        return fact.value
 
     def _content_ack_text(self, store) -> str | None:
         """Phase 6 (`docs/prompt 2.txt` §9.3): "emit a content-bearing ACK
@@ -189,6 +204,23 @@ class FastResponder:
         if target_fact is None or target_fact.status == FactStatus.RETRACTED:
             return []
         target = target_fact.value
+        # Q5 (win_plan §6.2): a plain missing-slot target gets one narrow
+        # re-extraction attempt (kernel/task.py.TaskStateMachine._maybe_
+        # reextract) before this ever speaks -- hold until that attempt
+        # has actually resolved (`reextract.<goal>.<target>` set), so the
+        # generic "what should X be" question doesn't go out the same
+        # step the targeted attempt was dispatched. A resolved-with-value
+        # attempt retracts clarify_target itself (short-circuiting the
+        # check above on the next step); a resolved-with-null attempt
+        # falls through to the ordinary clarify below.
+        if (
+            store.config.clarify_reextract_enabled
+            and isinstance(target, str)
+            and target.startswith(f"slot.{goal_id}.")
+        ):
+            tried = store.facts.get(f"reextract.{goal_id}.{target}")
+            if tried is None or tried.status == FactStatus.RETRACTED:
+                return []
         asked = store.facts.get(f"clarify.{goal_id}.asked")
         if asked is not None and asked.status != FactStatus.RETRACTED and asked.value == target:
             return []
@@ -402,6 +434,37 @@ class FastResponder:
                 )
             ]
         return []
+
+    def _unclear_no_goal(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
+        """Q6a (win_plan §6.2): the spoken half of the housing_11/
+        housing_13 silent-stall fix -- `kernel/interpret_apply.py` flags
+        exactly one turn_id here, at most once per turn (a later turn
+        overwrites it with its own turn_id, which is fine — the "sent"
+        fact below is keyed per turn_id, so a *new* unclear turn still
+        gets its own honest re-ask). Unconditional read of the flag
+        (config gating already happened where it was set)."""
+        fact = store.facts.get("session.unclear_no_goal_turn")
+        if fact is None or fact.status == FactStatus.RETRACTED:
+            return []
+        turn_id = fact.value
+        already = store.facts.get(f"unclear.{turn_id}.sent")
+        if already is not None and already.status != FactStatus.RETRACTED:
+            return []
+        store.facts.set(
+            f"unclear.{turn_id}.sent",
+            True,
+            FactStatus.COMMITTED,
+            Provenance(source="system", step_no=step_no, ts_us=now_us),
+            rule="responder.unclear_no_goal",
+        )
+        return [
+            IntendedAction(
+                action_type=ActionType.SPEAK,
+                body=SpeakBody(text=UNCLEAR_NO_GOAL, kind="clarify"),
+                read_set=EMPTY_READ_SET,
+                rule_id="responder.unclear_no_goal",
+            )
+        ]
 
     def _reconcile_completed_after_cancel(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
         """I-15: a write that got cancelled but completed anyway (or whose

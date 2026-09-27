@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from config.templates import WATCHDOG_FALLBACK
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text
 from prism_rt.model.types import (
     CallStatus,
@@ -32,6 +33,7 @@ from prism_rt.model.types import (
     GoalStatus,
     JobKind,
     JobRecord,
+    Provenance,
     QuestionStatus,
     ReadSet,
     StepKind,
@@ -73,6 +75,8 @@ class TaskStateMachine:
         if gid is not None:
             goal = store.goals.get(gid)
             if goal is not None and goal.status == GoalStatus.ACTIVE:
+                if self._maybe_salvage_stalled_turn(store, gid, now_us, step_no):
+                    return requests
                 if goal.task_state == TaskState.PLANNING:
                     if not store.jobs.running_by_kind_goal(JobKind.PLAN, gid):
                         requests.append(self._build_plan_request(store, gid))
@@ -95,6 +99,19 @@ class TaskStateMachine:
                     target = store.facts.get(f"goal.{gid}.clarify_target")
                     if target is None or target.status == FactStatus.RETRACTED:
                         store.goals.update(gid, task_state=TaskState.PLANNING)
+                    elif (
+                        store.config.clarify_reextract_enabled
+                        and isinstance(target.value, str)
+                        and target.value.startswith(f"slot.{gid}.")
+                    ):
+                        # Q5 (win_plan §6.2): a plain missing-slot target
+                        # (not a "retry:<lineage>" write-confirmation
+                        # question, which isn't a slot at all) gets one
+                        # narrow re-extraction attempt before the generic
+                        # clarify is ever spoken -- FastResponder's own
+                        # _clarify still gates on this same fact, so
+                        # nothing speaks while this is in flight.
+                        requests.extend(self._maybe_reextract(store, gid, target.value))
                 elif goal.task_state == TaskState.RESPONDING and self._consumed_step_went_stale(store, gid):
                     # RESPONDING means "every step consumed *and still
                     # valid*" (`_all_required_steps_done`) -- but that was
@@ -129,6 +146,45 @@ class TaskStateMachine:
                         requests.append(self._build_compose_request(store, gid))
 
         return requests
+
+    def _maybe_salvage_stalled_turn(self, store, goal_id: str, now_us: int, step_no: int) -> bool:
+        """Q6b (win_plan §6.2): an honest safety-net salvage, independent
+        of `observability/watchdog.py`'s ScenarioWatchdog -- that one is a
+        single whole-scenario wall-clock budget (105s default), the wrong
+        shape for "this one turn is taking too long", and (like Q6a's own
+        gap) never fires at all while no goal is active. If
+        `turn_stall_salvage_ms` have elapsed since the last EOT and this
+        goal still has no FINAL text, force one through the exact same
+        salvage path `reducers._apply_watchdog` uses (WATCHDOG_FALLBACK
+        wording, `source="watchdog"` so `_final` correctly reports
+        task_completed=False) instead of running out the full
+        ScenarioWatchdog budget in silence. Returns True iff it salvaged
+        this step -- the caller skips the rest of this goal's normal
+        dispatch, matching `_apply_watchdog`'s own "don't clobber a FINAL
+        already on its way" rule (checked here too, via `grounded_compose_
+        text` rather than the raw fact, so an already-invalid stale text
+        doesn't block a fresh salvage)."""
+        ms = store.config.turn_stall_salvage_ms
+        if not ms:
+            return False
+        last_eot = store.facts.get("session.last_eot_ts")
+        if last_eot is None or last_eot.status == FactStatus.RETRACTED:
+            return False
+        due_us = last_eot.value + ms * 1000
+        store.timers.schedule(f"turn_stall_salvage:{goal_id}", due_us)
+        if now_us < due_us:
+            return False
+        if grounded_compose_text(store, goal_id) is not None:
+            return False
+        store.goals.update(goal_id, task_state=TaskState.RESPONDING)
+        store.facts.set(
+            f"compose.{goal_id}.text",
+            WATCHDOG_FALLBACK,
+            FactStatus.COMMITTED,
+            Provenance(source="watchdog", step_no=step_no, ts_us=now_us),
+            rule="task.turn_stall_salvage",
+        )
+        return True
 
     def _all_required_steps_done(self, store, goal_id: str) -> bool:
         """"Done" means CONSUMED *and still valid* — matching
@@ -284,6 +340,8 @@ class TaskStateMachine:
             "tools": tool_summary,
             "vision_enabled": store.config.vision_enabled,
             "multi_action_enabled": store.config.multi_action_enabled,
+            "strict_value_rules_enabled": store.config.strict_value_rules_enabled,
+            "echo_ack_enabled": store.config.echo_ack_enabled,
         }
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return self._make_request(store, JobKind.INTERPRET, view, gid, turn_id, read_set)
@@ -413,10 +471,51 @@ class TaskStateMachine:
         return self._make_request(store, JobKind.COMPOSE, view, goal_id, None, read_set)
 
     def _make_request(
-        self, store, kind: JobKind, view: dict, goal_id: str | None, turn_id: str | None, read_set: ReadSet
+        self,
+        store,
+        kind: JobKind,
+        view: dict,
+        goal_id: str | None,
+        turn_id: str | None,
+        read_set: ReadSet,
+        *,
+        target: str | None = None,
     ) -> DispatchRequest:
         job_id = store.ids.next("job")
         store.jobs.create(
-            JobRecord(job_id=job_id, kind=kind, goal_id=goal_id, turn_id=turn_id, read_set=read_set)
+            JobRecord(job_id=job_id, kind=kind, goal_id=goal_id, turn_id=turn_id, read_set=read_set, target=target)
         )
         return DispatchRequest(job_id=job_id, kind=kind, view=view, goal_id=goal_id, turn_id=turn_id, read_set=read_set)
+
+    def _build_extract_request(self, store, goal_id: str, target: str, param_name: str) -> DispatchRequest:
+        """Q5 (win_plan §6.2): the whole conversation so far, not just the
+        latest turn -- the value may have been stated earlier, under
+        different phrasing than whatever the broader INTERPRET pass bound
+        it to (or failed to bind at all). `goal.{goal_id}.clarify_target`
+        is in the read set so a stale/already-resolved clarify (the user
+        answered some other way while this was in flight) is rejected the
+        same way every other job kind's stale result already is (K4)."""
+        transcript = " ".join(chunk.text for turn in store.turn_log.all() for chunk in turn.chunks)
+        param_schema: dict = {}
+        for tool in store.catalog.usable_tools():
+            props = (tool.params_schema or {}).get("properties") or {}
+            if param_name in props and isinstance(props[param_name], dict):
+                param_schema = props[param_name]
+                break
+        view = {
+            "transcript": transcript,
+            "param_name": param_name,
+            "param_description": param_schema.get("description"),
+        }
+        read_keys = ["goal.active", f"goal.{goal_id}.clarify_target", "catalog.version"]
+        read_set = store.facts.build_read_set(sorted(set(read_keys)))
+        return self._make_request(store, JobKind.EXTRACT, view, goal_id, None, read_set, target=target)
+
+    def _maybe_reextract(self, store, goal_id: str, target: str) -> list[DispatchRequest]:
+        tried = store.facts.get(f"reextract.{goal_id}.{target}")
+        if tried is not None and tried.status != FactStatus.RETRACTED:
+            return []  # already attempted (result applied or genuinely null) for this exact target
+        if store.jobs.running_by_kind_goal(JobKind.EXTRACT, goal_id):
+            return []
+        param_name = target.rsplit(".", 1)[-1]
+        return [self._build_extract_request(store, goal_id, target, param_name)]
