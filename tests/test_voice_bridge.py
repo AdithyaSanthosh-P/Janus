@@ -62,11 +62,19 @@ async def test_segment_final_emits_a_text_chunk_with_ts_us():
     assert isinstance(items[0]["ts_us"], int)
 
 
-async def test_blank_segment_is_not_emitted_as_a_chunk():
+async def test_blank_final_segment_is_still_emitted_as_an_empty_chunk():
+    """Found live (2026-09-27): a real, VAD-detected speech segment that
+    STT genuinely transcribes as nothing (heavy filler/hesitation, quiet
+    audio) must still open/extend a turn -- otherwise the kernel never
+    gets a chance to close it, interpret it, and speak an honest "didn't
+    catch that" instead of staying silent forever. Dropping it here used
+    to make that impossible regardless of anything on the kernel side."""
     bridge, events, _actions, _said = _make_bridge()
     await bridge.on_segment_final("   ")
     items = await _drain_nowait(events)
-    assert items == []
+    assert len(items) == 1
+    assert items[0]["type"] == "text_chunk"
+    assert items[0]["payload"]["text"] == ""
 
 
 async def test_end_of_turn_fires_only_after_t_eot_of_silence():

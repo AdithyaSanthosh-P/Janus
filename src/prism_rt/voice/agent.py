@@ -168,7 +168,17 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("user_input_transcribed")
     def _on_transcript(ev) -> None:
-        if ev.is_final and ev.transcript.strip():
+        # A *final* segment with empty/whitespace-only text still needs to
+        # reach the bridge -- found live (2026-09-27): faster-whisper can
+        # legitimately produce nothing for a real, VAD-detected speech
+        # segment (heavy filler/hesitation, quiet audio). Previously this
+        # guard silently dropped that case entirely -- no text_chunk, no
+        # turn ever opens, kernel/turns.py.TurnManager.request_interpretation
+        # never even sees the turn to interpret it, and no S2 safety net
+        # (never_silent_unclear_enabled included) is reachable because none
+        # of them fire without an interpretation happening first. Only
+        # interim (non-final) results are still filtered.
+        if ev.is_final:
             _spawn(bridge.on_segment_final(ev.transcript))
 
     @session.on("user_state_changed")

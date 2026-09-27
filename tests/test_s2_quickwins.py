@@ -197,6 +197,30 @@ def test_never_silent_unclear_also_covers_slot_update_with_no_goal():
     assert_clean(h)
 
 
+def test_never_silent_unclear_covers_a_genuinely_empty_transcript():
+    """The full live-voice-path finding (2026-09-27 LiveKit re-validation):
+    faster-whisper can produce a completely empty transcript for a real,
+    VAD-detected speech segment. `adapters/voice_bridge.py.VoiceBridge.
+    on_segment_final` was fixed to still emit an (empty) text_chunk rather
+    than dropping it, specifically so this exact path -- an empty chunk,
+    then EOT, then an UNCLEAR classification -- reaches Q6a's safety net
+    instead of the turn silently vanishing with no chunk ever opened at
+    all. Reproduced here purely at the kernel level (SimHarness), which
+    is what's actually testable without a live GPU/LiveKit run."""
+    config = Config(never_silent_unclear_enabled=True)
+    provider = ScriptedProvider()
+    provider.register("interpret", "''", {"act": "unclear"})
+    h = SimHarness(config, seed=1, provider=provider, tools={}, worker_latency_us=FAST_LATENCY)
+    h.send(0, [manifest_event([SEARCH_TOOL])])
+    h.send(100_000, [chunk_event("")])
+    h.send(150_000, [eot_event()])
+    actions = drain(h, 400_000, stop_on_final=False)
+    speaks = [a for a in actions if a.action_type == ActionType.SPEAK]
+    assert len(speaks) == 1
+    assert "didn't quite catch" in speaks[0].body.text
+    assert_clean(h)
+
+
 # ---------------------------------------------------------------------------
 # Q6b: turn-stall salvage
 # ---------------------------------------------------------------------------

@@ -96,10 +96,23 @@ class VoiceBridge:
         """A finalized STT segment. Janus chunks are append-only -- an
         interim/partial transcript is never sent here, only a segment
         the STT layer itself considers final. Restarts the T_eot timer:
-        speech has clearly continued past any earlier silence."""
-        stripped = text.strip()
-        if stripped:
-            await self.events.put({"type": "text_chunk", "ts_us": self.now_us(), "payload": {"text": stripped}})
+        speech has clearly continued past any earlier silence.
+
+        Sends the text_chunk even when `text` strips to empty -- found
+        live (2026-09-27): a real, VAD-detected speech segment that STT
+        genuinely transcribes as nothing (heavy filler/hesitation, quiet
+        audio) used to be silently dropped here, so no turn ever opened
+        for it and the kernel never got a chance to close it, interpret
+        it, and speak an honest "didn't catch that"
+        (never_silent_unclear_enabled). `kernel/turns.py.TurnManager.
+        on_chunk` accepts an empty chunk fine (it only ever contributes
+        nothing to the joined prefix text); `request_interpretation`'s own
+        `not turn.chunks` guard is satisfied by a turn holding one empty
+        chunk, so interpretation still dispatches -- on an empty
+        transcript, which a live model reads as UNCLEAR, which
+        `never_silent_unclear_enabled` already turns into a spoken
+        re-ask instead of silence."""
+        await self.events.put({"type": "text_chunk", "ts_us": self.now_us(), "payload": {"text": text.strip()}})
         self._restart_eot_timer()
 
     async def on_speech_end(self) -> None:

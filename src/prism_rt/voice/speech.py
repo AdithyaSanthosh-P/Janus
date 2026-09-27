@@ -70,7 +70,19 @@ def _transcribe(model, audio: np.ndarray, *, language: str = "en", beam_size: in
         beam_size=beam_size,
         temperature=0.0,
         condition_on_previous_text=False,
-        vad_filter=True,
+        # `FasterWhisperSTT._recognize_impl` is only ever called by
+        # `stt.StreamAdapter` on a buffer the *external* Silero VAD
+        # (`voice/agent.py`'s `userdata["vad"]`) already decided was a
+        # real speech segment -- running faster-whisper's own internal
+        # `vad_filter` again on top of that is a second, redundant VAD
+        # pass, not a safety net. Found live (2026-09-27, LiveKit
+        # re-validation): 4/26 recordings never produced a transcript at
+        # all, every one unusually dense in filler words/hesitation
+        # ("Um so uh...", "Well, um uh, you know..."); the internal VAD is
+        # the most plausible culprit, since it re-segments an already-
+        # short, already-VAD-selected clip and can slice a hesitant
+        # utterance down to nothing. False by default now.
+        vad_filter=False,
         without_timestamps=True,
     )
     # Whisper invents text for noise; a segment it itself rates as probably
