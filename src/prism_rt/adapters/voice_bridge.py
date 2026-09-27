@@ -12,8 +12,8 @@ Translation only -- this never drops, delays, or rewrites a Janus
 action, and it never decides anything the kernel is supposed to decide
 (no commit/settle logic lives here; that's CommitGate's G10/G11). Its
 only piece of owned timing is T_eot: the transport's own "user stopped
-talking" signal, exactly like the old evaluation kit's `end_of_turn`
-flag on a chunk -- not a semantic decision about task completion.
+talking" signal, translated into an ordinary `end_of_turn` event -- not
+a semantic decision about task completion.
 
 Every event pushed to `events` always carries `ts_us` (Day 1 lesson,
 docs/fdb_v3_implementation_plan.md's T3 harness: `HarnessCodec.decode`
@@ -42,6 +42,12 @@ class VoiceBridge:
     t_eot_ms: int = 1000
     clock: Callable[[], float] = field(default=time.monotonic)
     on_interruption_logged: Callable[[str], None] = field(default=lambda msg: None)
+    # Day 2 WP5 (docs/fdb_v3_day2_plan.md): a caller driving a replay
+    # (T4's offline audio replay, or a live host) needs to know when a
+    # FINAL specifically (not just any SPEAK/CLARIFY) occurred, to stop
+    # waiting -- `say()` alone loses that distinction (it's called for
+    # all three). Optional so every existing caller/test is unaffected.
+    on_final: Callable[[], None] = field(default=lambda: None)
 
     _start_wall: float = field(init=False, repr=False)
     _eot_task: "asyncio.Task | None" = field(default=None, init=False, repr=False)
@@ -134,6 +140,8 @@ class VoiceBridge:
                 text = body.get("text")
                 if text:
                     await self.say(text)
+                if action_type == "final":
+                    self.on_final()
             elif action_type == "tool_call":
                 await self._run_tool_call(body)
             # "cancel": FDB's mock tool calls can't be cancelled once

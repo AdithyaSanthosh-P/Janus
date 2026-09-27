@@ -57,6 +57,21 @@ RUN pip install --no-cache-dir \
         "openai" \
         "pydub" "ffmpeg-python" "numpy" "python-dotenv" "gdown"
 
+# Local speech stack for the Janus LiveKit worker: faster-whisper (STT) and
+# Kokoro-82M (TTS). A separate layer after the large pip step above, so
+# changing it never re-downloads that one. Versions are the ones already
+# verified working together with torch 2.14 on this project's GPU.
+# CTranslate2 (faster-whisper) is built for CUDA 12 + cuDNN 9: it uses the
+# CUDA 12.4 cuBLAS and cuDNN 9 that this base image already ships, while
+# torch keeps its own bundled CUDA 13 libraries (different sonames, no
+# clash). Kokoro's out-of-vocabulary fallback needs espeak-ng; the
+# `espeakng-loader` wheel misaki pulls in bundles the library, so no apt
+# package is needed.
+RUN pip install --no-cache-dir --timeout 120 --retries 10 \
+        "faster-whisper==1.2.1" "ctranslate2==4.8.2" \
+        "kokoro==0.9.4" "misaki[en]==0.9.4" "spacy==3.8.16" "soundfile==0.14.0" \
+    && python -m spacy download en_core_web_sm
+
 # Janus itself -- the actual agent under test runs inside this
 # container in Day 2+ (LiveKit voice worker); T3/T4 offline harnesses
 # (scripts/fdb_v3/) also run from here so the whole pipeline is

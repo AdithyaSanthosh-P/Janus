@@ -60,7 +60,7 @@ def _load_dotenv(path: Path) -> None:
 _load_dotenv(REPO_ROOT / ".env")
 
 from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest  # noqa: E402
-from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter  # noqa: E402
+from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter, fill_schema_defaults  # noqa: E402
 from prism_rt.config import Config  # noqa: E402
 from prism_rt.profiles import fdb_v3_config  # noqa: E402
 from prism_rt.entry import setup  # noqa: E402
@@ -140,7 +140,9 @@ async def run_one_scenario(
                 args = body.get("arguments") or {}
                 try:
                     result = await adapter.execute(tool_name, args)
-                    actual_calls.append({"function": tool_name, "args": args})
+                    # Record what the adapter actually logs for FDB (schema
+                    # defaults filled in), not the kernel's raw arguments.
+                    actual_calls.append({"function": tool_name, "args": fill_schema_defaults(tool_schemas.get(tool_name) or {}, args)})
                     await events.put(
                         {
                             "type": "tool_result",

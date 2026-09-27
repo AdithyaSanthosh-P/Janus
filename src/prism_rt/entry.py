@@ -92,7 +92,7 @@ class RunSummary:
 
 class Codec(Protocol):
     """What `run_scenario` needs from a wire codec: `HarnessCodec` (Janus's
-    own dialect) or `adapters/kit_codec.py.KitCodec` (the evaluation kit's)."""
+    own dialect), or any harness-specific translation layer."""
 
     def timestamp_us(self, raw: dict) -> int | None: ...
     def decode(self, raw: dict, *, seq: int) -> list: ...
@@ -207,8 +207,9 @@ class Runtime:
         return summary
 
     def _advance_clock(self, clock: ClockPort, codec: Codec, raw: dict) -> None:
-        # The codec owns which wire field carries the timestamp (`ts_us`/
-        # `ts_ms`/... for HarnessCodec, `timestamp_ms` for KitCodec).
+        # The codec owns which wire field carries the timestamp (e.g.
+        # `ts_us`/`ts_ms`/... for HarnessCodec) -- a different codec may
+        # use a different field name entirely.
         try:
             ts_us = codec.timestamp_us(raw) if isinstance(raw, dict) else None
             if ts_us is not None:

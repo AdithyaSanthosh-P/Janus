@@ -2,8 +2,8 @@
 mock tool registry (docs/fdb_v3_implementation_plan.md §3.3).
 
 This is deliberately thin and stateless, matching every other adapter in
-this package (`kit_codec.py`'s module docstring): it never touches the
-store or the kernel, and it runs only because `CommitGate` already
+this package: it never touches the store or the kernel, and it runs
+only because `CommitGate` already
 admitted the call (Janus emitted `TOOL_CALL`) -- it does not itself
 decide whether a call is allowed. `MockAPIRegistry.call` is FDB's own,
 unmodified code (`v3/mock_apis.py`); this module never edits it, only

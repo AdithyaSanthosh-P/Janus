@@ -332,8 +332,8 @@ class TimerWheel:
         liveness obligation is discharged. Without this a timer nobody
         cancels (e.g. `deadline:<call_id>` for a call that completed) stays
         due forever, and a driver honouring `next_wake_us` re-steps without
-        end (found under the evaluation kit: `entry.py` busy-spun the
-        event loop until the watchdog)."""
+        end (found while auditing `entry.py`: it busy-spun the event loop
+        until the watchdog)."""
         self._guard.check()
         for tid in self.due(now_us):
             del self._due[tid]

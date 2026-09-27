@@ -1,17 +1,16 @@
 """Regression: the production driver must never starve the event loop.
 
-Found by running the evaluation kit against Janus with a live model
-(2026-09-24): after any tool call completed, the run went silent until the
-105 s watchdog, and the kit harness's own 30 s tail sleep overshot by ~70 s
--- the shared asyncio loop was blocked.
+Found running `entry.py` against a live model (2026-09-24): after any tool
+call completed, the run went silent until the 105 s watchdog fired, ~70 s
+past the actual tail of the scenario -- the shared asyncio loop was blocked.
 
 Cause: every TOOL_CALL schedules a `deadline:<call_id>` liveness timer
 (`kernel/emission.py`), and nothing ever removed it once the call finished.
 After the deadline passed, `TimerWheel.next_due_us()` returned that past
 time forever, so `entry.py`'s idle loop fired a liveness step and
 `continue`d on every iteration without ever awaiting -- a busy spin that
-also blocked worker-result delivery and, in the kit, the harness itself
-(`docs/PROTOCOL.md` §5 rule 1: never block the loop).
+also blocked worker-result delivery and, more generally, any transport
+sharing that event loop (never block the loop).
 
 Fix: `Kernel.step()` retires every timer due at or before its own `now_us`
 (a timer's only job is to make the driver step by then, `TimerWheel`'s

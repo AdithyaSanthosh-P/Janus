@@ -178,7 +178,7 @@ class GeminiProvider:
             raise RuntimeError("GeminiProvider requires GEMINI_API_KEY (env var or api_key=)")
         # Day 1 (docs/fdb_v3_implementation_plan.md §4.1): "thinking" is on
         # by default and measured at ~5.5s/INTERPRET call -- the main
-        # cause of the kit-integration session's latency-bound score.
+        # driver of end-to-end latency on FDB-v3 runs.
         # `thinking_budget=0` turns it off (~2.2s). Left unset (None) by
         # default so every existing caller/test is unaffected; some
         # models (gemini-3.5-flash-lite, measured) reject the field with
