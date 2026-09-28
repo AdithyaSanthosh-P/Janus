@@ -268,6 +268,35 @@ class Config:
     # non-numeric/boolean parameter, so it is still asked.
     fill_unstated_required_enabled: bool = False
 
+    # Live-demo findings (28 Sep, voice agent over LiveKit): three honest-
+    # behaviour gaps a real user hits within a minute.
+    #
+    # Tools the deployment knows are read-only although their manifest never
+    # says so (FDB-v3 declares no mutability, so every tool defaulted to
+    # STATE_CHANGING): stamped `mutability: read_only` when the manifest is
+    # applied (kernel/reducers.py._apply_manifest). Without it, correcting a
+    # search after it ran ("no, make it the day after") hit the duplicate-
+    # write guard (G6) and failed honestly -- right for a booking, wrong for
+    # a search, which should simply re-run.
+    read_only_tools: tuple[str, ...] = ()
+    # Hold READ calls behind the same floor + settle barrier (G3/G10/G11)
+    # writes already wait on. FDB counts every extra call against a
+    # scenario, and a mid-sentence pause can close a turn early (found
+    # live): a read fired the instant a half-sentence closed would be an
+    # extra call once the rest arrives. Only meaningful with
+    # settle_barrier_enabled.
+    settle_reads_enabled: bool = False
+    # With no active goal, answer honestly instead of one generic re-ask:
+    # an out-of-scope request ("book me a hotel" with no hotel tool) says
+    # what can't be done and what can -- instead of being forced onto the
+    # nearest tool (found live: it became a flight search); a question
+    # about the last task ("has it been booked?") gets a status summary
+    # built from what actually ran; thanks/small talk gets a short polite
+    # reply. The turn-stall salvage also names what it is waiting for, and
+    # never fires while the agent is waiting on the user's answer to a
+    # question it asked.
+    conversational_replies_enabled: bool = False
+
     # Day 2 (docs/fdb_v3_implementation_plan.md §5.2): G4 (commit_intent)
     # applies to every WRITE-kind call, including a tool whose mutability
     # was never declared and therefore defaults to STATE_CHANGING (the

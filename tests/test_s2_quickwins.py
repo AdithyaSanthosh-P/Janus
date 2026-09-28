@@ -499,7 +499,9 @@ def test_transient_interpret_failures_recover_instead_of_giving_up():
     h.send(0, [manifest_event([SEARCH_TOOL])])
     h.send(100_000, [chunk_event("Find flights to Pune")])
     h.send(150_000, [eot_event()])
-    actions = drain(h, 700_000, stop_on_final=False)
+    # 2 s: the FDB profile now holds reads behind its 1 s settle barrier too
+    # (Config.settle_reads_enabled), so the search goes out after ~1.15 s.
+    actions = drain(h, 2_000_000, stop_on_final=False)
     finals = [a for a in actions if a.action_type == ActionType.FINAL]
     assert len(finals) == 1
     assert calls["n"] == 3  # 2 failures + 1 success, exactly max_interpret_retries + 1 attempts

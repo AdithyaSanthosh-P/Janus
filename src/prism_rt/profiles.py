@@ -17,6 +17,20 @@ import dataclasses
 from prism_rt.config import DEFAULT_CONFIG, Config
 
 
+# FDB-v3's lookup tools (its manifest declares no mutability at all). Tool
+# metadata the deployment supplies -- the same thing a tool annotation would
+# say -- not anything about the benchmark's scenarios.
+FDB_READ_ONLY_TOOLS = (
+    "search_flights",
+    "get_card_benefits",
+    "get_exchange_rate",
+    "search_apartments",
+    "calculate_commute",
+    "track_order",
+    "search_products",
+)
+
+
 def fdb_v3_config(**overrides) -> Config:
     """The FDB-v3 benchmark profile:
 
@@ -101,6 +115,9 @@ def fdb_v3_config(**overrides) -> Config:
         echo_ack_enabled=True,
         action_plans_enabled=True,
         fill_unstated_required_enabled=True,
+        read_only_tools=FDB_READ_ONLY_TOOLS,
+        settle_reads_enabled=True,
+        conversational_replies_enabled=True,
     )
     return dataclasses.replace(base, **overrides) if overrides else base
 

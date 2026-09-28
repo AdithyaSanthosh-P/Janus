@@ -69,7 +69,17 @@ _FRAMES = FrameScheduler()
 
 def _apply_manifest(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
     payload: ManifestPayload = env.payload
-    txn.catalog.parse_manifest(payload.tools)
+    tools = payload.tools
+    read_only = set(txn.store.config.read_only_tools)
+    if read_only:
+        # Deployment-supplied metadata for tools whose manifest never says
+        # they are read-only (Config.read_only_tools). A tool that declares
+        # its own mutability keeps it.
+        tools = [
+            {**t, "mutability": "read_only"} if isinstance(t, dict) and t.get("name") in read_only and t.get("mutability") is None else t
+            for t in tools
+        ]
+    txn.catalog.parse_manifest(tools)
     txn.facts.set(
         "catalog.version",
         txn.catalog.version,

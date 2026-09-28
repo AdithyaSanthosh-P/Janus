@@ -80,6 +80,8 @@ INTERPRET_SCHEMA_S3 = {
                 },
             },
         },
+        "unsupported": {"type": ["string", "null"]},
+        "status_question": {"type": "boolean"},
     },
 }
 
@@ -124,6 +126,13 @@ def _action_plans_block(view: dict) -> str:
         "- If the user makes an action conditional (\"if it's under 50, do X, "
         "otherwise do Y\"), still list every action they mention, in order.\n"
         "- Leave out an action the user explicitly called off.\n"
+        "- If the user asks to book, buy, send or change something, include "
+        "that action even when details are missing (leave them unbound -- the "
+        "system will ask); never replace it with only a search. Booking "
+        "something that must first be found is TWO actions: the search, then "
+        "the booking.\n"
+        "- Only use a tool whose purpose is what was asked -- a similar-sounding "
+        "tool for a different thing is not a match.\n"
         "Example (made-up tools): \"find pizza places near the park, uh, and "
         "book a table for two at the first one\" -> actions: [{\"tool\": "
         "\"find_restaurants\", \"args\": {\"cuisine\": \"pizza\", \"near\": "
@@ -136,6 +145,16 @@ def _action_plans_block(view: dict) -> str:
         "With actions filled, slot_deltas may be left empty; keep intent and "
         "requested_actions filled as usual.\n"
     )
+    if view.get("conversational_replies_enabled"):
+        block += (
+            "- If the user asks for something none of the listed tools can do "
+            "(a kind of booking, search or change no tool handles), do NOT map "
+            "it onto a different tool: leave it out of actions and describe it "
+            "in a few words in unsupported (e.g. \"reserve a table\"). Otherwise "
+            "unsupported is null. act stays one of the listed act values.\n"
+            "- If the user only asks how an earlier request went (\"did that go "
+            "through?\"), set status_question to true and leave actions empty.\n"
+        )
     active = view.get("active_actions") or []
     if active:
         rendered = "; ".join(f"{a['action']}: {a['tool']} {a['args']}" for a in active)

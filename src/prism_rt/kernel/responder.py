@@ -35,6 +35,7 @@ from config.templates import (
     UNCLEAR_NO_GOAL,
 )
 from prism_rt.kernel.commit import CommitGate
+from prism_rt.kernel.replies import HONEST_REPLY_KEY
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, user_content_pending
 from prism_rt.model.actions import FinalBody, IntendedAction, SpeakBody
 from prism_rt.model.types import (
@@ -109,6 +110,7 @@ class FastResponder:
         actions.extend(self._inform_write_timeout(store, now_us, step_no))
         actions.extend(self._reconcile_completed_after_cancel(store, now_us, step_no))
         actions.extend(self._unclear_no_goal(store, now_us, step_no))
+        actions.extend(self._honest_reply(store, now_us, step_no))
 
         gid = active_goal_id(store)
         if gid is None:
@@ -180,6 +182,9 @@ class FastResponder:
                 break
         grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
         text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
+        unsupported = store.facts.get(f"goal.{goal_id}.unsupported")
+        if unsupported is not None and unsupported.status != FactStatus.RETRACTED and unsupported.value:
+            text = f"{text} I can't {unsupported.value} here, though."
         return [
             IntendedAction(
                 action_type=ActionType.SPEAK,
@@ -511,6 +516,34 @@ class FastResponder:
                 body=SpeakBody(text=UNCLEAR_NO_GOAL, kind="clarify"),
                 read_set=EMPTY_READ_SET,
                 rule_id="responder.unclear_no_goal",
+            )
+        ]
+
+    def _honest_reply(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
+        """Config.conversational_replies_enabled (kernel/replies.py): the
+        one reply kernel/interpret_apply.py chose for a turn -- an honest
+        "can't do that", a status summary, or a polite answer to thanks.
+        Once per turn, and dropped if the user has already said more."""
+        fact = store.facts.get(HONEST_REPLY_KEY)
+        if fact is None or fact.status == FactStatus.RETRACTED or not isinstance(fact.value, dict):
+            return []
+        turn_id = fact.value.get("turn")
+        already = store.facts.get(f"honest.{turn_id}.sent")
+        if already is not None and already.status != FactStatus.RETRACTED:
+            return []
+        turns = store.turn_log.all()
+        if turns and turns[-1].turn_id != turn_id:
+            return []
+        store.facts.set(
+            f"honest.{turn_id}.sent", True, FactStatus.COMMITTED,
+            Provenance(source="system", step_no=step_no, ts_us=now_us), rule="responder.honest_reply",
+        )
+        return [
+            IntendedAction(
+                action_type=ActionType.SPEAK,
+                body=SpeakBody(text=fact.value.get("text") or "", kind="inform"),
+                read_set=EMPTY_READ_SET,
+                rule_id="responder.honest_reply",
             )
         ]
 

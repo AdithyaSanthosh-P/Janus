@@ -20,7 +20,7 @@ from __future__ import annotations
 import dataclasses
 
 from prism_rt.canonical import canonicalize_spoken_id  # re-exported: tests and reducers import it from here
-from prism_rt.kernel import action_plans
+from prism_rt.kernel import action_plans, replies
 from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.model.types import (
     BindingKind,
@@ -340,6 +340,19 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             _abandon_goal(txn, gid, now_us, step_no, event_id=event_id)
         return gid
 
+    if txn.store.config.conversational_replies_enabled and not interp.actions:
+        # Config.conversational_replies_enabled (28 Sep live demo): answer
+        # honestly instead of forcing the turn onto a tool or re-asking.
+        current = active_goal_id(txn.store)
+        if interp.status_question and current is None:
+            replies.set_honest_reply(txn, interp.turn_id, replies.status_text(txn.store), now_us, step_no, event_id=event_id)
+            return None
+        if interp.unsupported:
+            replies.set_honest_reply(
+                txn, interp.turn_id, replies.unsupported_text(txn.store, interp.unsupported), now_us, step_no, event_id=event_id
+            )
+            return current
+
     if interp.act == InterpretAct.RETURN_TO_GOAL and interp.resume_goal_id:
         target = txn.store.goals.get(interp.resume_goal_id)
         if target is None or target.status != GoalStatus.SUSPENDED:
@@ -438,6 +451,16 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 rule="interpret_apply.ack_phrase",
             )
         _apply_visual_reference(txn, interp, gid, now_us, step_no)
+        if interp.unsupported and txn.store.config.conversational_replies_enabled:
+            # Part of the request no tool can do -- said alongside the ACK
+            # (kernel/responder.py._ack_compiled_plan), never silently dropped.
+            txn.facts.set(
+                f"goal.{gid}.unsupported",
+                interp.unsupported,
+                FactStatus.COMMITTED,
+                Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
+                rule="interpret_apply.unsupported",
+            )
         if compiled is not None:
             # No PLAN job: straight to executing the compiled plan.
             txn.store.goals.update(gid, task_state=TaskState.EXECUTING)
@@ -594,7 +617,20 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
     # general assistant.
     gid = active_goal_id(txn.store)
     if gid is None:
-        _flag_unclear_no_goal(txn, interp.turn_id, now_us, step_no, event_id=event_id)
+        if txn.store.config.conversational_replies_enabled and interp.act in (InterpretAct.SMALLTALK, InterpretAct.BACKCHANNEL):
+            # "thank you" deserves a reply, not "I didn't catch that" -- the
+            # polite one still invites a request that was misread as chat.
+            replies.set_honest_reply(txn, interp.turn_id, replies.POLITE_REPLY, now_us, step_no, event_id=event_id)
+        elif txn.store.config.conversational_replies_enabled and txn.store.goals.all():
+            # An unclear turn right after a finished task is most often about
+            # that task ("has it been booked?" -- the status_question flag is
+            # unreliable on a small model, found live): say where it stands,
+            # then invite the next request, instead of "didn't catch that".
+            replies.set_honest_reply(
+                txn, interp.turn_id, replies.status_text(txn.store) + " Anything else?", now_us, step_no, event_id=event_id
+            )
+        else:
+            _flag_unclear_no_goal(txn, interp.turn_id, now_us, step_no, event_id=event_id)
     return gid
 
 

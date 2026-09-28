@@ -396,6 +396,11 @@ class TurnInterpretation:
     # Config.action_plans_enabled is on. Empty means "compile nothing" --
     # the ordinary PLAN path runs, exactly as before.
     actions: tuple[ActionSpec, ...] = ()
+    # Config.conversational_replies_enabled: what the user asked for that no
+    # tool can do ("book a hotel"), and whether the turn only asks how an
+    # earlier request went ("was it booked?").
+    unsupported: str | None = None
+    status_question: bool = False
 
 
 class BindingKind(str, Enum):

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from config.templates import WATCHDOG_FALLBACK
 from prism_rt.kernel.action_plans import active_actions_view, is_compiled
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text
+from prism_rt.kernel.replies import salvage_text
 from prism_rt.model.types import (
     CallStatus,
     FactStatus,
@@ -180,10 +181,27 @@ class TaskStateMachine:
             return False
         if grounded_compose_text(store, goal_id) is not None:
             return False
+        text = WATCHDOG_FALLBACK
+        if store.config.conversational_replies_enabled:
+            # Live demo (28 Sep): after "what should the date be?" the user
+            # simply hadn't answered yet -- the salvage ended the task under
+            # them with a status that named nothing. Waiting on the user's
+            # answer to a question we asked is not a stall; otherwise say
+            # what actually ran.
+            goal = store.goals.get(goal_id)
+            target = store.facts.get(f"goal.{goal_id}.clarify_target")
+            asked = store.facts.get(f"clarify.{goal_id}.asked")
+            if (
+                goal is not None and goal.task_state == TaskState.CLARIFYING
+                and target is not None and target.status != FactStatus.RETRACTED
+                and asked is not None and asked.status != FactStatus.RETRACTED and asked.value == target.value
+            ):
+                return False
+            text = salvage_text(store, goal_id)
         store.goals.update(goal_id, task_state=TaskState.RESPONDING)
         store.facts.set(
             f"compose.{goal_id}.text",
-            WATCHDOG_FALLBACK,
+            text,
             FactStatus.COMMITTED,
             Provenance(source="watchdog", step_no=step_no, ts_us=now_us),
             rule="task.turn_stall_salvage",
@@ -356,6 +374,8 @@ class TaskStateMachine:
             view["active_actions"] = active_actions_view(store, gid)
         if store.config.fill_unstated_required_enabled:
             view["fill_unstated_required_enabled"] = True
+        if store.config.conversational_replies_enabled:
+            view["conversational_replies_enabled"] = True
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return self._make_request(store, JobKind.INTERPRET, view, gid, turn_id, read_set)
 

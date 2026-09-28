@@ -118,6 +118,16 @@ class CommitGate:
             return GateDecision(False, "interpretation_pending", "G3")
 
         if call.kind != StepKind.WRITE:
+            if store.config.settle_reads_enabled:
+                # Config.settle_reads_enabled: a read waits out the same
+                # floor + settle barrier as a write, so a turn closed early
+                # by a mid-sentence pause can't fire a call the rest of the
+                # sentence would change.
+                if store.floor_state != FloorState.USER_TURN_CLOSED:
+                    return GateDecision(False, "floor_open", "G3")
+                settle = self._settle_block(store, now_us)
+                if settle is not None:
+                    return settle
             return GateDecision(True, None, "G1,G2,G8")
 
         # --- write-only conditions ------------------------------------
@@ -172,16 +182,23 @@ class CommitGate:
         # closed, AND no newer turn has opened since (a still-open floor
         # already fails G3 above, but a turn can open and close again
         # within the settle window itself, which G3 alone wouldn't catch).
-        if store.config.settle_barrier_enabled:
-            last_eot = store.facts.get("session.last_eot_ts")
-            last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else None
-            settle_us = _effective_settle_us(store)
-            if last_eot_ts is None or (now_us - last_eot_ts) < settle_us:
-                return GateDecision(False, "settle_not_elapsed", "G10")
-            if store.turn_log.open_turn_id() is not None:
-                return GateDecision(False, "new_turn_open", "G11")
+        settle = self._settle_block(store, now_us)
+        if settle is not None:
+            return settle
 
         return GateDecision(True, None, "G1-G8")
+
+    def _settle_block(self, store: SessionStore, now_us: int) -> GateDecision | None:
+        if not store.config.settle_barrier_enabled:
+            return None
+        last_eot = store.facts.get("session.last_eot_ts")
+        last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else None
+        settle_us = _effective_settle_us(store)
+        if last_eot_ts is None or (now_us - last_eot_ts) < settle_us:
+            return GateDecision(False, "settle_not_elapsed", "G10")
+        if store.turn_log.open_turn_id() is not None:
+            return GateDecision(False, "new_turn_open", "G11")
+        return None
 
     def scan_and_admit(
         self, store: SessionStore, now_us: int

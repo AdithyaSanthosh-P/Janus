@@ -70,7 +70,15 @@ def _parse_actions(raw_actions) -> tuple[ActionSpec, ...]:
 
 
 def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnInterpretation:
-    act = InterpretAct(raw["act"])
+    try:
+        act = InterpretAct(raw["act"])
+    except ValueError:
+        # Found live: a model that filled `unsupported`/`status_question`
+        # sometimes also invents a matching act ("unsupported"). The fields
+        # carry the meaning; don't drop the whole interpretation over it.
+        if not (isinstance(raw.get("unsupported"), str) or raw.get("status_question") is True):
+            raise
+        act = InterpretAct.UNCLEAR
     slot_deltas = tuple(
         SlotDelta(
             name=delta["name"],
@@ -98,6 +106,8 @@ def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnI
         visual_candidates=visual_candidates,
         requested_actions=requested_actions,
         actions=_parse_actions(raw.get("actions")),
+        unsupported=raw["unsupported"].strip() or None if isinstance(raw.get("unsupported"), str) else None,
+        status_question=raw.get("status_question") is True,
     )
 
 
