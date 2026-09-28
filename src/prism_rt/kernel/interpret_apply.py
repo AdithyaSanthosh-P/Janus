@@ -307,6 +307,42 @@ def enqueue_interpretation(txn: StoreTxn, turn_id: str, provenance: Provenance, 
     txn.facts.set(_PENDING, turn_id, FactStatus.COMMITTED, provenance, rule=rule)
 
 
+def merged_turns(store, turn_id: str) -> list[str]:
+    """Earlier turns folded into `turn_id` (Config.merge_split_turns_enabled),
+    oldest first; empty when none."""
+    fact = store.facts.get(f"turn.{turn_id}.merged")
+    return list(fact.value) if _active(fact) and fact.value else []
+
+
+def merge_outstanding_turns(txn: StoreTxn, turn_id: str, provenance: Provenance) -> None:
+    """Config.merge_split_turns_enabled: every turn still waiting to be
+    interpreted (pending, waiting on its own speculative job, or queued) is
+    folded into `turn_id`, which becomes the one pending turn. Their own
+    in-flight jobs are simply never applied (neither pending nor
+    eot_waiting any more); `turn.<id>.merged` is in every INTERPRET read set
+    under this flag, so `turn_id`'s own speculative job -- which saw only
+    its half of the sentence -- goes stale too."""
+    earlier: list[str] = []
+    pending = txn.facts.get(_PENDING)
+    if _active(pending) and pending.value:
+        earlier.append(pending.value)
+        txn.facts.retract(_PENDING, rule="interpret_apply.merged")
+    for key, fact in txn.store.facts.by_prefix("spec_interpret.").items():
+        if key.endswith(".eot_waiting") and _active(fact) and fact.value:
+            earlier.append(key[len("spec_interpret."):-len(".eot_waiting")])
+            txn.facts.retract(key, rule="interpret_apply.merged")
+    queued = txn.facts.get(_QUEUED)
+    if _active(queued) and queued.value:
+        earlier.extend(queued.value)
+        txn.facts.retract(_QUEUED, rule="interpret_apply.merged")
+    order = {t.turn_id: i for i, t in enumerate(txn.store.turn_log.all())}
+    folded: list[str] = []
+    for tid in sorted(set(earlier) - {turn_id}, key=lambda t: order.get(t, 0)):
+        folded.extend(merged_turns(txn.store, tid) + [tid])
+    txn.facts.set(f"turn.{turn_id}.merged", folded, FactStatus.COMMITTED, provenance, rule="interpret_apply.merged")
+    txn.facts.set(_PENDING, turn_id, FactStatus.COMMITTED, provenance, rule="interpret_apply.merged")
+
+
 def advance_interpretation_queue(txn: StoreTxn, now_us: int, step_no: int, *, event_id: str) -> None:
     """Once nothing is outstanding, promote the next queued turn (if any)
     to pending, so TaskStateMachine dispatches its INTERPRET job."""

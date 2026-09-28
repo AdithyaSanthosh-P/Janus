@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 from config.templates import WATCHDOG_FALLBACK
 from prism_rt.kernel.action_plans import active_actions_view, is_compiled
-from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text
+from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, merged_turns
 from prism_rt.kernel.replies import salvage_text
 from prism_rt.model.types import (
     CallStatus,
@@ -68,7 +68,12 @@ class TaskStateMachine:
         pending_turn = store.facts.get("session.pending_interpretation_turn")
         if pending_turn is not None and pending_turn.status != FactStatus.RETRACTED:
             turn_id = pending_turn.value
-            if not store.jobs.running_by_kind_turn(JobKind.INTERPRET, turn_id):
+            running = store.jobs.running_by_kind_turn(JobKind.INTERPRET, turn_id)
+            if store.config.merge_split_turns_enabled:
+                # A job built before this turn absorbed earlier ones is stale
+                # and will be dropped -- don't wait for it to come back.
+                running = [j for j in running if store.facts.is_valid(j.read_set).is_valid]
+            if not running:
                 requests.append(self._build_interpret_request(store, turn_id))
         elif store.config.speculative_interpretation_enabled:
             requests.extend(self._speculative_interpret(store))
@@ -294,6 +299,16 @@ class TaskStateMachine:
         gid = active_goal_id(store)
 
         read_keys = [f"turn.{turn_id}.prefix", "goal.active", "catalog.version"]
+        if store.config.merge_split_turns_enabled:
+            # Config.merge_split_turns_enabled: earlier turns folded into this
+            # one are part of what was said. The key is in every INTERPRET read
+            # set, so a job built before a merge (its value was absent) goes
+            # stale the moment the merge happens.
+            read_keys.append(f"turn.{turn_id}.merged")
+            earlier = [store.turn_log.get(t) for t in merged_turns(store, turn_id)]
+            prefix = " ".join(" ".join(c.text for c in t.chunks) for t in earlier if t is not None)
+            if prefix:
+                transcript = f"{prefix} {transcript}"
         if not speculative:
             read_keys.append("session.pending_interpretation_turn")
         active_intent = None

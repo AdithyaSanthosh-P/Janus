@@ -11,7 +11,13 @@ from __future__ import annotations
 
 from prism_rt.canonical import compute_digest, normalize_value
 from prism_rt.kernel.detector import QuickDetector, is_inert_tail
-from prism_rt.kernel.interpret_apply import active_goal_id, apply_interpretation, enqueue_interpretation, interpretation_busy
+from prism_rt.kernel.interpret_apply import (
+    active_goal_id,
+    apply_interpretation,
+    enqueue_interpretation,
+    interpretation_busy,
+    merge_outstanding_turns,
+)
 from prism_rt.kernel.proposals import parse_interpretation
 from prism_rt.model.types import FactStatus, FloorState, GoalStatus, JobKind, Provenance, TaskState, Turn
 from prism_rt.store.session import StoreTxn
@@ -187,6 +193,16 @@ class TurnManager:
         # Promotion/waiting only when no earlier turn is still outstanding --
         # otherwise this turn would be applied ahead of one the user said
         # first. It queues behind it instead (enqueue_interpretation).
+        if txn.store.config.merge_split_turns_enabled and interpretation_busy(txn.store):
+            # Config.merge_split_turns_enabled: the user kept talking before
+            # the earlier part was understood -- interpret it all together.
+            merge_outstanding_turns(
+                txn,
+                turn.turn_id,
+                Provenance(source="user", event_id=event_id, turn_id=turn.turn_id, step_no=step_no, ts_us=now_us),
+            )
+            return
+
         if txn.store.config.speculative_interpretation_enabled and not interpretation_busy(txn.store):
             if self._try_promote_speculative(txn, turn, now_us, step_no, event_id=event_id):
                 return

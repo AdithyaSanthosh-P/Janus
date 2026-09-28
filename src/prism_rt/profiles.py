@@ -118,6 +118,7 @@ def fdb_v3_config(**overrides) -> Config:
         read_only_tools=FDB_READ_ONLY_TOOLS,
         settle_reads_enabled=True,
         conversational_replies_enabled=True,
+        merge_split_turns_enabled=True,
     )
     return dataclasses.replace(base, **overrides) if overrides else base
 

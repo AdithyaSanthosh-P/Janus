@@ -296,6 +296,15 @@ class Config:
     # never fires while the agent is waiting on the user's answer to a
     # question it asked.
     conversational_replies_enabled: bool = False
+    # A turn that closes while an earlier one is still waiting to be
+    # interpreted is merged with it: one INTERPRET over the combined text.
+    # Found live (28 Sep, housing_10 over LiveKit): a mid-sentence pause
+    # ("...to the university? ... And also update my filter") closed the
+    # turn twice; the halves were interpreted one after the other and the
+    # second, redundant model call added ~5 s before the agent spoke. No
+    # effect when turns don't overlap -- no added wait for a single-breath
+    # request (unlike raising the end-of-turn silence threshold).
+    merge_split_turns_enabled: bool = False
 
     # Day 2 (docs/fdb_v3_implementation_plan.md §5.2): G4 (commit_intent)
     # applies to every WRITE-kind call, including a tool whose mutability
