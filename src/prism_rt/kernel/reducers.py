@@ -22,7 +22,17 @@ from prism_rt.kernel.interpret_apply import (
     transcription_pending,
 )
 from prism_rt.kernel.perception import PerceptionScheduler
-from prism_rt.kernel.proposals import parse_asr, parse_compose, parse_frame, parse_interpretation, parse_perception, parse_plan
+from prism_rt.kernel.action_plans import coerce_to_schema, is_compiled, tool_props, write_bind_facts
+from prism_rt.kernel.binder import bind_failure_key
+from prism_rt.kernel.proposals import (
+    fix_step_kind,
+    parse_asr,
+    parse_compose,
+    parse_frame,
+    parse_interpretation,
+    parse_perception,
+    parse_plan,
+)
 from prism_rt.kernel.results import ResultRouter
 from prism_rt.kernel.turns import TurnManager
 from prism_rt.model.events import (
@@ -36,6 +46,7 @@ from prism_rt.model.events import (
     WorkerResultPayload,
 )
 from prism_rt.model.types import (
+    BindingKind,
     CallStatus,
     FactStatus,
     GoalStatus,
@@ -360,13 +371,10 @@ def _apply_interruption(env: Envelope, txn: StoreTxn, now_us: int, step_no: int)
     _TURN_MANAGER.on_interruption(now_us, txn, active_goal_id=gid)
 
 
-def _fix_step_kind(step, catalog):
-    """`step.kind` is copied from the catalog at plan acceptance
-    (`docs/prompt 2.txt` §4.3) — the model's own claim is provisional only,
-    never trusted for mutability (W5: unknown -> WRITE, the safe default)."""
-    spec = catalog.get(step.tool)
-    kind = StepKind.READ if spec is not None and spec.mutability == ToolMutability.READ_ONLY else StepKind.WRITE
-    return dataclasses.replace(step, kind=kind, requires_commit_intent=(kind == StepKind.WRITE))
+# Moved to kernel/proposals.py (S3: kernel/action_plans.py applies the same
+# rule to a compiled plan and can't import this module); kept under its old
+# name here for existing call sites.
+_fix_step_kind = fix_step_kind
 
 
 def _release_dropped_interpret(txn: StoreTxn, job, *, failed: bool, now_us: int, step_no: int, event_id: str) -> None:
@@ -435,6 +443,10 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
             _ASR.release_dropped_job(txn, job, now_us, step_no, event_id=env.event_id)
         elif job.kind == JobKind.INTERPRET and job.turn_id:
             _release_dropped_interpret(txn, job, failed=payload.status != "ok", now_us=now_us, step_no=step_no, event_id=env.event_id)
+        elif job.kind == JobKind.BIND and payload.status != "ok":
+            # S3: only a genuine failure counts toward BindScheduler's give-up
+            # budget -- a merely stale result (an upstream re-ran) is not.
+            _record_bind_failure(txn, job, now_us, step_no, event_id=env.event_id)
         return
 
     kind = JobKind(payload.kind)
@@ -551,7 +563,48 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
             rule="reducers.extract_applied",
         )
         txn.facts.retract(f"goal.{job.goal_id}.clarify_target", rule="reducers.extract_resolved")
-        txn.store.goals.update(job.goal_id, task_state=TaskState.PLANNING)
+        # S3: a compiled plan already FACT-binds the missing parameter's own
+        # per-action key (job.target) -- the executor just rebinds. Sending
+        # it back to PLANNING would replace it with a Planner plan under new
+        # step keys (see kernel/action_plans.py.is_compiled).
+        next_state = TaskState.EXECUTING if is_compiled(txn.store, job.goal_id) else TaskState.PLANNING
+        txn.store.goals.update(job.goal_id, task_state=next_state)
+
+    elif kind == JobKind.BIND:
+        # S3 (kernel/binder.py): the chained values picked from the upstream
+        # results. Read-set validity (K4, checked above) already rejected a
+        # result grounded in an upstream step that has since re-run.
+        if job.goal_id is None or job.target is None:
+            return
+        goal = txn.store.goals.get(job.goal_id)
+        plan = txn.store.plans.current(job.goal_id)
+        if goal is None or goal.status != GoalStatus.ACTIVE or plan is None:
+            return
+        step = next((s for s in plan.steps if s.step_key == job.target), None)
+        if step is None:
+            return
+        late = [p for p, b in step.bindings.items() if b.kind == BindingKind.LATE]
+        chosen = proposal.get("args") if isinstance(proposal, dict) else None
+        props = tool_props(txn.store, step.tool)[0]
+        values: dict = {}
+        for param in late:
+            value = chosen.get(param) if isinstance(chosen, dict) else None
+            if value is None or (isinstance(value, str) and not value.strip()):
+                _record_bind_failure(txn, job, now_us, step_no, event_id=env.event_id)
+                return
+            values[param] = coerce_to_schema(value, props.get(param) or {})
+        write_bind_facts(txn, job.goal_id, job.target, values, job.read_set, rule="reducers.bind_result", now_us=now_us, step_no=step_no, event_id=env.event_id)
+
+
+def _record_bind_failure(txn: StoreTxn, job, now_us: int, step_no: int, *, event_id: str) -> None:
+    """Counted per (goal, step); kernel/binder.py.BindScheduler gives up
+    honestly once it exceeds `max_interpret_retries`."""
+    if job.goal_id is None or job.target is None:
+        return
+    key = bind_failure_key(job.goal_id, job.target)
+    prev = txn.facts.get(key)
+    count = (prev.value if prev is not None and prev.status != FactStatus.RETRACTED else 0) + 1
+    txn.facts.set(key, count, FactStatus.COMMITTED, Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us), rule="reducers.bind_failure")
 
 
 _HANDLERS = {

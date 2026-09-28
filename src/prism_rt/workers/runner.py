@@ -28,7 +28,7 @@ from typing import Callable, Protocol
 
 from prism_rt.model.events import WorkerResultPayload
 from prism_rt.model.types import JobKind
-from prism_rt.workers import asr, composer, extractor, frame, interpreter, planner, vision
+from prism_rt.workers import asr, binder, composer, extractor, frame, interpreter, planner, vision
 from prism_rt.workers.gateway import MediaPart, ModelGateway
 
 BlobResolver = Callable[[str], MediaPart | None]
@@ -59,6 +59,8 @@ def _run_job(gateway: ModelGateway, kind: JobKind, view: dict, blob_resolver: Bl
         return frame.run_frame(gateway, view)
     if kind == JobKind.EXTRACT:
         return extractor.run_extract(gateway, view)
+    if kind == JobKind.BIND:
+        return binder.run_bind(gateway, view)
     raise ValueError(f"unknown job kind: {kind}")
 
 

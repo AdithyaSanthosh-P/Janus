@@ -56,6 +56,28 @@ def normalize_value(value: Any, schema: dict | None = None) -> Any:
     return _normalize_scalar(value)
 
 
+_SPOKEN_ID_SPLIT = re.compile(r"[\s\-.,]+")
+
+
+def canonicalize_spoken_id(value):
+    """Q1 (win_plan §6.2): a value spelled out one character at a time
+    ("X-Y-Z-8-8") is really one identifier and gets joined back into
+    "XYZ88" -- FDB-v3's own ASR frequently renders a spoken confirmation
+    code or order ID this way. A multi-character token anywhere in the
+    split (e.g. "FL-DEN-8AM") means this is a *structured* code with real
+    separators, not a spelled-out one, and is left untouched. Only
+    strings are ever touched; anything else (a number, a bool) passes
+    through unchanged. Lives here (not in kernel/interpret_apply.py, which
+    re-exports it) so kernel/action_plans.py can use it without an import
+    cycle."""
+    if not isinstance(value, str):
+        return value
+    tokens = [t for t in _SPOKEN_ID_SPLIT.split(value) if t]
+    if len(tokens) < 2 or not all(len(t) == 1 and t.isalnum() for t in tokens):
+        return value
+    return "".join(tokens)
+
+
 def to_canonical_json(value: Any) -> str:
     """Serialize a (already or not-yet normalized) value to canonical JSON text.
 

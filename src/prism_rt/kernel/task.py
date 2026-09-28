@@ -26,6 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config.templates import WATCHDOG_FALLBACK
+from prism_rt.kernel.action_plans import active_actions_view, is_compiled
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text
 from prism_rt.model.types import (
     CallStatus,
@@ -98,7 +99,10 @@ class TaskStateMachine:
                 elif goal.task_state == TaskState.CLARIFYING:
                     target = store.facts.get(f"goal.{gid}.clarify_target")
                     if target is None or target.status == FactStatus.RETRACTED:
-                        store.goals.update(gid, task_state=TaskState.PLANNING)
+                        # S3: a compiled plan already binds the answered
+                        # slot -- rebind it, never replan (kernel/
+                        # action_plans.py.is_compiled).
+                        store.goals.update(gid, task_state=TaskState.EXECUTING if is_compiled(store, gid) else TaskState.PLANNING)
                     elif (
                         store.config.clarify_reextract_enabled
                         and isinstance(target.value, str)
@@ -343,6 +347,15 @@ class TaskStateMachine:
             "strict_value_rules_enabled": store.config.strict_value_rules_enabled,
             "echo_ack_enabled": store.config.echo_ack_enabled,
         }
+        # S3: only added when on, so every existing prompt (and every
+        # ScriptedProvider test's matched substring) is unchanged when off.
+        # `active_actions` values are already in the read set: they are the
+        # goal's own slot.<gid>.a<i>.* facts, listed via `active_slots`.
+        if store.config.action_plans_enabled:
+            view["action_plans_enabled"] = True
+            view["active_actions"] = active_actions_view(store, gid)
+        if store.config.fill_unstated_required_enabled:
+            view["fill_unstated_required_enabled"] = True
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return self._make_request(store, JobKind.INTERPRET, view, gid, turn_id, read_set)
 
@@ -454,7 +467,14 @@ class TaskStateMachine:
                         effects[step.step_key] = effect.status.value
 
         not_done: list[str] = []
-        if store.config.multi_action_enabled:
+        if plan is not None and plan.origin == "compiled":
+            # S3: per step, not per tool name -- the same tool asked for
+            # twice with only one call made is still one action not done.
+            for step in plan.steps:
+                call = store.call_ledger.latest_by_step(goal_id, step.step_key)
+                if call is None or call.status != CallStatus.CONSUMED:
+                    not_done.append(step.tool)
+        elif store.config.multi_action_enabled:
             actions_fact = store.facts.get(f"goal.{goal_id}.actions")
             if actions_fact is not None and actions_fact.status != FactStatus.RETRACTED:
                 not_done = [t for t in (actions_fact.value or []) if t not in executed_tools]

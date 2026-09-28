@@ -49,6 +49,106 @@ INTERPRET_SCHEMA = {
 }
 
 
+# S3 (kernel/action_plans.py): the same schema plus per-action tool calls.
+# A separate object, so INTERPRET_SCHEMA itself stays byte-identical when
+# Config.action_plans_enabled is off.
+INTERPRET_SCHEMA_S3 = {
+    **INTERPRET_SCHEMA,
+    "properties": {
+        **INTERPRET_SCHEMA["properties"],
+        "actions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["tool"],
+                "properties": {
+                    "tool": {"type": "string"},
+                    "args": {"type": "object"},
+                    "refs": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "param": {"type": "string"},
+                                "from": {"type": "integer"},
+                                "field": {"type": ["string", "null"]},
+                                "select": {"type": "string"},
+                            },
+                        },
+                    },
+                    "assumed": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+    },
+}
+
+
+def _action_plans_block(view: dict) -> str:
+    """S3: per-action tool calls. Examples use made-up tools only -- never a
+    benchmark's own tool names or items."""
+    block = (
+        "\nAlso fill actions: one entry per tool call this turn asks for, in "
+        "the order they should run (the order the user said them, unless they "
+        "say otherwise): {\"tool\": <tool name>, \"args\": {<param>: <value>}, "
+        "\"refs\": [...], \"assumed\": [...]}.\n"
+        "- args: every value the user stated for THAT call, under the tool's "
+        "own parameter names. Every value rule above applies to args exactly "
+        "as to slot_deltas -- a date drops its ordinal suffix (\"March 22\", "
+        "never \"March 22nd\"), and a value is the thing itself without filler "
+        "words around it (\"a desk\" -> \"desk\") -- OPTIONAL "
+        "parameters included whenever the user said them (a stated travel "
+        "mode, quantity or filter value belongs in args even though the "
+        "parameter has a default; only a parameter the user never mentioned "
+        "is left out). The same tool asked for twice is two entries, each "
+        "with its own args -- never a \"_2\" suffix.\n"
+        "- When active_intent is null there is no current task to update: a "
+        "request to set, change, raise or add something is act \"new_goal\" "
+        "with actions filled, never \"slot_update\" or \"addition\".\n"
+        "- A value the user clearly implies counts as stated (\"my new work "
+        "phone is 555-0101\" gives both the phone type, work, and the number) "
+        "-- fill it rather than leave a required parameter empty. A value said "
+        "as a verb or adjective is stated too: \"walk there\" states a mode of "
+        "walking, \"ship it overnight\" a shipping speed. Examples in "
+        "a parameter's description are illustrations, not the only allowed "
+        "values: when the user names a kind that isn't listed, use their "
+        "words.\n"
+        "- A value stated anywhere in this request counts as stated, even if "
+        "it was said for another action (\"set my budget to 900, then search "
+        "within that budget\" -> both calls get 900).\n"
+        "- refs: a parameter whose value must come from an EARLIER action's "
+        "result (\"the cheapest one\", \"from there\", \"whatever you find\") "
+        "is not an arg. Add {\"param\": <name>, \"from\": <that earlier "
+        "action's 0-based index>, \"field\": <the result field holding it, if "
+        "obvious, else null>, \"select\": <which item, in a few words>}.\n"
+        "- If the user makes an action conditional (\"if it's under 50, do X, "
+        "otherwise do Y\"), still list every action they mention, in order.\n"
+        "- Leave out an action the user explicitly called off.\n"
+        "Example (made-up tools): \"find pizza places near the park, uh, and "
+        "book a table for two at the first one\" -> actions: [{\"tool\": "
+        "\"find_restaurants\", \"args\": {\"cuisine\": \"pizza\", \"near\": "
+        "\"the park\"}, \"refs\": [], \"assumed\": []}, {\"tool\": "
+        "\"reserve_table\", \"args\": {\"party_size\": 2}, \"refs\": "
+        "[{\"param\": \"restaurant_id\", \"from\": 0, \"field\": "
+        "\"restaurant_id\", \"select\": \"first result\"}], \"assumed\": []}]. "
+        "\"check orders 12 and 40\" -> two check_order entries, one with "
+        "{\"order_id\": \"12\"}, one with {\"order_id\": \"40\"}.\n"
+        "With actions filled, slot_deltas may be left empty; keep intent and "
+        "requested_actions filled as usual.\n"
+    )
+    active = view.get("active_actions") or []
+    if active:
+        rendered = "; ".join(f"{a['action']}: {a['tool']} {a['args']}" for a in active)
+        block += (
+            f"Current actions: {rendered}. A correction to one of them is a "
+            "slot_delta named \"<action>.<param>\" (e.g. \"a1.party_size\"). "
+            "If the user adds a new action, set act to \"addition\" and return "
+            "actions with the COMPLETE list: the current ones first, unchanged "
+            "and in the same order, then the new ones.\n"
+        )
+    return block
+
+
 def build_prompt(view: dict) -> str:
     # `tools` (added alongside a live-model reliability fix): every
     # slot_deltas[].name a live model emits must exactly match one of
@@ -79,7 +179,15 @@ def build_prompt(view: dict) -> str:
                         bit += f" ({pinfo['type']})"
                     if not pinfo.get("required", True):
                         default = pinfo.get("default")
-                        bit += " [optional" + ("" if default is None else f", default={default!r}") + "]"
+                        if view.get("action_plans_enabled"):
+                            # S3: found live -- "[optional, default='driving']"
+                            # read as already filled, and a stated "transit"
+                            # was dropped from the action's args.
+                            bit += " [optional: include it whenever the user states it" + (
+                                "" if default is None else f"; only if unstated does {default!r} apply"
+                            ) + "]"
+                        else:
+                            bit += " [optional" + ("" if default is None else f", default={default!r}") + "]"
                     if pinfo.get("description"):
                         bit += f": {pinfo['description']}"
                     bits.append(bit)
@@ -196,9 +304,28 @@ def build_prompt(view: dict) -> str:
             "a slot_delta -- never emit the rejected earlier value.\n"
             "- Never add a slot_delta for an optional parameter the user "
             "did not state.\n"
-            "- If a required parameter has no stated value at all, still "
-            "extract everything else and leave that parameter unbound "
-            "rather than inventing one -- the system will ask.\n"
+            + (
+                # S3 (Config.fill_unstated_required_enabled): the user can't
+                # be asked in every setting (a single-turn recording never
+                # answers), so a required count/size/budget/yes-no gets a
+                # stated assumption instead. Free text is still left unbound.
+                "- If a REQUIRED parameter has no stated value at all: when it "
+                "is a number or yes/no (a count, size, quantity, budget, "
+                "true/false), put a sensible value that does NOT narrow the "
+                "request in that action's args -- 1 for a count of rooms, "
+                "guests or items; for a maximum (a price cap, a budget) a "
+                "generous high value, never 0 -- (a value is required: naming "
+                "it alone is not enough), ALSO list its name in that action's "
+                "\"assumed\", and say the assumption in ack_phrase (e.g. \"..., "
+                "assuming 1 guest\"). Any "
+                "other kind (a place, name, date, ID, free text) stays unbound "
+                "-- the system will ask. Never assume an optional parameter.\n"
+                if view.get("fill_unstated_required_enabled")
+                else "- If a required parameter has no stated value at all, still "
+                "extract everything else and leave that parameter unbound "
+                "rather than inventing one -- the system will ask.\n"
+            )
+            +
             "- Disfluency (\"uh\", \"you know\", false starts, "
             "self-corrections) is never a reason to classify the turn as "
             "backchannel, smalltalk, or unclear when active_intent is "
@@ -227,6 +354,7 @@ def build_prompt(view: dict) -> str:
             "if there's nothing to acknowledge yet (a clarifying "
             "question, backchannel, etc.).\n"
         )
+    action_plans_block = _action_plans_block(view) if view.get("action_plans_enabled") else ""
     return (
         f"transcript: {view.get('transcript', '')!r}\n"
         f"active_intent: {view.get('active_intent')}\n"
@@ -237,10 +365,12 @@ def build_prompt(view: dict) -> str:
         f"{visual_block}"
         f"{multi_action_block}"
         f"{value_rules_block}"
+        f"{action_plans_block}"
         f"{ack_phrase_block}"
         "Classify the act and return JSON matching the schema."
     )
 
 
 def run_interpret(gateway: ModelGateway, view: dict) -> dict:
-    return gateway.complete_json("interpret", build_prompt(view), INTERPRET_SCHEMA)
+    schema = INTERPRET_SCHEMA_S3 if view.get("action_plans_enabled") else INTERPRET_SCHEMA
+    return gateway.complete_json("interpret", build_prompt(view), schema)

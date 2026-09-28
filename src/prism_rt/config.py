@@ -243,6 +243,31 @@ class Config:
     # the model `ack_phrase` exists at all (`workers/interpreter.py`).
     echo_ack_enabled: bool = False
 
+    # S3 (docs-personal/private-docs/s3_plan_2026-09-28.md, win_plan §6.3):
+    # per-action interpretation compiled straight into a Plan. The
+    # Interpreter returns one `actions[]` entry per tool call (tool, its
+    # own args, chained refs), and `kernel/action_plans.py.compile_actions`
+    # builds the Plan itself -- slots at `slot.<gid>.a<i>.<param>`, one step
+    # per action in the order asked -- with no PLAN job. Found against real
+    # FDB-v3 recordings: arguments the Interpreter understood (its own echo
+    # ACK said "transit") were lost on the way through the Planner (the
+    # call went out with the schema default "driving"); the same tool asked
+    # for twice collided on one flat slot name; and the PLAN round trip
+    # delays the first tool call. Anything the compiler can't handle
+    # (unknown tool, chained refs before late binding exists, vision)
+    # falls back to the ordinary PLAN path.
+    action_plans_enabled: bool = False
+    # S3: a required number/yes-no parameter the user never stated is
+    # filled with the least-restrictive sensible value and named in the
+    # ACK ("..., assuming 1 bedroom") instead of being left for a
+    # clarifying question -- found on FDB-v3, whose recordings are single-
+    # turn: nobody ever answers, so the question just stalls the scenario
+    # (and FDB's mock tools raise without the parameter, so the call never
+    # counts). Free-text parameters (a place, a name, an ID) are never
+    # assumed: `kernel/action_plans.py` drops an assumed value for any
+    # non-numeric/boolean parameter, so it is still asked.
+    fill_unstated_required_enabled: bool = False
+
     # Day 2 (docs/fdb_v3_implementation_plan.md §5.2): G4 (commit_intent)
     # applies to every WRITE-kind call, including a tool whose mutability
     # was never declared and therefore defaults to STATE_CHANGING (the

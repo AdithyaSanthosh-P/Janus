@@ -128,6 +128,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from prism_rt.canonical import ABSENT, compute_digest
 from prism_rt.model.types import ActionType, BindingKind, EffectStatus, StepKind, ToolMutability, fingerprint_for
 
 _BANNED_CALLS = {
@@ -164,7 +165,48 @@ class TraceChecker:
         violations.extend(self._check_cs03(reports))
         violations.extend(self._check_cs30(store))
         violations.extend(self._check_stale_consumption(store))
+        violations.extend(self._check_late_stale(store))
         violations.extend(self._check_false_claim(reports, store))
+        return violations
+
+    # S3 LATE-STALE (kernel/binder.py): a consumed call's chained (LATE)
+    # argument must be exactly the bind value it read -- recorded in its own
+    # read set at `bind.<gid>.<step>.<param>` -- and, while that call still
+    # counts as done (read set valid), that bind value must still be the
+    # current one. Final-store-state only, same limitation and same
+    # soundness argument as STALE-CONSUME above.
+    def _check_late_stale(self, store) -> list[Violation]:
+        if store is None:
+            return []
+        violations = []
+        for goal in store.goals.all():
+            plan = store.plans.current(goal.goal_id)
+            if plan is None:
+                continue
+            for step in plan.steps:
+                call = store.call_ledger.latest_by_step(goal.goal_id, step.step_key)
+                if call is None or call.status.value != "consumed":
+                    continue
+                entries = {e.key: e for e in call.read_set.entries}
+                for param, binding in step.bindings.items():
+                    if binding.kind != BindingKind.LATE:
+                        continue
+                    key = f"bind.{goal.goal_id}.{step.step_key}.{param}"
+                    entry = entries.get(key)
+                    if entry is None or entry.digest == ABSENT:
+                        violations.append(Violation("LATE-STALE", f"call {call.call_id} (step {step.step_key}) consumed {param} without reading {key}"))
+                        continue
+                    if param not in call.args or compute_digest(call.args[param]) != entry.digest:
+                        violations.append(
+                            Violation("LATE-STALE", f"call {call.call_id} (step {step.step_key}) sent {param}={call.args.get(param)!r}, not the bind value it read")
+                        )
+                        continue
+                    if store.facts.is_valid(call.read_set).is_valid:
+                        fact = store.facts.get(key)
+                        if fact is None or fact.status.value == "retracted" or fact.digest != entry.digest:
+                            violations.append(
+                                Violation("LATE-STALE", f"call {call.call_id} (step {step.step_key}) still counts as done but {key} changed")
+                            )
         return violations
 
     # P1 (docs/original_design_audit.md, "stale consumption (provenance

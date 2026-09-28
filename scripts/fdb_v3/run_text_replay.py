@@ -29,9 +29,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime
 import importlib
+import importlib.util
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -62,7 +65,7 @@ _load_dotenv(REPO_ROOT / ".env")
 from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest  # noqa: E402
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter, fill_schema_defaults  # noqa: E402
 from prism_rt.config import Config  # noqa: E402
-from prism_rt.profiles import fdb_v3_config  # noqa: E402
+from prism_rt.profiles import apply_overrides, fdb_v3_config  # noqa: E402
 from prism_rt.adapters.transcript_segmenter import segment_transcript  # noqa: E402
 from prism_rt.entry import setup  # noqa: E402
 from prism_rt.observability import speechlint  # noqa: E402
@@ -117,6 +120,11 @@ async def run_one_scenario(
     actual_calls: list[dict] = []
     final_event = asyncio.Event()
     errors: list[str] = []
+    # Wall-clock marks (seconds) for the per-scenario latency fields --
+    # harness-side only, never read by the kernel. `eot_s` is when the
+    # end_of_turn event was queued; the others are when the matching
+    # action reached this consumer.
+    marks: dict[str, float] = {}
 
     def _now_us() -> int:
         # config.clock_model defaults to "A" (CoupledClock, real wall
@@ -136,9 +144,12 @@ async def run_one_scenario(
                 text = body.get("text")
                 if text:
                     spoken.append(text)
+                    marks.setdefault("first_speech_s", time.time())
                 if atype == "final":
+                    marks.setdefault("final_s", time.time())
                     final_event.set()
             elif atype == "tool_call":
+                marks.setdefault("first_call_s", time.time())
                 call_id = body.get("call_id")
                 tool_name = body.get("tool_name")
                 args = body.get("arguments") or {}
@@ -176,6 +187,7 @@ async def run_one_scenario(
             await events.put({"type": "text_chunk", "ts_us": _now_us(), "payload": {"text": piece}})
     else:
         await events.put({"type": "text_chunk", "ts_us": _now_us(), "payload": {"text": transcript_in}})
+    marks["eot_s"] = time.time()
     await events.put({"type": "end_of_turn", "ts_us": _now_us(), "payload": {}})
 
     meta = {"seed": seed}
@@ -199,6 +211,11 @@ async def run_one_scenario(
     except asyncio.CancelledError:
         pass
 
+    def _since_eot(mark: str) -> float | None:
+        if mark not in marks or "eot_s" not in marks:
+            return None
+        return round(marks[mark] - marks["eot_s"], 3)
+
     return {
         "example_id": metadata["id"],
         "folder": example_dir.name,
@@ -207,22 +224,78 @@ async def run_one_scenario(
         "watchdog_fired": summary.watchdog_fired,
         "step_count": summary.step_count,
         "errors": errors,
+        # S3 Increment 0: harness-side latency evidence (the PLAN-skip
+        # saving). None when the event never happened (e.g. no tool call).
+        "eot_to_first_speech_s": _since_eot("first_speech_s"),
+        "eot_to_first_call_s": _since_eot("first_call_s"),
+        "eot_to_final_s": _since_eot("final_s"),
         "metadata": metadata,
     }
 
 
-async def main_async(args: argparse.Namespace) -> None:
+# FDB's exact_match_args explanations (evaluate_pass_rate.py) -- any
+# argument explanation that isn't one of these came from the LLM judge.
+_EXACT_EXPLANATIONS = ("All arguments match", "Missing argument:", "Mismatch '")
+
+
+def _judge_preflight(args: argparse.Namespace) -> None:
+    """`--use-llm` must really mean FDB's gpt-4o judge. FDB's own
+    `llm_judge_argument` silently falls back to exact-match on *any* error
+    (no key, no `openai` package, a failed request), so without this an
+    A/B arm could quietly be scored exact-match and still look judged."""
+    if not args.use_llm:
+        return
+    problems = []
+    if not os.environ.get("OPENAI_API_KEY"):
+        problems.append("OPENAI_API_KEY is not set (env or repo-root .env)")
+    if importlib.util.find_spec("openai") is None:
+        problems.append("the `openai` package is not installed in this Python environment")
+    if problems:
+        sys.exit("--use-llm refused: " + "; ".join(problems))
+
+
+def _count_explanations(pass_report: dict) -> tuple[int, int]:
+    """(judge, exact) counts over every paired call's argument explanation.
+    Unpaired expected calls carry `reason: "Not called"`, not an
+    `explanation`, and aren't counted."""
+    judge = exact = 0
+    for scenario in pass_report.get("scenario_results", []):
+        for detail in scenario.get("checks", {}).get("argument_accuracy", {}).get("details", []):
+            if "explanation" not in detail:
+                continue
+            if str(detail["explanation"]).startswith(_EXACT_EXPLANATIONS):
+                exact += 1
+            else:
+                judge += 1
+    return judge, exact
+
+
+def _git_commit() -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+        )
+        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=REPO_ROOT, capture_output=True, text=True).stdout
+        return out.stdout.strip() + ("-dirty" if dirty.strip() else "")
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def _build_config(args: argparse.Namespace) -> Config:
+    if args.profile == "fdb":
+        config = fdb_v3_config(log_decisions=args.debug)
+    else:
+        config = Config(log_decisions=args.debug, g4_exempt_undeclared_mutability=args.g4_exempt_undeclared_mutability)
+    return apply_overrides(config, args.set or [])
+
+
+async def run_all(args: argparse.Namespace, config: Config) -> list[dict]:
     manifest_tools = introspect_file(os.path.join(args.fdb_root, "lk_agent_tool.py"))
     manifest = to_catalog_manifest(manifest_tools)
     print(f"Introspected {len(manifest)} FDB tools from {args.fdb_root}/lk_agent_tool.py")
 
     mock_apis_module = _import_fdb_module(args.fdb_root, "mock_apis")
-
     provider = GeminiProvider(model=args.model, thinking_budget=args.thinking_budget)
-    if args.profile == "fdb":
-        config = fdb_v3_config(log_decisions=args.debug)
-    else:
-        config = Config(log_decisions=args.debug, g4_exempt_undeclared_mutability=args.g4_exempt_undeclared_mutability)
 
     example_dirs = sorted(p for p in Path(args.data_root).iterdir() if p.is_dir() and (p / "metadata.json").is_file())
     if args.only:
@@ -232,7 +305,6 @@ async def main_async(args: argparse.Namespace) -> None:
     print(f"Running {len(example_dirs)} scenarios from {args.data_root}")
 
     per_scenario_results: list[dict] = []
-    entries: list[dict] = []
     for i, example_dir in enumerate(example_dirs):
         print(f"[{i + 1}/{len(example_dirs)}] {example_dir.name} ...", end=" ", flush=True)
         t0 = time.monotonic()
@@ -257,18 +329,19 @@ async def main_async(args: argparse.Namespace) -> None:
         elapsed = time.monotonic() - t0
         print(f"{elapsed:.1f}s, {len(result['actual_tool_calls'])} calls, errors={result['errors']}")
         per_scenario_results.append(result)
-        entries.append(
-            {
-                "scenario": result["metadata"],
-                "calls": result["actual_tool_calls"],
-                "transcript": result["transcript"],
-                "result_data": result,
-            }
-        )
+    return per_scenario_results
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "raw_results.json").write_text(json.dumps(per_scenario_results, indent=2, default=str))
+
+def score_and_report(args: argparse.Namespace, per_scenario_results: list[dict], out_dir: Path, run_meta: dict) -> None:
+    entries = [
+        {
+            "scenario": result["metadata"],
+            "calls": result["actual_tool_calls"],
+            "transcript": result["transcript"],
+            "result_data": result,
+        }
+        for result in per_scenario_results
+    ]
 
     evaluate_pass_rate = _import_fdb_module(args.fdb_root, "evaluate_pass_rate")
     evaluate_tool_calls = _import_fdb_module(args.fdb_root, "evaluate_tool_calls")
@@ -277,8 +350,18 @@ async def main_async(args: argparse.Namespace) -> None:
     pass_report = evaluate_pass_rate.evaluate_all_pass_rate(benchmark_meta, entries, use_llm=args.use_llm)
     tool_report = evaluate_tool_calls.evaluate_all_v2(benchmark_meta, entries, use_llm=args.use_llm)
 
+    judged, exact = _count_explanations(pass_report)
+    if not args.use_llm:
+        judge_mode = "exact"
+    elif judged == 0 and exact > 0:
+        judge_mode = "gpt-4o FAILED (every argument fell back to exact-match)"
+    else:
+        judge_mode = "gpt-4o" + (f" ({exact} of {judged + exact} fell back to exact-match)" if exact else "")
+    run_meta = {**run_meta, "judge": judge_mode, "judge_explanations": judged, "exact_explanations": exact}
+
     (out_dir / "pass_rate_report.json").write_text(json.dumps(pass_report, indent=2, default=str))
     (out_dir / "tool_calls_report.json").write_text(json.dumps(tool_report, indent=2, default=str))
+    (out_dir / "run_meta.json").write_text(json.dumps(run_meta, indent=2, default=str))
 
     # Q11 (win_plan §6.2): a lint summary reusing the same speechlint.lint
     # this project's own EmissionGate applies live (Config.speechlint_
@@ -309,14 +392,19 @@ async def main_async(args: argparse.Namespace) -> None:
     (out_dir / "speechlint_report.json").write_text(json.dumps(lint_summary, indent=2, default=str))
 
     print("\n=== T3 TEXT REPLAY SUMMARY ===")
-    print(f"model: {args.model}  thinking_budget: {args.thinking_budget}")
-    print(f"scenarios run: {len(entries)}")
+    print(f"model: {run_meta.get('model')}  thinking_budget: {run_meta.get('thinking_budget')}")
+    print(f"profile: {run_meta.get('profile')}  overrides: {run_meta.get('overrides')}")
+    print(f"judge: {judge_mode}")
+    print(f"scenarios scored: {len(entries)}")
     print(f"strict pass rate: {pass_report['overall_pass_rate']:.1%}  ({pass_report['passed']}/{pass_report['total_scenarios']})")
     print(f"turn_take_rate: {tool_report['turn_taking']['turn_take_rate']}")
     print(f"tool_selection_acc: {tool_report['by_metric']['tool_selection_acc']}")
     print(f"argument_acc: {tool_report['by_metric']['argument_acc']}")
     print(f"speechlint: {lint_summary['scenarios_with_violations']}/{len(entries)} scenarios with violations, "
           f"{lint_summary['total_violations']} total ({violation_counts})")
+    latencies = sorted(r["eot_to_first_call_s"] for r in per_scenario_results if r.get("eot_to_first_call_s") is not None)
+    if latencies:
+        print(f"eot_to_first_call_s: median {latencies[len(latencies) // 2]:.2f}  (n={len(latencies)})")
 
     # Q11: per-bucket failure table -- domain/difficulty breakdown from
     # FDB's own evaluators, printed here since run_text_replay.py's own
@@ -336,7 +424,47 @@ async def main_async(args: argparse.Namespace) -> None:
             f"  tool_sel={tool_bucket.get('tool_selection_acc', float('nan')):.1%}"
             f"  arg_acc={tool_bucket.get('argument_acc', float('nan')):.1%}"
         )
+    for feature, rate in sorted(pass_report.get("by_disfluency_feature", {}).items()):
+        print(f"  {feature:24s} pass={rate:.1%}")
     print(f"\nreports written to {out_dir}")
+    if args.use_llm and judged == 0 and exact > 0:
+        sys.exit("--use-llm: the gpt-4o judge never answered -- every argument fell back to exact-match")
+
+
+async def main_async(args: argparse.Namespace) -> None:
+    _judge_preflight(args)
+    started_at = datetime.datetime.now().isoformat(timespec="seconds")
+
+    if args.rescore:
+        # S3 Increment 0: score an existing run's raw_results.json again
+        # (e.g. with the gpt-4o judge) without re-running the agent.
+        src = Path(args.rescore)
+        per_scenario_results = json.loads((src / "raw_results.json").read_text())
+        out_dir = Path(args.out_dir) if args.out_dir else src / f"rescore_{'llm' if args.use_llm else 'exact'}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        prior_meta_path = src / "run_meta.json"
+        prior_meta = json.loads(prior_meta_path.read_text()) if prior_meta_path.is_file() else {}
+        run_meta = {**prior_meta, "rescored_from": str(src), "rescored_at": started_at}
+        score_and_report(args, per_scenario_results, out_dir, run_meta)
+        return
+
+    config = _build_config(args)
+    out_dir = Path(args.out_dir or REPO_ROOT / "run_output" / "fdb_v3_text_replay")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    run_meta = {
+        "started_at": started_at,
+        "git_commit": _git_commit(),
+        "model": args.model,
+        "thinking_budget": args.thinking_budget,
+        "profile": args.profile,
+        "overrides": list(args.set or []),
+        "segmented": args.segmented,
+        "only": args.only,
+        "limit": args.limit,
+    }
+    per_scenario_results = await run_all(args, config)
+    (out_dir / "raw_results.json").write_text(json.dumps(per_scenario_results, indent=2, default=str))
+    score_and_report(args, per_scenario_results, out_dir, run_meta)
 
 
 def parse_args() -> argparse.Namespace:
@@ -367,7 +495,20 @@ def parse_args() -> argparse.Namespace:
         "--g4-exempt-undeclared-mutability", action="store_true",
         help="Day 2 (§5.2): don't require explicit commit_intent for tools FDB never declared mutability for",
     )
-    p.add_argument("--out-dir", default=str(REPO_ROOT / "run_output" / "fdb_v3_text_replay"))
+    p.add_argument(
+        "--set", action="append", metavar="KEY=VALUE",
+        help="S3: override one Config field on top of --profile (repeatable), e.g. "
+             "--set action_plans_enabled=false. Unknown keys are rejected.",
+    )
+    p.add_argument(
+        "--rescore", metavar="RUN_DIR", default=None,
+        help="S3: re-score RUN_DIR/raw_results.json (e.g. with --use-llm) without re-running the "
+             "agent; reports go to --out-dir, or RUN_DIR/rescore_<llm|exact>/ by default",
+    )
+    p.add_argument(
+        "--out-dir", default=None,
+        help="output directory (default: run_output/fdb_v3_text_replay, or RUN_DIR/rescore_* with --rescore)",
+    )
     return p.parse_args()
 
 

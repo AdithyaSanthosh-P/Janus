@@ -101,7 +101,7 @@ class SimHarness:
         self.log = DecisionLogger()
         self.provider = provider if provider is not None else ScriptedProvider()
         self.gateway = ModelGateway(self.provider)
-        default_latency = {JobKind.INTERPRET: 50_000, JobKind.PLAN: 50_000, JobKind.COMPOSE: 50_000}
+        default_latency = {JobKind.INTERPRET: 50_000, JobKind.PLAN: 50_000, JobKind.COMPOSE: 50_000, JobKind.BIND: 50_000}
         # blob_resolver (Phase 3): optional, live-use-only — resolves a
         # harness-given frame_id/clip_id into real bytes for VISION/ASR
         # jobs. None by default, so every existing SimHarness caller

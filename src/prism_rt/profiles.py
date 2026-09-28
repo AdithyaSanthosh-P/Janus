@@ -66,6 +66,16 @@ def fdb_v3_config(**overrides) -> Config:
       never turned on for FDB itself (Q9) -- saves the INTERPRET
       round-trip's latency on every turn.
 
+    S3 (docs-personal/private-docs/s3_plan_2026-09-28.md; kill rule
+    29 Sep 15:00 -- judge-scored full-100 A/B, kept only at >= +5 points):
+    - action_plans_enabled: per-action interpretation compiled straight
+      into the plan (kernel/action_plans.py) -- no PLAN job, no arguments
+      lost between Interpreter and Planner, no "_2" slot collisions.
+    - fill_unstated_required_enabled: FDB recordings are single-turn, so a
+      clarifying question is never answered; a required number/yes-no the
+      user didn't state is assumed and said aloud instead. Kept or dropped
+      on its own A/B evidence, separately from action_plans_enabled.
+
     `**overrides` lets a caller tune settle_ms/settle_ms_incomplete/etc.
     per run without editing this function -- passed straight to
     `dataclasses.replace`.
@@ -89,5 +99,61 @@ def fdb_v3_config(**overrides) -> Config:
         speechlint_enabled=True,
         speculative_interpretation_enabled=True,
         echo_ack_enabled=True,
+        action_plans_enabled=True,
+        fill_unstated_required_enabled=True,
     )
     return dataclasses.replace(base, **overrides) if overrides else base
+
+
+_TRUE_WORDS = {"true", "1", "yes", "on"}
+_FALSE_WORDS = {"false", "0", "no", "off"}
+
+
+def _coerce_override(key: str, raw: str):
+    """Coerces one `--set key=value` string by the type of the field's own
+    default in `DEFAULT_CONFIG` -- `dataclasses.fields(Config)[i].type` is
+    a *string* here (`config.py` uses `from __future__ import
+    annotations`), so it can't be used to coerce directly."""
+    default = getattr(DEFAULT_CONFIG, key)
+    text = raw.strip()
+    if isinstance(default, bool):
+        lowered = text.lower()
+        if lowered in _TRUE_WORDS:
+            return True
+        if lowered in _FALSE_WORDS:
+            return False
+        raise ValueError(f"--set {key}: expected a boolean, got {raw!r}")
+    if isinstance(default, int):
+        return int(text)
+    if isinstance(default, float):
+        return float(text)
+    if default is None:
+        if text.lower() == "none":
+            return None
+        for cast in (int, float):
+            try:
+                return cast(text)
+            except ValueError:
+                pass
+        return text
+    return text
+
+
+def apply_overrides(config: Config, pairs: list[str]) -> Config:
+    """Applies `key=value` strings (e.g. from a script's repeatable
+    `--set` option) on top of `config`. Unknown keys are rejected rather
+    than silently ignored, so a typo can never make an A/B arm quietly
+    identical to the other one."""
+    if not pairs:
+        return config
+    known = {f.name for f in dataclasses.fields(Config)}
+    changes: dict = {}
+    for pair in pairs:
+        key, sep, raw = pair.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            raise ValueError(f"--set expects key=value, got {pair!r}")
+        if key not in known:
+            raise ValueError(f"--set: unknown Config field {key!r}")
+        changes[key] = _coerce_override(key, raw)
+    return dataclasses.replace(config, **changes)

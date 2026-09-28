@@ -121,6 +121,10 @@ class FastResponder:
             actions.extend(self._ack_plan_dispatch(store, gid, now_us, step_no))
         if goal.status == GoalStatus.ACTIVE and goal.task_state == TaskState.CLARIFYING:
             actions.extend(self._clarify(store, gid, now_us, step_no))
+        if goal.status == GoalStatus.ACTIVE and goal.task_state in (TaskState.EXECUTING, TaskState.CLARIFYING):
+            # S3: before the S-10 notice below, which it suppresses for the
+            # same write -- one acknowledgement, not two.
+            actions.extend(self._ack_compiled_plan(store, gid, now_us, step_no))
         if goal.status == GoalStatus.ACTIVE and goal.task_state == TaskState.EXECUTING:
             actions.extend(self._intended_for_settling_write(store, gid, now_us, step_no, skip_call_ids))
         if goal.task_state == TaskState.RESPONDING:
@@ -143,6 +147,37 @@ class FastResponder:
             Provenance(source="system", step_no=step_no, ts_us=now_us),
             rule="responder.ack",
         )
+        grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
+        text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
+        return [
+            IntendedAction(
+                action_type=ActionType.SPEAK,
+                body=SpeakBody(text=text, kind="ack", claim_grade=grade),
+                read_set=EMPTY_READ_SET,
+                rule_id="responder.ack",
+            )
+        ]
+
+    def _ack_compiled_plan(self, store, goal_id: str, now_us: int, step_no: int) -> list[IntendedAction]:
+        """S3 (`kernel/action_plans.py`): a compiled plan never dispatches a
+        PLAN job, so `_ack_plan_dispatch` (which keys off one) never fires
+        for it. Same acknowledgement, same text priority, once per goal --
+        a later in-place recompile (plan_rev + 1) never re-ACKs. Also marks
+        the first settle-held write as already acknowledged, so the S-10
+        "On it — <tool> now." notice doesn't speak a second ACK for the
+        same call in the same step."""
+        plan = store.plans.current(goal_id)
+        if plan is None or plan.origin != "compiled":
+            return []
+        acked = store.facts.get(f"ack.{goal_id}.compiled")
+        if acked is not None and acked.status != FactStatus.RETRACTED:
+            return []
+        provenance = Provenance(source="system", step_no=step_no, ts_us=now_us)
+        store.facts.set(f"ack.{goal_id}.compiled", plan.plan_rev, FactStatus.COMMITTED, provenance, rule="responder.ack")
+        for call in store.call_ledger.proposed():
+            if call.goal_id == goal_id and call.kind == StepKind.WRITE:
+                store.facts.set(f"ack.{goal_id}.intended_call", call.call_id, FactStatus.COMMITTED, provenance, rule="responder.ack")
+                break
         grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
         text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
         return [
@@ -197,6 +232,7 @@ class FastResponder:
         if not live:
             return None
         name, value = sorted(live.items())[0]  # deterministic pick
+        name = name.rsplit(".", 1)[-1]  # S3: a per-action slot name ("a0.city") speaks as "city"
         return f"Got it — {name.replace('_', ' ')}: {value}."
 
     def _clarify(self, store, goal_id: str, now_us: int, step_no: int) -> list[IntendedAction]:

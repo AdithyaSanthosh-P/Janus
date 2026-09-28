@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from prism_rt.kernel.action_plans import bind_key, valid_bind_fact
 from prism_rt.kernel.interpret_apply import active_goal_id
 from prism_rt.model.actions import CancelBody, IntendedAction
 from prism_rt.model.types import (
@@ -356,7 +357,9 @@ class PlanExecutor:
                 # this doesn't distinguish — no test scenario needs that
                 # nuance; see kernel/perception.py's module docstring.)
                 if missing_key is not None and (
-                    missing_key.startswith("claim.") or self._perception_will_answer(store, gid, missing_key)
+                    missing_key.startswith("claim.")
+                    or missing_key.startswith("bind.")  # S3: kernel/binder.py will decide it -- never ask the user
+                    or self._perception_will_answer(store, gid, missing_key)
                 ):
                     continue
                 self._ask_for(store, gid, missing_key, now_us, step_no)
@@ -522,6 +525,19 @@ class PlanExecutor:
                 read_keys.append(key)
                 continue
 
+            if binding.kind == BindingKind.LATE:
+                # S3 (kernel/binder.py): the value BindScheduler picked from
+                # the upstream step's real result. Missing, retracted, or
+                # grounded in a result that has since changed -> wait (see
+                # propose_ready_calls: a `bind.` key never clarifies).
+                key = bind_key(goal_id, step.step_key, param)
+                fact = valid_bind_fact(store, key)
+                if fact is None:
+                    return None, key
+                args[param] = fact.value
+                read_keys.append(key)
+                continue
+
             if binding.kind == BindingKind.STEP_OUTPUT:
                 upstream = store.call_ledger.latest_by_step(goal_id, binding.step_key)
                 if upstream is None or upstream.status != CallStatus.CONSUMED:
@@ -653,8 +669,12 @@ class PlanExecutor:
         schema = spec.params_schema or {}
         required = frozenset(schema.get("required") or ())
         properties = schema.get("properties") or {}
+        # S3: a compiled step's own slots live at slot.<gid>.a<i>.<name>
+        # (kernel/action_plans.py) -- tracking the flat key would let a
+        # later "a1.mode" correction miss the consumed call entirely.
+        prefix = f"slot.{goal_id}.{step.slot_prefix}." if step.slot_prefix else f"slot.{goal_id}."
         return [
-            f"slot.{goal_id}.{name}"
+            f"{prefix}{name}"
             for name in properties
             if name not in args and name not in required and name not in perception_governed
         ]

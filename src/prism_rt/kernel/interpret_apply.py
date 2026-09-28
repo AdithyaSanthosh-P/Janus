@@ -17,8 +17,10 @@ structural change, not currently executing) still replans.
 
 from __future__ import annotations
 
-import re
+import dataclasses
 
+from prism_rt.canonical import canonicalize_spoken_id  # re-exported: tests and reducers import it from here
+from prism_rt.kernel import action_plans
 from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.model.types import (
     BindingKind,
@@ -106,26 +108,6 @@ def _suspend_current_goal(txn: StoreTxn) -> None:
     goal = txn.store.goals.get(current)
     if goal is not None and goal.status == GoalStatus.ACTIVE:
         txn.store.goals.update(current, status=GoalStatus.SUSPENDED)
-
-
-_SPOKEN_ID_SPLIT = re.compile(r"[\s\-.,]+")
-
-
-def canonicalize_spoken_id(value):
-    """Q1 (win_plan §6.2): a value spelled out one character at a time
-    ("X-Y-Z-8-8") is really one identifier and gets joined back into
-    "XYZ88" -- FDB-v3's own ASR frequently renders a spoken confirmation
-    code or order ID this way. A multi-character token anywhere in the
-    split (e.g. "FL-DEN-8AM") means this is a *structured* code with real
-    separators, not a spelled-out one, and is left untouched. Only
-    strings are ever touched; anything else (a number, a bool) passes
-    through unchanged."""
-    if not isinstance(value, str):
-        return value
-    tokens = [t for t in _SPOKEN_ID_SPLIT.split(value) if t]
-    if len(tokens) < 2 or not all(len(t) == 1 and t.isalnum() for t in tokens):
-        return value
-    return "".join(tokens)
 
 
 def _apply_slot_deltas(txn: StoreTxn, goal_id: str, slot_deltas, now_us: int, step_no: int, *, event_id: str) -> bool:
@@ -366,7 +348,14 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         txn.store.goals.update(interp.resume_goal_id, status=GoalStatus.ACTIVE)
         _set_active_goal(txn, interp.resume_goal_id, now_us, step_no, event_id=event_id)
         gid = interp.resume_goal_id
-        _apply_slot_deltas(txn, gid, interp.slot_deltas, now_us, step_no, event_id=event_id)
+        compiled_goal = action_plans.is_compiled(txn.store, gid)
+        deltas = interp.slot_deltas
+        if compiled_goal:
+            mapped, unmapped = action_plans.map_deltas(txn.store, gid, deltas)
+            deltas = tuple(action_plans.coerce_deltas(txn.store, gid, mapped)) + tuple(unmapped)
+        _apply_slot_deltas(txn, gid, deltas, now_us, step_no, event_id=event_id)
+        if compiled_goal:
+            action_plans.ensure_bindings(txn, gid, [d.name for d in deltas if d.op == SlotOp.SET])
         if interp.commit_intent:
             txn.facts.set(
                 f"goal.{gid}.commit_intent",
@@ -375,7 +364,10 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.commit_intent",
             )
-        txn.store.goals.update(gid, task_state=TaskState.PLANNING)
+        # S3: a compiled goal resumes where it was -- its plan keeps its step
+        # keys (see kernel/action_plans.py.is_compiled for why a replan
+        # would be unsafe); every still-valid consumed call carries over.
+        txn.store.goals.update(gid, task_state=TaskState.EXECUTING if compiled_goal else TaskState.PLANNING)
         return gid
 
     if interp.act == InterpretAct.NEW_GOAL:
@@ -399,19 +391,30 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.intent",
             )
+        # S3: compile the plan straight from the per-action interpretation
+        # (kernel/action_plans.py) -- None means the ordinary PLAN path runs.
+        compiled = None
+        if txn.store.config.action_plans_enabled:
+            compiled = action_plans.compile_actions(txn, gid, interp, now_us, step_no, event_id=event_id)
         # Day 2 WP2 (docs/fdb_v3_day2_plan.md): every tool the turn asked
         # for, in order -- tells the Planner to emit one step per action
         # instead of just one for `intent`. Additive fact; a plan built
         # without this flag never reads it.
-        if txn.store.config.multi_action_enabled and interp.requested_actions:
+        if txn.store.config.multi_action_enabled and (interp.requested_actions or compiled is not None):
             txn.facts.set(
                 f"goal.{gid}.actions",
-                list(interp.requested_actions),
+                [step.tool for step in compiled.steps] if compiled is not None else list(interp.requested_actions),
                 FactStatus.COMMITTED,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.requested_actions",
             )
-        _apply_slot_deltas(txn, gid, interp.slot_deltas, now_us, step_no, event_id=event_id)
+        if compiled is None:
+            deltas = interp.slot_deltas
+            if txn.store.config.action_plans_enabled and not deltas and interp.actions:
+                # The Interpreter may leave slot_deltas empty once `actions`
+                # is filled; the fallback PLAN path still needs flat slots.
+                deltas = action_plans.flat_deltas_from_actions(interp.actions)
+            _apply_slot_deltas(txn, gid, deltas, now_us, step_no, event_id=event_id)
         if interp.commit_intent:
             txn.facts.set(
                 f"goal.{gid}.commit_intent",
@@ -435,7 +438,29 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 rule="interpret_apply.ack_phrase",
             )
         _apply_visual_reference(txn, interp, gid, now_us, step_no)
+        if compiled is not None:
+            # No PLAN job: straight to executing the compiled plan.
+            txn.store.goals.update(gid, task_state=TaskState.EXECUTING)
         return gid
+
+    if (
+        interp.act in _SLOT_UPDATE_ACTS
+        and interp.actions
+        and txn.store.config.action_plans_enabled
+        and active_goal_id(txn.store) is None
+    ):
+        # S3: with no goal there is nothing to update -- a live model still
+        # sometimes labels a first request "raise my max price and..." as
+        # slot_update/addition (found live, housing_13). When it also listed
+        # the concrete tool calls, those are the new goal; apply them as one
+        # rather than discard them into the unclear re-ask below.
+        return apply_interpretation(
+            dataclasses.replace(interp, act=InterpretAct.NEW_GOAL, intent=interp.intent or interp.actions[0].tool),
+            txn,
+            now_us,
+            step_no,
+            event_id=event_id,
+        )
 
     if interp.act in _SLOT_UPDATE_ACTS:
         gid = active_goal_id(txn.store)
@@ -457,7 +482,21 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         if goal is None or goal.status != GoalStatus.ACTIVE:
             return gid
 
-        changed = _apply_slot_deltas(txn, gid, interp.slot_deltas, now_us, step_no, event_id=event_id)
+        # S3: on a compiled goal, a flat correction/answer ("destination")
+        # is mapped onto the one action's own slot ("a1.destination"); an
+        # ADDITION appends its new actions to the compiled plan.
+        compiled_goal = action_plans.is_compiled(txn.store, gid)
+        deltas = interp.slot_deltas
+        extended = False
+        if compiled_goal:
+            if interp.act == InterpretAct.ADDITION and interp.actions:
+                extended = action_plans.extend_compiled_plan(txn, gid, interp, now_us, step_no, event_id=event_id)
+            mapped, unmapped = action_plans.map_deltas(txn.store, gid, deltas)
+            deltas = tuple(action_plans.coerce_deltas(txn.store, gid, mapped)) + tuple(unmapped)
+        changed = _apply_slot_deltas(txn, gid, deltas, now_us, step_no, event_id=event_id)
+        if compiled_goal:
+            action_plans.ensure_bindings(txn, gid, [d.name for d in deltas if d.op == SlotOp.SET])
+            changed = changed or extended
 
         if interp.act == InterpretAct.DENY:
             txn.facts.set(
@@ -520,7 +559,12 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             txn.facts.retract(f"goal.{gid}.clarify_target", rule="interpret_apply.clarify_resolved")
         if changed and goal.task_state not in (TaskState.COMPLETED, TaskState.FAILED):
             changed_names = {d.name for d in interp.slot_deltas if d.scope != "session"}
-            if (
+            if compiled_goal:
+                # S3: never replan a compiled goal (kernel/action_plans.py.
+                # is_compiled). The slot write above already invalidated the
+                # affected action's call; PlanExecutor rebinds it next DECIDE.
+                txn.store.goals.update(gid, task_state=TaskState.EXECUTING)
+            elif (
                 txn.store.config.rebinder_enabled
                 and goal.task_state == TaskState.EXECUTING
                 and _can_rebind(txn.store, gid, changed_names)
