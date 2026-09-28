@@ -52,7 +52,11 @@ def build_prompt(view: dict) -> str:
         f"effects: {view.get('effects')}\n"
         f"open_questions: {view.get('open_questions')}\n"
         f"{honesty_block}"
-        "Write a short, grounded response and return JSON matching the schema."
+        "Write a short, grounded response and return JSON matching the schema. "
+        "It is spoken aloud by a voice agent: one or two plain sentences, no "
+        "markdown, bullets, lists or headings, and only the key result of each "
+        "action (found live: a bulleted, bolded paragraph was read out and cut "
+        "off mid-sentence)."
     )
 
 

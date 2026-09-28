@@ -184,7 +184,7 @@ class FastResponder:
         text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
         unsupported = store.facts.get(f"goal.{goal_id}.unsupported")
         if unsupported is not None and unsupported.status != FactStatus.RETRACTED and unsupported.value:
-            text = f"{text} I can't {unsupported.value} here, though."
+            text = f"{text} I can't do \"{unsupported.value}\" here, though."
         return [
             IntendedAction(
                 action_type=ActionType.SPEAK,

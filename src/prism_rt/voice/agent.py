@@ -12,9 +12,11 @@ Environment:
   FDB_V3_ROOT             FDB checkout's v3/ directory (tool manifest + mock APIs)
   JANUS_FDB_LATENCY       FDB mock latency profile (default "instant", as FDB's own agents)
   JANUS_TOOL_LOG          tool-call log FDB's runner reads (default /tmp/agent_tool_calls.log)
-  JANUS_LLM_MODEL         default gemini-3.5-flash-lite
-  JANUS_THINKING_BUDGET   unset by default (flash-lite rejects the field)
+  JANUS_LLM_MODEL         default gemini-3.6-flash
+  JANUS_THINKING_BUDGET   default 0 (thinking off); "" omits the field (flash-lite rejects it)
   JANUS_EOT_MS            silence that closes a user turn (default 1000)
+  JANUS_WATCHDOG_MS       whole-session budget before a salvage FINAL (default 105000, as
+                          FDB scenarios; 0 = none -- use 0 for live conversations)
   JANUS_MIN_INTERRUPTION_WORDS  words needed to cut the agent off (default 2, so
                           background noise in a recording cannot truncate an answer)
   JANUS_IDLE_PROCESSES    prewarmed job processes, each with its own models (default 1)
@@ -178,12 +180,16 @@ async def entrypoint(ctx: JobContext) -> None:
         t_eot_ms=_int_env("JANUS_EOT_MS", 1000),
     )
 
-    thinking = os.environ.get("JANUS_THINKING_BUDGET")
+    # gemini-3.6-flash, thinking off (28 Sep): same judge-scored full-100 as
+    # flash-lite (73%) but 3-call scenarios 50% -> 69% and it follows the
+    # honesty rules flash-lite ignored live ("cancel the booking" became a
+    # booking). JANUS_THINKING_BUDGET="" restores the model's own default.
+    thinking = os.environ.get("JANUS_THINKING_BUDGET", "0")
     provider = GeminiProvider(
-        model=os.environ.get("JANUS_LLM_MODEL", "gemini-3.5-flash-lite"),
+        model=os.environ.get("JANUS_LLM_MODEL", "gemini-3.6-flash"),
         thinking_budget=int(thinking) if thinking not in (None, "") else None,
     )
-    runtime = setup(config=fdb_v3_config(), provider=provider)
+    runtime = setup(config=fdb_v3_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 105_000)), provider=provider)
     meta: dict = {"seed": 0}
     log_dir = os.environ.get("JANUS_DECISION_LOG_DIR")
     if log_dir:

@@ -151,7 +151,9 @@ def _action_plans_block(view: dict) -> str:
             "(a kind of booking, search or change no tool handles), do NOT map "
             "it onto a different tool: leave it out of actions and describe it "
             "in a few words in unsupported (e.g. \"reserve a table\"). Otherwise "
-            "unsupported is null. act stays one of the listed act values.\n"
+            "unsupported is null. act stays one of the listed act values. A "
+            "change to the previous request (\"no, make it X\", \"I meant Y\") "
+            "is never unsupported -- it is a slot_update with slot_deltas.\n"
             "- If the user only asks how an earlier request went (\"did that go "
             "through?\"), set status_question to true and leave actions empty.\n"
         )

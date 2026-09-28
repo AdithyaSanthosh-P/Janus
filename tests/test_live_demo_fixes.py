@@ -124,7 +124,7 @@ def test_unsupported_request_is_declined_honestly_not_mapped_to_a_tool():
     h.send(100_000, [chunk_event("book me a hotel in Chennai")])
     actions = send(h, 150_000, [eot_event()]) + drain(h, 1_000_000, stop_on_final=False)
     said = speaks(actions)
-    assert len(said) == 1 and said[0].startswith("Sorry — I can't book a hotel here.")
+    assert len(said) == 1 and said[0].startswith('Sorry — "book a hotel" isn\'t something I can do here.')
     assert "search flights" in said[0]
     assert tool_calls(actions) == [] and h.store.goals.all() == []
 
@@ -138,7 +138,7 @@ def test_unsupported_part_is_named_in_the_ack():
     h.send(0, [manifest_event([SEARCH])])
     h.send(100_000, [chunk_event("flights to Chennai tomorrow and a hotel there")])
     actions = send(h, 150_000, [eot_event()]) + drain(h, 3_000_000)
-    assert "I'll search flights to Chennai for tomorrow. I can't book a hotel here, though." in speaks(actions)
+    assert "I'll search flights to Chennai for tomorrow. I can't do \"book a hotel\" here, though." in speaks(actions)
 
 
 def test_status_question_after_a_finished_task_is_answered_from_what_ran():
@@ -219,3 +219,64 @@ def test_invented_act_with_unsupported_is_not_dropped():
         raise AssertionError("an invented act with nothing to recover must still be rejected")
     except ValueError:
         pass
+
+
+ORDER = {"name": "track_order", "parameters": {"type": "object", "properties": {
+    "order_id": {"type": "string"}}, "required": ["order_id"]}}
+
+
+def test_new_request_while_a_task_runs_is_appended_not_parked():
+    """Found live: "book a flight ... and then track my order" arrived as a
+    second NEW_GOAL and silently suspended the first task."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "parcel A12", {"act": "new_goal", "intent": "track_order", "slot_deltas": [],
+                                                   "actions": [{"tool": "track_order", "args": {"order_id": "A12"}}]})
+    provider.register("interpret", "Chennai", CHENNAI_TOMORROW)
+    provider.register("compose", "a1", {"text": "Done both.", "claims": []})
+    tools = {"search_flights": {"latency_ms": 1_500, "response": {"flight_id": "FL1"}},
+             "track_order": {"latency_ms": 200, "response": {"status": "shipped"}}}
+    h = harness(provider, config(read_only_tools=("search_flights", "track_order")), tools)
+    h.send(0, [manifest_event([SEARCH, ORDER])])
+    h.send(100_000, [chunk_event("flights to Chennai tomorrow")])
+    actions = send(h, 150_000, [eot_event()]) + drain(h, 1_300_000, stop_on_final=False)
+    actions += send(h, 1_400_000, [chunk_event("and then check on parcel A12")])
+    actions += send(h, 1_450_000, [eot_event()]) + drain(h, 6_000_000)
+    assert tool_calls(actions) == [("search_flights", {"destination": "Chennai", "date": "tomorrow"}), ("track_order", {"order_id": "A12"})]
+    assert len(h.store.goals.all()) == 1
+    assert [a.body.task_completed for a in actions if a.action_type == ActionType.FINAL] == [True]
+    assert_clean(h)
+
+
+def test_correction_after_a_finished_task_reruns_it_with_the_change():
+    provider = ScriptedProvider()
+    provider.register("interpret", "make it Delhi", {"act": "slot_update", "slot_deltas": [
+        {"name": "destination", "scope": "goal", "op": "set", "value": "Delhi"}]})
+    provider.register("interpret", "Chennai", CHENNAI_TOMORROW)
+    provider.register("compose", "a0", {"text": "Found a flight.", "claims": []})
+    h = harness(provider, config())
+    h.send(0, [manifest_event([SEARCH])])
+    h.send(100_000, [chunk_event("flights to Chennai tomorrow")])
+    actions = send(h, 150_000, [eot_event()]) + drain(h, 3_000_000)
+    assert [a for a in actions if a.action_type == ActionType.FINAL]
+    h.send(3_100_000, [chunk_event("no make it Delhi")])
+    actions = send(h, 3_150_000, [eot_event()]) + drain(h, 6_000_000)
+    assert tool_calls(actions) == [("search_flights", {"destination": "Delhi", "date": "tomorrow"})]
+    assert [a for a in actions if a.action_type == ActionType.FINAL]
+    assert_clean(h)
+
+
+def test_zero_watchdog_budget_means_no_session_timer():
+    import asyncio
+
+    from prism_rt.entry import setup
+
+    provider = ScriptedProvider()
+    runtime = setup(config=Config(watchdog_timeout_ms=0), provider=provider)
+
+    async def run():
+        events, out = asyncio.Queue(), asyncio.Queue()
+        await events.put({"type": "manifest", "ts_us": 1, "payload": {"tools": [SEARCH]}})
+        await events.put(None)
+        return await runtime.run_scenario(events, out, meta={"seed": 1})
+
+    assert asyncio.run(run()).watchdog_fired is False

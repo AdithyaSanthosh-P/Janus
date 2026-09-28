@@ -144,7 +144,10 @@ class Runtime:
         next_wake_us: int | None = None
 
         while True:
-            if watchdog.check():
+            # watchdog_timeout_ms <= 0: no whole-session budget (a live
+            # conversation, not a single benchmark scenario -- found live:
+            # the 105 s budget ended a demo session mid-conversation).
+            if self.config.watchdog_timeout_ms > 0 and watchdog.check():
                 summary.watchdog_fired = True
                 seq += 1
                 wall_elapsed_s = time.monotonic() - wall_start

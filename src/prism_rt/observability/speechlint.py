@@ -58,6 +58,22 @@ _COMPLETION_CLAIM_PHRASES: tuple[str, ...] = (
 )
 
 
+_MD_EMPHASIS = re.compile(r"(\*\*|__|`|\*)")
+_MD_LINE_MARK = re.compile(r"^\s*(?:[-*•]|\d+[.)]|#{1,6})\s+", re.MULTILINE)
+
+
+def _strip_markdown(text: str) -> str:
+    out = _MD_LINE_MARK.sub("", text)
+    out = _MD_EMPHASIS.sub("", out)
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    joined = ""
+    for ln in lines:
+        if joined and not joined.endswith((".", "!", "?", ":")):
+            joined += "."
+        joined = f"{joined} {ln}" if joined else ln
+    return joined if lines else text
+
+
 @dataclass(frozen=True)
 class LintResult:
     text: str | None  # None means "reject this text entirely" (ack completion-claim)
@@ -74,6 +90,14 @@ def lint(text: str, kind: str) -> LintResult:
     def _humanize(m: re.Match) -> str:
         violations.append(f"jargon:{m.group(0)}")
         return m.group(0).replace("_", " ")
+
+    # Markdown is written, not spoken: a TTS reads "**" and "- " literally
+    # (found live, 28 Sep -- a bulleted, bolded FINAL). Strip it to plain
+    # sentences before anything else looks at the text.
+    unmarked = _strip_markdown(cleaned)
+    if unmarked != cleaned:
+        violations.append("markdown")
+        cleaned = unmarked
 
     cleaned = _SNAKE_CASE.sub(_humanize, cleaned)
 

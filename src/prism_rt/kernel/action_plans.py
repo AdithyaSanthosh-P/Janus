@@ -33,6 +33,7 @@ import re
 from prism_rt.canonical import canonicalize_spoken_id, normalize_value, to_canonical_json
 from prism_rt.kernel.proposals import fix_step_kind
 from prism_rt.model.types import (
+    ActionRef,
     ActionSpec,
     Binding,
     BindingKind,
@@ -421,3 +422,64 @@ def active_actions_view(store, goal_id: str | None) -> list[dict]:
                 args[param] = fact.value
         view.append({"action": step.slot_prefix, "tool": step.tool, "args": args})
     return view
+
+
+def append_actions(txn, goal_id: str, actions, now_us: int, step_no: int, *, event_id: str, turn_id: str | None) -> bool:
+    """A new request while a compiled goal is still running ("...and then
+    buy me a coffee maker") -- found live: treated as a NEW_GOAL, it
+    silently suspended the running task, which was never mentioned again.
+    Appended instead, after the existing steps (refs in `actions` index
+    within `actions` itself). Returns True iff the plan was extended."""
+    plan = txn.store.plans.current(goal_id)
+    if plan is None or plan.origin != "compiled" or not actions:
+        return False
+    if any(not _usable(txn.store, a.tool) for a in actions):
+        return False
+    offset = len(plan.steps)
+    shift = lambda i: i + offset  # noqa: E731
+    if not _refs_valid(actions, offset, shift):
+        return False
+    extra = _build_steps(txn, goal_id, list(actions), offset, now_us, step_no, event_id=event_id, turn_id=turn_id, source_map=shift)
+    txn.store.plans.create(dataclasses.replace(plan, plan_rev=txn.store.plans.next_rev(goal_id), steps=plan.steps + tuple(extra)))
+    return True
+
+
+def redo_actions(store, goal_id: str, deltas) -> list[ActionSpec] | None:
+    """"No, make it ten dollars" right after a task finished -- found live:
+    with the goal already closed, the correction had nothing to attach to
+    and was answered "I can't do that". Rebuilds the finished compiled
+    plan's actions with the corrected values, to be run as a new request.
+    None when there is nothing to redo or no delta maps onto an action."""
+    plan = store.plans.current(goal_id)
+    if plan is None or plan.origin != "compiled":
+        return None
+    specs: list[dict] = []
+    for step in plan.steps:
+        args, refs = {}, []
+        for param, binding in step.bindings.items():
+            if binding.kind == BindingKind.LATE:
+                refs.append(ActionRef(param=param, source=int(binding.step_key[1:]), field=binding.path, select=binding.hint or ""))
+                continue
+            fact = store.facts.get(f"slot.{goal_id}.{step.slot_prefix}.{param}")
+            if fact is not None and fact.status != FactStatus.RETRACTED:
+                args[param] = fact.value
+        specs.append({"tool": step.tool, "args": args, "refs": refs, "props": _tool_props(store, step.tool)[0]})
+    applied = False
+    for delta in deltas:
+        if delta.scope == "session" or delta.op != SlotOp.SET:
+            continue
+        scoped = ACTION_SLOT_NAME.match(delta.name)
+        name = scoped.group(2) if scoped else delta.name
+        if scoped:
+            targets = [s for i, s in enumerate(specs) if f"a{i}" == scoped.group(1)]
+        else:
+            holders = [s for s in specs if name in s["args"]]
+            targets = holders if len(holders) == 1 else [s for s in specs if name in s["props"]]
+        if len(targets) != 1 or name not in targets[0]["props"]:
+            continue
+        targets[0]["args"][name] = delta.value
+        targets[0]["refs"] = [r for r in targets[0]["refs"] if r.param != name]
+        applied = True
+    if not applied:
+        return None
+    return [ActionSpec(tool=s["tool"], args=s["args"], refs=tuple(s["refs"])) for s in specs]

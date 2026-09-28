@@ -29,7 +29,9 @@ def capabilities_text(store, limit: int = 5) -> str:
 
 
 def unsupported_text(store, what: str) -> str:
-    return f"Sorry — I can't {what} here.{capabilities_text(store)}"
+    # Quoted, not spliced into a sentence: the model's phrase is often a noun
+    # phrase ("team maker tool"), which read as "I can't team maker tool".
+    return f"Sorry — \"{what.rstrip('.')}\" isn't something I can do here.{capabilities_text(store)}"
 
 
 def done_summary(store, goal_id: str) -> str:

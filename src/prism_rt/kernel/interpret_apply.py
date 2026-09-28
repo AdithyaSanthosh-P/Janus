@@ -383,6 +383,9 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         txn.store.goals.update(gid, task_state=TaskState.EXECUTING if compiled_goal else TaskState.PLANNING)
         return gid
 
+    if interp.act == InterpretAct.NEW_GOAL and _append_to_running_goal(txn, interp, now_us, step_no, event_id=event_id):
+        return active_goal_id(txn.store)
+
     if interp.act == InterpretAct.NEW_GOAL:
         _suspend_current_goal(txn)
         gid = txn.store.ids.next("goal")
@@ -488,6 +491,9 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
     if interp.act in _SLOT_UPDATE_ACTS:
         gid = active_goal_id(txn.store)
         if gid is None:
+            redo = _redo_last_goal(txn, interp)
+            if redo is not None:
+                return apply_interpretation(redo, txn, now_us, step_no, event_id=event_id)
             # S2 validation finding (housing_13, 2026-09-27): a live model
             # sometimes classifies a genuinely-first, no-goal-yet
             # utterance as SLOT_UPDATE/ADDITION/etc. rather than NEW_GOAL
@@ -651,4 +657,52 @@ def _flag_unclear_no_goal(txn: StoreTxn, turn_id: str, now_us: int, step_no: int
         FactStatus.COMMITTED,
         Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
         rule="interpret_apply.unclear_no_goal",
+    )
+
+
+def _live_followups(store) -> bool:
+    return store.config.conversational_replies_enabled and store.config.action_plans_enabled
+
+
+def _append_to_running_goal(txn: StoreTxn, interp: TurnInterpretation, now_us: int, step_no: int, *, event_id: str) -> bool:
+    """A new request while a compiled goal is still running is appended to
+    it (kernel/action_plans.py.append_actions) instead of suspending it --
+    found live, 28 Sep: four requests in a row each silently parked the
+    previous one. The appended part gets its own ACK."""
+    if not _live_followups(txn.store) or not interp.actions:
+        return False
+    gid = active_goal_id(txn.store)
+    goal = txn.store.goals.get(gid) if gid is not None else None
+    if goal is None or goal.status != GoalStatus.ACTIVE or goal.task_state not in (TaskState.EXECUTING, TaskState.CLARIFYING):
+        return False
+    if not action_plans.append_actions(txn, gid, interp.actions, now_us, step_no, event_id=event_id, turn_id=interp.turn_id):
+        return False
+    prov = Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us)
+    plan = txn.store.plans.current(gid)
+    txn.facts.set(f"goal.{gid}.actions", [step.tool for step in plan.steps], FactStatus.COMMITTED, prov, rule="interpret_apply.appended_actions")
+    if interp.ack_phrase and txn.store.config.echo_ack_enabled:
+        txn.facts.set(f"goal.{gid}.ack_phrase", interp.ack_phrase, FactStatus.COMMITTED, prov, rule="interpret_apply.ack_phrase")
+    txn.facts.retract(f"ack.{gid}.compiled", rule="interpret_apply.appended_actions")  # the appended part gets its own ACK
+    if goal.task_state == TaskState.EXECUTING:
+        txn.store.goals.update(gid, task_state=TaskState.EXECUTING)
+    return True
+
+
+def _redo_last_goal(txn: StoreTxn, interp: TurnInterpretation) -> TurnInterpretation | None:
+    """"No, make it ten dollars" right after a task finished: re-run that
+    (compiled) task with the correction, as a new request -- found live,
+    28 Sep: with the goal closed, the correction was answered "I can't do
+    that". None when there is no finished compiled task to redo or no
+    correction maps onto one of its actions."""
+    if not _live_followups(txn.store) or not interp.slot_deltas:
+        return None
+    finished = [g for g in txn.store.goals.all() if g.status != GoalStatus.ACTIVE]
+    if not finished:
+        return None
+    last = max(finished, key=lambda g: g.created_step)
+    actions = action_plans.redo_actions(txn.store, last.goal_id, interp.slot_deltas)
+    if not actions:
+        return None
+    return dataclasses.replace(
+        interp, act=InterpretAct.NEW_GOAL, intent=actions[0].tool, actions=tuple(actions), slot_deltas=(), unsupported=None
     )
