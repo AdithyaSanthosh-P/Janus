@@ -19,7 +19,8 @@ Environment:
   FDB_V3_ROOT             FDB checkout's v3/ directory (tool manifest + mock APIs)
   JANUS_FDB_LATENCY       FDB mock latency profile (default "instant", as FDB's own agents)
   JANUS_TOOL_LOG          tool-call log FDB's runner reads (default /tmp/agent_tool_calls.log)
-  JANUS_LLM_MODEL         default gemini-3.6-flash
+  JANUS_LLM_PROVIDER      gemini (default, declared) or openai (reads OPENAI_API_KEY)
+  JANUS_LLM_MODEL         default gemini-3.6-flash (gpt-4.1 when the provider is openai)
   JANUS_THINKING_BUDGET   default 0 (thinking off); "" omits the field (flash-lite rejects it)
   JANUS_EOT_MS            silence that closes a user turn (default 1000)
   JANUS_WATCHDOG_MS       whole-session budget before a salvage FINAL (default 105000, as
@@ -66,7 +67,7 @@ from prism_rt.observability.xray import TracedQueue
 from prism_rt.profiles import demo_config, fdb_v3_config
 from prism_rt.voice.camera import FrameStore, pump_video_track
 from prism_rt.voice.speech import FasterWhisperSTT, KokoroTTS, load_kokoro, load_whisper
-from prism_rt.workers.gateway import GeminiProvider
+from prism_rt.workers.gateway import GeminiProvider, OpenAIProvider
 
 logger = logging.getLogger("janus.voice")
 # Guarantees our own INFO-level diagnostic logging (voice/speech.py's
@@ -217,10 +218,15 @@ async def entrypoint(ctx: JobContext) -> None:
     # honesty rules flash-lite ignored live ("cancel the booking" became a
     # booking). JANUS_THINKING_BUDGET="" restores the model's own default.
     thinking = os.environ.get("JANUS_THINKING_BUDGET", "0")
-    provider = GeminiProvider(
-        model=os.environ.get("JANUS_LLM_MODEL", "gemini-3.6-flash"),
-        thinking_budget=int(thinking) if thinking not in (None, "") else None,
-    )
+    if os.environ.get("JANUS_LLM_PROVIDER", "gemini") == "openai":
+        # Equal to gemini-3.6-flash on a judged 15-recording comparison
+        # (same 7/15, same latency); Gemini remains the declared provider.
+        provider = OpenAIProvider(model=os.environ.get("JANUS_LLM_MODEL", "gpt-4.1"))
+    else:
+        provider = GeminiProvider(
+            model=os.environ.get("JANUS_LLM_MODEL", "gemini-3.6-flash"),
+            thinking_budget=int(thinking) if thinking not in (None, "") else None,
+        )
     frames = FrameStore()
     if MODE == "demo":
         config = demo_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 0))
