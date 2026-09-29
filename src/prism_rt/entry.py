@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Callable, Protocol
 
 from prism_rt.adapters.clock import ClockPort, CoupledClock, SteppedClock
 from prism_rt.adapters.codec import HarnessCodec
@@ -46,7 +46,7 @@ from prism_rt.model.actions import Action
 from prism_rt.observability.decision_log import DecisionLogger
 from prism_rt.observability.watchdog import ScenarioWatchdog
 from prism_rt.store.session import SessionStore
-from prism_rt.workers.gateway import ModelGateway, Provider
+from prism_rt.workers.gateway import MediaPart, ModelGateway, Provider
 from prism_rt.workers.runner import AsyncWorkerRunner
 
 # How often the main loop re-checks for completed worker jobs and the
@@ -104,6 +104,10 @@ class Runtime:
     config: Config
     provider: Provider
     codec: Codec | None = None  # None -> HarnessCodec (unchanged default)
+    # Live multimodal use: resolves a `video_frame`/`audio_clip` reference id
+    # to real bytes for the VISION/ASR workers (workers/runner.py). The
+    # kernel and store still never see bytes.
+    blob_resolver: Callable[[str], MediaPart | None] | None = None
 
     async def run_scenario(
         self,
@@ -127,7 +131,7 @@ class Runtime:
         codec = self.codec if self.codec is not None else internal
         writer = _QueueWriter(actions, codec)
         log = DecisionLogger(meta.get("log_path")) if self.config.log_decisions else None
-        runner = AsyncWorkerRunner(ModelGateway(self.provider))
+        runner = AsyncWorkerRunner(ModelGateway(self.provider), blob_resolver=self.blob_resolver)
         kernel = Kernel(self.config, session, clock, writer, runner=runner, log=log)
 
         summary = RunSummary()
@@ -279,9 +283,15 @@ class Runtime:
         return summary
 
 
-def setup(config: Config | None = None, *, provider: Provider | None = None, codec: Codec | None = None) -> Runtime:
+def setup(
+    config: Config | None = None,
+    *,
+    provider: Provider | None = None,
+    codec: Codec | None = None,
+    blob_resolver: Callable[[str], MediaPart | None] | None = None,
+) -> Runtime:
     if provider is None:
         from prism_rt.workers.gateway import ScriptedProvider
 
         provider = ScriptedProvider()
-    return Runtime(config=config or DEFAULT_CONFIG, provider=provider, codec=codec)
+    return Runtime(config=config or DEFAULT_CONFIG, provider=provider, codec=codec, blob_resolver=blob_resolver)

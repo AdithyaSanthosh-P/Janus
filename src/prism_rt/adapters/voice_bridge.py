@@ -82,6 +82,12 @@ class VoiceBridge:
     async def on_manifest(self, tools: list[dict]) -> None:
         await self.events.put({"type": "manifest", "ts_us": self.now_us(), "payload": {"tools": tools}})
 
+    async def on_video_frame(self, frame_id: str) -> None:
+        """A camera frame the host has stored under `frame_id` (the same id
+        its blob resolver returns bytes for). Store-only in the kernel: a
+        frame is analysed only when a question about it opens."""
+        await self.events.put({"type": "video_frame", "ts_us": self.now_us(), "payload": {"frame_id": frame_id}})
+
     async def on_speech_start(self) -> None:
         """User speech started. Cancels any pending end-of-turn timer
         (the user is still talking); if the agent was speaking, this is

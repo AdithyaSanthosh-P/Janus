@@ -8,7 +8,14 @@ call is decided by the Janus kernel, reached through `VoiceBridge`.
 One job = one room = one fresh `Runtime`; nothing is shared across rooms
 except the loaded speech models.
 
+Two modes (JANUS_MODE): "fdb" (default) -- the FDB-v3 benchmark toolset and
+profile -- and "demo" -- the device-care extension: the mock device-care tools,
+`demo_config()`, and the room's camera track sampled into `video_frame` events
+(voice/camera.py). Same kernel either way.
+
 Environment:
+  JANUS_MODE              "fdb" (default) or "demo"
+  JANUS_FRAME_INTERVAL_S  demo mode: seconds between camera frames (default 1.0)
   FDB_V3_ROOT             FDB checkout's v3/ directory (tool manifest + mock APIs)
   JANUS_FDB_LATENCY       FDB mock latency profile (default "instant", as FDB's own agents)
   JANUS_TOOL_LOG          tool-call log FDB's runner reads (default /tmp/agent_tool_calls.log)
@@ -41,18 +48,23 @@ import logging
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
+from livekit import rtc
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobExecutorType, JobProcess, cli, stt
 from livekit.plugins import silero
 
 from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter
 from prism_rt.adapters.voice_bridge import VoiceBridge
+from prism_rt.devicecare import DeviceCareToolset
 from prism_rt.entry import setup
-from prism_rt.profiles import fdb_v3_config
+from prism_rt.observability.xray import TracedQueue
+from prism_rt.profiles import demo_config, fdb_v3_config
+from prism_rt.voice.camera import FrameStore, pump_video_track
 from prism_rt.voice.speech import FasterWhisperSTT, KokoroTTS, load_kokoro, load_whisper
 from prism_rt.workers.gateway import GeminiProvider
 
@@ -109,6 +121,18 @@ def fdb_toolset() -> Toolset:
     return Toolset(manifest=manifest, make_executor=make_executor)
 
 
+MODE = os.environ.get("JANUS_MODE", "fdb").strip().lower()
+if MODE not in ("fdb", "demo"):
+    raise SystemExit(f"JANUS_MODE must be 'fdb' or 'demo', not {MODE!r}")
+
+
+def demo_toolset() -> Toolset:
+    from prism_rt.devicecare.tools import MANIFEST
+
+    # One toolset (its bookings, its open case) per room, never shared.
+    return Toolset(manifest=MANIFEST, make_executor=lambda room_name: DeviceCareToolset().make_executor())
+
+
 # One model set per worker process. Under the default PROCESS executor each
 # job process (the active one and the prewarmed idle one) loads its own
 # copy -- ~5 GB of VRAM for two, fine on the organizers' 48 GB GPU. On an
@@ -128,7 +152,7 @@ def _shared_models() -> dict:
             _SHARED["vad"] = silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
             _SHARED["whisper"] = load_whisper()
             _SHARED["kokoro"] = load_kokoro()
-            _SHARED["toolset"] = fdb_toolset()
+            _SHARED["toolset"] = demo_toolset() if MODE == "demo" else fdb_toolset()
         return _SHARED
 
 
@@ -161,11 +185,19 @@ async def entrypoint(ctx: JobContext) -> None:
         vad=userdata["vad"],
         stt=stt.StreamAdapter(stt=FasterWhisperSTT(userdata["whisper"]), vad=userdata["vad"]),
         tts=KokoroTTS(userdata["kokoro"]),
-        min_interruption_words=_int_env("JANUS_MIN_INTERRUPTION_WORDS", 2),
+        min_interruption_words=_int_env("JANUS_MIN_INTERRUPTION_WORDS", 1 if MODE == "demo" else 2),
     )
 
-    events: asyncio.Queue = asyncio.Queue()
-    actions: asyncio.Queue = asyncio.Queue()
+    log_dir = os.environ.get("JANUS_DECISION_LOG_DIR")
+    if log_dir:
+        # Wire trace beside the decision log, so `python -m prism_rt.observability.xray`
+        # can draw the conversation (user text, speech, tool calls, results).
+        os.makedirs(log_dir, exist_ok=True)
+        trace_start = time.monotonic()
+        events: asyncio.Queue = TracedQueue(os.path.join(log_dir, f"{room_name}.wire.jsonl"), "in", trace_start)
+        actions: asyncio.Queue = TracedQueue(os.path.join(log_dir, f"{room_name}.wire.jsonl"), "out", trace_start)
+    else:
+        events, actions = asyncio.Queue(), asyncio.Queue()
 
     async def say(text: str) -> None:
         # Queue only; never wait for playout, or a TOOL_CALL right behind an
@@ -189,11 +221,14 @@ async def entrypoint(ctx: JobContext) -> None:
         model=os.environ.get("JANUS_LLM_MODEL", "gemini-3.6-flash"),
         thinking_budget=int(thinking) if thinking not in (None, "") else None,
     )
-    runtime = setup(config=fdb_v3_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 105_000)), provider=provider)
+    frames = FrameStore()
+    if MODE == "demo":
+        config = demo_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 0))
+    else:
+        config = fdb_v3_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 105_000))
+    runtime = setup(config=config, provider=provider, blob_resolver=frames.get)
     meta: dict = {"seed": 0}
-    log_dir = os.environ.get("JANUS_DECISION_LOG_DIR")
     if log_dir:
-        os.makedirs(log_dir, exist_ok=True)
         meta["log_path"] = os.path.join(log_dir, f"{room_name}.jsonl")
 
     run_task = asyncio.create_task(runtime.run_scenario(events, actions, meta=meta))
@@ -240,7 +275,28 @@ async def entrypoint(ctx: JobContext) -> None:
             await asyncio.wait_for(run_task, timeout=5)
 
     ctx.add_shutdown_callback(_shutdown)
+
+    if MODE == "demo":
+        frame_interval = float(os.environ.get("JANUS_FRAME_INTERVAL_S", "1.0"))
+        pumped: set[str] = set()
+
+        def _watch_video(track, publication, participant) -> None:
+            if track.kind != rtc.TrackKind.KIND_VIDEO or track.sid in pumped:
+                return
+            pumped.add(track.sid)
+            logger.info("camera track from %s", participant.identity)
+            _spawn(pump_video_track(track, frames, bridge.on_video_frame, interval_s=frame_interval))
+
+        ctx.room.on("track_subscribed", _watch_video)
+
     await session.start(room=ctx.room, agent=Agent(instructions=""))
+
+    if MODE == "demo":
+        # A camera already published before the worker joined.
+        for participant in ctx.room.remote_participants.values():
+            for publication in participant.track_publications.values():
+                if publication.track is not None:
+                    _watch_video(publication.track, publication, participant)
 
 
 if __name__ == "__main__":

@@ -8,3 +8,5 @@ __pycache__/
 *.egg-info/
 run_output/
 docs-personal/
+.fdb_cache/
+results/

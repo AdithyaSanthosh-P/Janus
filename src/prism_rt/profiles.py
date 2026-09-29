@@ -123,6 +123,52 @@ def fdb_v3_config(**overrides) -> Config:
     return dataclasses.replace(base, **overrides) if overrides else base
 
 
+def demo_config(**overrides) -> Config:
+    """The device-care extension's live-conversation profile.
+
+    Same kernel and the same conversation mechanics as `fdb_v3_config`
+    (action plans, split-turn merge, honest replies, speculative
+    interpretation, echo ACK), with the differences a real conversation needs:
+
+    - `vision_enabled`: the camera frame is analysed when a question about it
+      opens (kernel/perception.py); the Gemini vision call reads the LED colour.
+    - Tool mutability is declared by the toolset's manifest, so none of the
+      benchmark's undeclared-mutability exemptions apply: a booking still needs
+      the user's explicit intent (CommitGate G4) and waits out the settle
+      barrier, so "make it Friday instead" cancels it before anything is booked.
+    - `fill_unstated_required_enabled` is off: a booking with no date or slot
+      is *asked about*, not assumed -- a real user can answer.
+    - No whole-session watchdog (a conversation, not a scenario).
+    """
+    base = dataclasses.replace(
+        DEFAULT_CONFIG,
+        vision_enabled=True,
+        settle_barrier_enabled=True,
+        settle_ms=1000,
+        incomplete_turn_settle_enabled=True,
+        settle_ms_incomplete=2500,
+        settle_reads_enabled=False,
+        max_read_retries=0,
+        max_write_retries=0,
+        multi_action_enabled=True,
+        normalize_spoken_ids=True,
+        strict_value_rules_enabled=True,
+        never_silent_unclear_enabled=True,
+        unclear_reask_delay_ms=2000,
+        turn_stall_salvage_ms=15_000,
+        clarify_reextract_enabled=True,
+        speechlint_enabled=True,
+        speculative_interpretation_enabled=True,
+        echo_ack_enabled=True,
+        action_plans_enabled=True,
+        fill_unstated_required_enabled=False,
+        conversational_replies_enabled=True,
+        merge_split_turns_enabled=True,
+        watchdog_timeout_ms=0,
+    )
+    return dataclasses.replace(base, **overrides) if overrides else base
+
+
 _TRUE_WORDS = {"true", "1", "yes", "on"}
 _FALSE_WORDS = {"false", "0", "no", "off"}
 

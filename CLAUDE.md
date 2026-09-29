@@ -61,7 +61,7 @@ Python project (`pyproject.toml`, deps: pydantic, PyYAML, pytest, pytest-asyncio
 
 ```bash
 source .venv/bin/activate                     # venv already has all deps installed
-python -m pytest tests/ -v                    # full suite (359 tests as of 2026-09-27)
+python -m pytest tests/ -v                    # full suite (418 tests as of 2026-09-29)
 python -m pytest tests/test_v3.py -v           # single version's scenario tests
 PYTHONPATH=src:. python demo/run_v1_demo.py    # interactive demo with real spoken output (scripted)
 PYTHONPATH=src:. python demo/run_v1_live_demo.py  # same demo against the real Gemini API (GEMINI_API_KEY in .env)
@@ -73,6 +73,9 @@ FDB-v3 voice path (runs only inside the `janus-fdb-v3:speech` Docker image, whic
 ```bash
 docker build -f docker/fdb_v3/Dockerfile -t janus-fdb-v3:speech .          # the voice/benchmark image
 scripts/fdb_v3/dev_livekit_run.sh travel_01 [more ids…] | --all            # FDB's own client + evaluators against the Janus worker
+./reproduce.sh [--ids "travel_01 …"] [--no-judge]                          # the one-command reproduction (repo root; builds the image, fetches FDB, runs + scores; results/<ts>/)
+PYTHONPATH=src:. python demo/run_device_care_demo.py                       # the extension (device care), live Gemini, text + image
+JANUS_MODE=demo python -m prism_rt.voice.agent start                       # the extension over LiveKit voice + camera (Playground client)
 PYTHONPATH=src:. python scripts/fdb_v3/run_text_replay.py --profile fdb --model gemini-3.5-flash-lite   # fast text-only accuracy loop (T3), no LiveKit
 ```
 

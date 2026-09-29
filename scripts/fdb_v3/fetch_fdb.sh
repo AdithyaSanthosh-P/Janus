@@ -58,7 +58,12 @@ else
     echo "sha256 verified: $ACTUAL_SHA256"
 
     echo "Extracting into $REPO_DIR/v3/ ..."
-    unzip -q -o "$ZIP_PATH" -d "$REPO_DIR/v3/"
+    if command -v unzip >/dev/null 2>&1; then
+        unzip -q -o "$ZIP_PATH" -d "$REPO_DIR/v3/"
+    else
+        python3 -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$ZIP_PATH" "$REPO_DIR/v3/"
+    fi
+    [ -d "$DATA_DIR" ] || { echo "extraction did not produce $DATA_DIR" >&2; exit 1; }
 fi
 
 echo ""

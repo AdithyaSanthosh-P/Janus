@@ -257,6 +257,24 @@ def build_prompt(view: dict) -> str:
             "\"bottom_half_color\", \"description\": \"the color of the bottom "
             "half\"}].\n"
         )
+        if view.get("camera_available"):
+            visual_block += (
+                "\nA live camera frame of what the user is showing is available right now. "
+                "When the user asks about a device, light, screen or object they can show, "
+                "and a tool parameter's value is something VISIBLE that they did not say "
+                "aloud (a light's colour, which light, a code on a display), do not ask them "
+                "for it: set visual_reference to \"at_utterance\" and name a visual_candidate "
+                "after each such parameter exactly. Anything they did say aloud stays in "
+                "slot_deltas / the action's args.\n"
+            )
+    commit_block = ""
+    if view.get("commit_intent_guidance"):
+        commit_block = (
+            "\ncommit_intent: set true when the user is telling you to DO something that "
+            "changes the world (book, order, cancel, open a ticket), and keep it true when "
+            "they then change a detail of that same request (\"no wait, make it Friday\"). "
+            "Set false for questions, look-ups and exploring options.\n"
+        )
     # Day 2 WP2 (docs/fdb_v3_day2_plan.md): found live (gemini-3.5-flash-
     # lite, a real 3-action FDB recording) that the Interpreter only ever
     # populates `intent`/`slot_deltas` for the *first* action a turn
@@ -384,6 +402,7 @@ def build_prompt(view: dict) -> str:
         f"pending_clarification: {view.get('pending_clarification')}\n"
         f"{tools_block}"
         f"{visual_block}"
+        f"{commit_block}"
         f"{multi_action_block}"
         f"{value_rules_block}"
         f"{action_plans_block}"

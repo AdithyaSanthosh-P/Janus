@@ -56,6 +56,12 @@ class MockToolRegistry:
             error = {"code": "transient", "message": "scripted transient failure"}
         status = "error" if error else "ok"
         response = cfg.get("response")
+        # `handler(args) -> response`: a live-use stand-in for a stateful mock
+        # service (demo/run_device_care_demo.py), evaluated when the call is
+        # emitted -- i.e. when a real write would actually take effect.
+        handler = cfg.get("handler")
+        if handler is not None and error is None:
+            response = handler(args)
         self._scheduled[call_id] = (due_us, status, response, error)
 
     def on_cancel(self, call_id: str) -> None:

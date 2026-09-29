@@ -87,6 +87,17 @@ RUN pip install --no-cache-dir --timeout 120 --retries 10 \
 # dependencies of nemo_toolkit/livekit-agents themselves). PYTHONPATH
 # below makes `prism_rt` importable directly from source, the same way
 # `PYTHONPATH=src:.` works for local development (see CLAUDE.md).
+#
+# Model weights are baked in at pinned revisions (Whisper, Kokoro, and FDB's
+# own Parakeet scoring ASR), so the worker's 300 s prewarm and the benchmark
+# never wait on a download. Only speech.py (the pins) and the prefetch script
+# are copied first, so ordinary code changes below never re-download ~2.5 GB.
+ENV HF_HOME=/root/.cache/huggingface
+COPY src/prism_rt/voice/speech.py /tmp/janus_speech.py
+COPY scripts/fdb_v3/prefetch_models.py /tmp/prefetch_models.py
+RUN JANUS_SPEECH_PY=/tmp/janus_speech.py python /tmp/prefetch_models.py \
+    && rm /tmp/janus_speech.py /tmp/prefetch_models.py
+
 COPY pyproject.toml /janus/pyproject.toml
 COPY src /janus/src
 COPY config /janus/config
@@ -94,7 +105,9 @@ COPY scripts /janus/scripts
 
 ENV PYTHONPATH=/janus/src:/janus
 
-# FDB is cloned/downloaded at container start, not baked into the
-# image -- see scripts/fdb_v3/fetch_fdb.sh (verifies the pinned commit
-# and the data zip's sha256 before anything runs against it).
+# FDB is cloned/downloaded at run time, not baked into the image -- see
+# scripts/fdb_v3/fetch_fdb.sh (verifies the pinned commit and the data zip's
+# sha256 before anything runs against it). reproduce.sh at the repo root
+# drives everything; with no arguments this image opens a shell, as before.
+WORKDIR /janus
 ENTRYPOINT ["/bin/bash"]

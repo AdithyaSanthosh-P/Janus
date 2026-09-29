@@ -1,0 +1,24 @@
+# Native (no-Docker) fallback for ./reproduce.sh. Mirrors the pins in
+# docker/fdb_v3/Dockerfile -- keep the two in step. Python 3.11, Linux, NVIDIA
+# GPU (driver >= 580 for the CUDA 13 torch wheels nemo pulls in), ffmpeg on PATH.
+livekit-agents[openai,google,xai]==1.8.3
+livekit-plugins-ultravox==1.8.3
+livekit-plugins-silero==1.8.3
+livekit-plugins-openai==1.8.3
+livekit[crypto]==1.1.18
+nemo_toolkit[asr]==3.0.0
+openai
+pydub
+ffmpeg-python
+numpy
+python-dotenv
+gdown
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+kokoro==0.9.4
+misaki[en]==0.9.4
+spacy==3.8.16
+soundfile==0.14.0
+pydantic
+PyYAML
+huggingface_hub

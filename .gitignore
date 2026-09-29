@@ -11,3 +11,4 @@ tests/scenarios/fixtures/*.png
 .env
 .fdb_cache/
 docs-personal/
+results/
