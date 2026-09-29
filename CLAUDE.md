@@ -61,7 +61,7 @@ Python project (`pyproject.toml`, deps: pydantic, PyYAML, pytest, pytest-asyncio
 
 ```bash
 source .venv/bin/activate                     # venv already has all deps installed
-python -m pytest tests/ -v                    # full suite (418 tests as of 2026-09-29)
+python -m pytest tests/ -v                    # full suite (422 tests as of 2026-09-29)
 python -m pytest tests/test_v3.py -v           # single version's scenario tests
 PYTHONPATH=src:. python demo/run_v1_demo.py    # interactive demo with real spoken output (scripted)
 PYTHONPATH=src:. python demo/run_v1_live_demo.py  # same demo against the real Gemini API (GEMINI_API_KEY in .env)
@@ -93,9 +93,10 @@ Tests are deterministic by construction: `SteppedClock` (no real sleeps), `Scrip
 - Complete and freeze one version before starting the next; do not expand scope into anything marked DEFERRED or CUT in `currentStatus.md` without being told to.
 - Update `currentStatus.md` after meaningful work (new feature, bug fix, version freeze, blocker, architectural decision) — see the update rule at the bottom of that file for the exact fields to fill in.
 
-## Documentation policy (standing documentation policy, 2026-09-27)
+## Documentation policy (2026-09-27)
 
 - **Project instructions, decisions and state go only into `currentStatus.md` or this file** — not into new files under `docs/`, and not into the assistant's private memory.
 - **Reports, analyses and plans go only into `docs-personal/private-docs/`** (the whole `docs-personal/` folder is gitignored and never committed). The current working plan for 27–30 Sep lives there (`win_plan_2026-09-27.md`); read it before starting work.
 - Committed files (code, docs, README, deck, `currentStatus.md`, this file) must not reference or compare against any other team's repository or evaluation kit. Material under `docs-personal/` stays local.
+- Committed files record decisions and results in neutral, professional wording: no verbatim quotes of messages, no "asked/said" attributions.
 - Implementation runs **one session at a time** (project decision, 2026-09-27) — no parallel sessions or parallel sub-agents.

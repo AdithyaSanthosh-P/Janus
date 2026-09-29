@@ -6,13 +6,21 @@
 
 Samsung PRISM Theme 05: **Interruptible Real-Time Agents** — a full-duplex conversational agent. **Current scoring** (`docs/Theme05_Participant_Guide.md`): Round 1 = 0.6 × FDB-v3 re-run by the organizers with our one-command script over LiveKit (non-reproducible → 0) + 0.2 × one use-case extension (end to end, shown in the video) + 0.2 × docs/architecture/video; ties break on strict pass rate; Round 2 = live jury demo. Deadline: **30 Sep 2026, 23:59** (extended from 25 Sep).
 
-### Project decisions and policies (2026-09-27)
+### Project decisions and policies (2026-09-27 to 2026-09-29)
 - **Documentation policy:** project instructions and decisions → only this file or `CLAUDE.md`; reports, analyses and plans → only `docs-personal/private-docs/` (gitignored, never committed). Committed files never reference or compare against another team's repo or kit.
 - **Working plan for 27–30 Sep:** `docs-personal/private-docs/win_plan_2026-09-27.md` (local). Sessions S0–S6, one at a time, in order: S0 docs/prep → S1 LiveKit host → S2 quick-win accuracy/latency pack → S3 action-level plans + late binding (flag `action_plans_enabled`, kill rule 29 Sep 15:00) → S4 extension → S5 one-command reproduction → S6 README/deck/video.
 - **Extension (20%):** camera-grounded device troubleshooting (audio-first; camera layered on; mock "device care" tools; LiveKit playground client).
 - **Credentials:** LiveKit Cloud (`LIVEKIT_URL/API_KEY/API_SECRET`) and `OPENAI_API_KEY` (FDB judge) are being added to `.env` on 27 Sep. Until then, local `livekit-server --dev` and exact-match scoring.
 - **One implementation session at a time** — no parallel sessions or sub-agents.
 - **Architecture:** the action-level interpretation / direct plan compile / late-binding change is built behind a flag; the flag defaults off, existing suite must stay byte-identical with it off.
+- **Scoring runs and keys (28–29 Sep):** the OpenAI key stays on the development machine; judge scoring runs there on saved results. A cloud VM, if used, receives only throwaway Gemini and LiveKit keys, revoked after 30 Sep; its results are copied back and judged locally.
+- **Cloud GPU:** candidate RACE Engineering RTX 4090 (24 GB, 64 GB RAM, root VM, Docker, ₹50/hour). Driver ≥ 580 is verified during a one-hour trial; otherwise upgrade the driver or build a CUDA 12 image.
+- **S3 scope:** conditions excluded (two benchmark scenarios expect both branches to run); unstated numeric/boolean parameters are assumed and spoken (FDB profile only); the kill rule is scored with the gpt-4o judge — passed (+6.0).
+- **Model:** `gemini-3.6-flash`, thinking off, is the voice agent's default.
+- **Live demos:** hosted through LiveKit room tokens (24 h); one session at a time; the agent runs on the development GPU and must stay up.
+- **Reviews:** findings are reproduced against the code before any change and logged in `reviews/index.md`. Ultrareview 1 of 3 used (`review-base-pre-s3`); a second is planned after the reproduction script is verified.
+- **Release actions:** the final tag, any push and any force-push happen only on explicit confirmation.
+- **Documentation style:** committed files record decisions and results neutrally, without quoting or attributing individual messages.
 
 Architecture: single-writer kernel processing timestamped events in deterministic batches, with async LLM workers, versioned fact store, read-set validation, and same-step cancellation.
 
