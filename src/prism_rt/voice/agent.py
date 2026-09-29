@@ -30,6 +30,8 @@ Environment:
   JANUS_IDLE_PROCESSES    prewarmed job processes, each with its own models (default 1)
   JANUS_JOB_EXECUTOR      "process" (default) or "thread" (jobs share one model copy;
                           saves VRAM, but was flaky over long runs -- see _SHARED)
+  JANUS_WHISPER_HOTWORDS  1 = prime the recognizer with the tool vocabulary (off by default;
+                          not yet A/B-tested on the benchmark)
   JANUS_WHISPER_COMPUTE   CTranslate2 compute type on GPU (default float16; the dev
                           script uses int8_float16 to fit an 8 GB GPU)
   JANUS_DECISION_LOG_DIR  optional: one decision-log JSONL per room
@@ -101,6 +103,21 @@ def _int_env(name: str, default: int) -> int:
 class Toolset:
     manifest: list[dict]
     make_executor: Callable[[str], Callable[[str, dict], Awaitable[dict]]]
+
+
+def vocabulary_hotwords(manifest: list[dict]) -> str:
+    """Words the speech recognizer should expect, built from the tool list
+    itself (tool and parameter names, e.g. "search flights", "bedrooms",
+    "exchange rate") -- nothing from any benchmark recording. Found live:
+    "search flights to Chennai" was heard as "so as we fly to Chennai"."""
+    words: list[str] = []
+    for tool in manifest:
+        names = [tool["name"], *((tool.get("params_schema") or {}).get("properties") or {})]
+        for name in names:
+            for word in name.split("_"):
+                if len(word) > 2 and word not in words:
+                    words.append(word)
+    return " ".join(words)
 
 
 def fdb_toolset() -> Toolset:
@@ -184,7 +201,13 @@ async def entrypoint(ctx: JobContext) -> None:
 
     session = AgentSession(
         vad=userdata["vad"],
-        stt=stt.StreamAdapter(stt=FasterWhisperSTT(userdata["whisper"]), vad=userdata["vad"]),
+        stt=stt.StreamAdapter(
+            stt=FasterWhisperSTT(
+                userdata["whisper"],
+                hotwords=vocabulary_hotwords(toolset.manifest) if os.environ.get("JANUS_WHISPER_HOTWORDS") == "1" else None,
+            ),
+            vad=userdata["vad"],
+        ),
         tts=KokoroTTS(userdata["kokoro"]),
         min_interruption_words=_int_env("JANUS_MIN_INTERRUPTION_WORDS", 1 if MODE == "demo" else 2),
     )

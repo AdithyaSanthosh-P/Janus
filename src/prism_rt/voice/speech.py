@@ -79,7 +79,8 @@ def load_whisper(device: str | None = None):
     return model
 
 
-def _transcribe(model, audio: np.ndarray, *, language: str = "en", beam_size: int = 5) -> str:
+def _transcribe(model, audio: np.ndarray, *, language: str = "en", beam_size: int = 5, hotwords: str | None = None) -> str:
+    extra = {"hotwords": hotwords} if hotwords else {}
     segments, _info = model.transcribe(
         audio,
         language=language,
@@ -99,6 +100,7 @@ def _transcribe(model, audio: np.ndarray, *, language: str = "en", beam_size: in
         # short, already-VAD-selected clip and can slice a hesitant
         # utterance down to nothing. False by default now.
         vad_filter=False,
+        **extra,
         without_timestamps=True,
     )
     # Whisper invents text for noise; a segment it itself rates as probably
@@ -126,11 +128,12 @@ class FasterWhisperSTT(stt.STT):
     speech segment to `_recognize_impl` and emits it as one final transcript,
     which is exactly the append-only chunk Janus's turn model expects."""
 
-    def __init__(self, model, *, language: str = "en", beam_size: int = 5) -> None:
+    def __init__(self, model, *, language: str = "en", beam_size: int = 5, hotwords: str | None = None) -> None:
         super().__init__(capabilities=stt.STTCapabilities(streaming=False, interim_results=False))
         self._model = model
         self._language = language
         self._beam_size = beam_size
+        self._hotwords = hotwords
 
     async def _recognize_impl(
         self,
@@ -155,7 +158,8 @@ class FasterWhisperSTT(stt.STT):
         for attempt in (1, 2):
             try:
                 text = await asyncio.to_thread(
-                    _locked_transcribe, self._model, audio, language=self._language, beam_size=self._beam_size
+                    _locked_transcribe, self._model, audio, language=self._language, beam_size=self._beam_size,
+                    hotwords=self._hotwords,
                 )
                 break
             except Exception:
