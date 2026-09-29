@@ -181,7 +181,7 @@ def _abandon_goal(txn: StoreTxn, goal_id: str, now_us: int, step_no: int, *, eve
     txn.store.goals.update(goal_id, status=GoalStatus.ABANDONED, task_state=TaskState.RESPONDING)
     txn.facts.set(
         f"compose.{goal_id}.text",
-        "Okay, cancelled.",
+        replies.abort_text(txn.store, goal_id) if txn.store.config.conversational_replies_enabled else "Okay, cancelled.",
         FactStatus.COMMITTED,
         Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
         rule="interpret_apply.abort_final",

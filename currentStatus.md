@@ -575,6 +575,10 @@ Found from a live voice session's decision log: the agent asked for a missing va
 - **Re-extracted values were never type-coerced.** The EXTRACT reducer wrote the raw text ("two") into an integer parameter, validation failed, and the same slot was clarified again. `action_plans.coerce_slot_value` now coerces to the parameter that FACT-binds the key; `_parse_number` also reads small number words ("two", "three bhk").
 - **A clarify question was de-duplicated forever.** Under `conversational_replies_enabled`, each new (already-interpreted, via the TRIAGE hold) user turn while the same value is still missing gets `CLARIFY_REPEAT_TEMPLATE` once (`clarify.<gid>.asked_turn`). Flag off: unchanged.
 - **"Make it X" after a finished task was read as a status question.** With no active goal, the INTERPRET view now carries `last_task` (the last finished compiled goal's actions; `session.last_finished_goal` in the read set) and the prompt says a changed value is a `slot_update`, which `_redo_last_goal` re-runs. **Not yet verified live.**
+- **Second live session, same day.** Re-asking worked. New findings, fixed (`test_repeat_booking_cancel_and_status_say_what_actually_ran`), 429/429:
+  - A price the booking tool can't take ("make it 300 again") was put into `passenger_name`. The Interpreter prompt now says a value only goes into a parameter whose meaning it matches, and a constraint no parameter can express goes in `unsupported`.
+  - Replies now say what they refer to. A blocked duplicate write names the earlier write (`replies.duplicate_write_text`). A cancel says what already ran (`replies.abort_text`). A status question after a request dropped before anything ran reports the last request that did run.
+  - gpt-4.1 15-recording subset, judge-scored: 8/15 (was 7/15 before these changes), so no regression.
 
 ### Failing / Broken
 **As of 2026-09-28:** Janus's own suite — nothing failing (**359/359**, re-run 2026-09-28). Against FDB-v3, nothing known-broken, but three things are unverified:

@@ -154,6 +154,12 @@ def _action_plans_block(view: dict) -> str:
             "unsupported is null. act stays one of the listed act values. A "
             "change to the previous request (\"no, make it X\", \"I meant Y\") "
             "is never unsupported -- it is a slot_update with slot_deltas.\n"
+            "- A value only ever goes into a parameter whose meaning it matches: "
+            "never put an amount, count or date into a name or ID parameter. If "
+            "the user asks for something no parameter can express (e.g. a "
+            "colour when no tool takes a colour), do not put it anywhere -- "
+            "describe it in unsupported (e.g. \"choose by colour\"), and still "
+            "return the rest of the request as usual.\n"
             "- If the user only asks how an earlier request went (\"did that go "
             "through?\"), set status_question to true and leave actions empty.\n"
         )

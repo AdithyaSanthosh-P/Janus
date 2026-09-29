@@ -52,12 +52,32 @@ def last_finished_goal(store):
     return store.goals.get(fact.value)
 
 
+def last_goal_that_ran(store, exclude: str | None = None):
+    """The most recent goal (other than `exclude`) with at least one call
+    that actually ran, or None."""
+    for goal in reversed(store.goals.all()):
+        if goal.goal_id != exclude and done_summary(store, goal.goal_id):
+            return goal
+    return None
+
+
 def status_text(store) -> str:
     """Answer "did that go through?" about the most recent finished goal."""
     last = last_finished_goal(store)
     if last is None:
         return "I haven't done anything yet — what would you like me to do?"
     done = done_summary(store, last.goal_id)
+    if not done and last.status == GoalStatus.ABANDONED:
+        # Found live, 29 Sep: a request dropped before anything ran hid the
+        # booking just before it ("was the flight booked?" -> "nothing was
+        # done"). Say what the last request that did run achieved.
+        earlier = last_goal_that_ran(store, exclude=last.goal_id)
+        if earlier is not None:
+            return (
+                "Your last request was dropped before anything ran. Before that, "
+                + done_summary(store, earlier.goal_id)
+                + " That still stands."
+            )
     if last.status == GoalStatus.ABANDONED:
         tail = " It didn't finish, so nothing else was done." if done else " It didn't finish, so nothing was done."
     else:
@@ -81,3 +101,23 @@ def set_honest_reply(txn, turn_id: str, text: str, now_us: int, step_no: int, *,
         Provenance(source="system", event_id=event_id, turn_id=turn_id, step_no=step_no, ts_us=now_us),
         rule="replies.honest_reply",
     )
+
+
+def abort_text(store, goal_id: str) -> str:
+    """The FINAL for a cancelled request, saying what (if anything) already
+    ran -- found live, 29 Sep: a bare "Okay, cancelled." after a booking
+    had gone through read as if the booking itself was undone."""
+    done = done_summary(store, goal_id)
+    if done:
+        return f"Okay, I've stopped. {done} That part already went through."
+    earlier = last_goal_that_ran(store, exclude=goal_id)
+    if earlier is not None:
+        return "Okay, I've dropped that request. Nothing new was done — your earlier request still stands."
+    return "Okay, I've dropped that request. Nothing was done."
+
+
+def duplicate_write_text(call) -> str:
+    """G5 blocked an identical write whose effect is confirmed: say which one."""
+    values = ", ".join(str(v) for v in call.args.values())
+    what = f"{_human(call.tool)} ({values})" if values else _human(call.tool)
+    return f"I've already done that — {what} went through earlier, so I won't repeat it."

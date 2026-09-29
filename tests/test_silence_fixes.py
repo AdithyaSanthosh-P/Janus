@@ -120,3 +120,38 @@ def test_finished_task_is_shown_to_the_interpreter_and_a_change_reruns_it():
     calls = [(a.body.tool_name, dict(a.body.arguments)) for a in of_type(actions, ActionType.TOOL_CALL)]
     assert calls == [("search_apartments", {"city": "Pune", "bedrooms": 3})]
     assert_clean(h)
+
+
+BOOK = {"name": "book_flight", "parameters": {"type": "object", "properties": {
+    "passenger_name": {"type": "string"}}, "required": ["passenger_name"]}}
+BOOK_ANA = {"act": "new_goal", "intent": "book_flight", "slot_deltas": [], "actions": [
+    {"tool": "book_flight", "args": {"passenger_name": "Ana"}}]}
+
+
+def test_repeat_booking_cancel_and_status_say_what_actually_ran():
+    """The 29 Sep session: a repeated booking got "That's already been taken
+    care of.", cancelling it got "Okay, cancelled.", and "was the flight
+    booked?" was answered "nothing was done" although the first booking
+    had gone through."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "was it booked", {"act": "unclear", "slot_deltas": [], "status_question": True})
+    provider.register("interpret", "cancel it", {"act": "abort", "slot_deltas": []})
+    provider.register("interpret", "book Ana", BOOK_ANA)
+    provider.register("compose", "a0", {"text": "Booked.", "claims": []})
+    h = SimHarness(config(), seed=1, provider=provider,
+                   tools={"book_flight": {"latency_ms": 200, "response": {"booking_ref": "B1"}}}, worker_latency_us=FAST)
+    h.send(0, [manifest_event([BOOK])])
+    h.send(100_000, [chunk_event("book Ana on a flight")])
+    send(h, 150_000, [eot_event()])
+    assert of_type(drain(h, 3_000_000), ActionType.FINAL)
+
+    def turn(ts, text) -> list[str]:
+        h.send(ts, [chunk_event(text)])
+        actions = send(h, ts + 50_000, [eot_event()]) + drain(h, ts + 2_000_000, stop_on_final=False)
+        return [a.body.text for a in actions if a.action_type in (ActionType.SPEAK, ActionType.FINAL)]
+
+    assert "I've already done that — book flight (Ana) went through earlier, so I won't repeat it." in turn(3_100_000, "book Ana again")
+    assert turn(5_200_000, "no cancel it") == ["Okay, I've dropped that request. Nothing new was done — your earlier request still stands."]
+    assert turn(7_300_000, "was it booked") == [
+        "Your last request was dropped before anything ran. Before that, I ran book flight (Ana). That still stands."]
+    assert_clean(h)

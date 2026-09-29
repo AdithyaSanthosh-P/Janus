@@ -36,7 +36,7 @@ from config.templates import (
     UNCLEAR_NO_GOAL,
 )
 from prism_rt.kernel.commit import CommitGate
-from prism_rt.kernel.replies import HONEST_REPLY_KEY
+from prism_rt.kernel.replies import HONEST_REPLY_KEY, duplicate_write_text
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, user_content_pending
 from prism_rt.model.actions import FinalBody, IntendedAction, SpeakBody
 from prism_rt.model.types import (
@@ -404,11 +404,10 @@ class FastResponder:
             # claim D3 found. CS-06's spirit: a claim must be supported by
             # ledger state, not just "some earlier attempt exists".
             blocking_effect = store.effect_ledger.by_fingerprint(call.fingerprint)
-            text = (
-                INFORM_DUPLICATE_WRITE
-                if blocking_effect is not None and blocking_effect.status == EffectStatus.CONFIRMED
-                else INFORM_UNKNOWN_WRITE_OUTCOME
-            )
+            confirmed = blocking_effect is not None and blocking_effect.status == EffectStatus.CONFIRMED
+            text = INFORM_DUPLICATE_WRITE if confirmed else INFORM_UNKNOWN_WRITE_OUTCOME
+            if confirmed and store.config.conversational_replies_enabled:
+                text = duplicate_write_text(call)
             actions.append(
                 IntendedAction(
                     action_type=ActionType.SPEAK,
