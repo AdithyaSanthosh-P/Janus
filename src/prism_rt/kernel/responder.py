@@ -129,6 +129,7 @@ class FastResponder:
             actions.extend(self._ack_compiled_plan(store, gid, now_us, step_no))
         if goal.status == GoalStatus.ACTIVE and goal.task_state == TaskState.EXECUTING:
             actions.extend(self._intended_for_settling_write(store, gid, now_us, step_no, skip_call_ids))
+            actions.extend(self._confirm_unconfirmed_write(store, gid, now_us, step_no, skip_call_ids))
         if goal.task_state == TaskState.RESPONDING:
             actions.extend(self._final(store, goal, now_us, step_no))
 
@@ -518,6 +519,37 @@ class FastResponder:
                 rule_id="responder.unclear_no_goal",
             )
         ]
+
+    def _confirm_unconfirmed_write(self, store, goal_id: str, now_us: int, step_no: int, skip_call_ids) -> list[IntendedAction]:
+        """Config.conversational_replies_enabled: a write held only because
+        the user never confirmed it (CommitGate G4) used to sit PROPOSED in
+        silence until the stall salvage gave up. Ask once, naming the call;
+        a CONFIRM answer supplies the commit intent (interpret_apply)."""
+        if not store.config.conversational_replies_enabled:
+            return []
+        for call in store.call_ledger.proposed():
+            if call.goal_id != goal_id or call.kind != StepKind.WRITE or call.call_id in skip_call_ids:
+                continue
+            decision = self._commit_gate.evaluate(call, store, now_us)
+            if decision.allowed or decision.rule_id != "G4":
+                continue
+            asked = store.facts.get(f"confirm.{call.call_id}.asked")
+            if asked is not None and asked.status != FactStatus.RETRACTED:
+                return []
+            prov = Provenance(source="system", step_no=step_no, ts_us=now_us)
+            store.facts.set(f"confirm.{call.call_id}.asked", True, FactStatus.COMMITTED, prov, rule="responder.confirm_write")
+            store.facts.set(f"goal.{goal_id}.awaiting_confirmation", call.call_id, FactStatus.COMMITTED, prov, rule="responder.confirm_write")
+            values = ", ".join(str(v) for v in call.args.values())
+            text = f"Shall I go ahead and {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
+            return [
+                IntendedAction(
+                    action_type=ActionType.SPEAK,
+                    body=SpeakBody(text=text, kind="clarify"),
+                    read_set=EMPTY_READ_SET,
+                    rule_id="responder.confirm_write",
+                )
+            ]
+        return []
 
     def _honest_reply(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
         """Config.conversational_replies_enabled (kernel/replies.py): the

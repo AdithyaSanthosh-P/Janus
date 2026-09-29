@@ -571,7 +571,9 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.deny",
             )
-        elif interp.commit_intent:
+        elif interp.commit_intent or (interp.act == InterpretAct.CONFIRM and _awaiting_confirmation(txn.store, gid)):
+            # A "yes" to responder._confirm_unconfirmed_write's question counts
+            # as the commit intent the held write was waiting for.
             txn.facts.set(
                 f"goal.{gid}.commit_intent",
                 True,
@@ -741,3 +743,8 @@ def _redo_last_goal(txn: StoreTxn, interp: TurnInterpretation) -> TurnInterpreta
     return dataclasses.replace(
         interp, act=InterpretAct.NEW_GOAL, intent=actions[0].tool, actions=tuple(actions), slot_deltas=(), unsupported=None
     )
+
+
+def _awaiting_confirmation(store, goal_id: str) -> bool:
+    fact = store.facts.get(f"goal.{goal_id}.awaiting_confirmation")
+    return _active(fact) and bool(fact.value)

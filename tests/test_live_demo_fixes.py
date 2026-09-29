@@ -280,3 +280,38 @@ def test_zero_watchdog_budget_means_no_session_timer():
         return await runtime.run_scenario(events, out, meta={"seed": 1})
 
     assert asyncio.run(run()).watchdog_fired is False
+
+
+BOOK_DECLARED = {"name": "book_technician", "mutability": "state_changing", "parameters": {"type": "object", "properties": {
+    "slot": {"type": "string"}}, "required": ["slot"]}}
+
+
+def _unconfirmed_booking(cfg):
+    provider = ScriptedProvider()
+    provider.register("interpret", "yes go ahead", {"act": "confirm", "slot_deltas": []})
+    provider.register("interpret", "technician", {"act": "new_goal", "intent": "book_technician", "slot_deltas": [],
+                                                  "commit_intent": False,
+                                                  "actions": [{"tool": "book_technician", "args": {"slot": "Friday 10am"}}]})
+    provider.register("compose", "a0", {"text": "Booked for Friday 10am.", "claims": []})
+    h = harness(provider, cfg, {"book_technician": {"latency_ms": 200, "response": {"booking_id": "T1"}}})
+    h.send(0, [manifest_event([BOOK_DECLARED])])
+    h.send(100_000, [chunk_event("maybe a technician on Friday 10am")])
+    actions = send(h, 150_000, [eot_event()]) + drain(h, 2_500_000, stop_on_final=False)
+    return h, actions
+
+
+def test_unconfirmed_write_is_asked_about_then_runs_on_yes():
+    h, actions = _unconfirmed_booking(config())
+    assert "Shall I go ahead and book technician (Friday 10am)?" in speaks(actions)
+    assert tool_calls(actions) == []
+    h.send(2_600_000, [chunk_event("yes go ahead")])
+    actions = send(h, 2_650_000, [eot_event()]) + drain(h, 6_000_000)
+    assert tool_calls(actions) == [("book_technician", {"slot": "Friday 10am"})]
+    assert [a.body.task_completed for a in actions if a.action_type == ActionType.FINAL] == [True]
+    assert_clean(h)
+
+
+def test_unconfirmed_write_stays_silent_with_the_flag_off():
+    """Control: the pre-fix behaviour -- nothing is said, nothing runs."""
+    _, actions = _unconfirmed_booking(config(conversational_replies_enabled=False))
+    assert not any("Shall I go ahead" in t for t in speaks(actions)) and tool_calls(actions) == []
