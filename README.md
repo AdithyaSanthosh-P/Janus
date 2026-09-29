@@ -32,7 +32,7 @@ Options: `--ids "travel_01 finance_19"` runs a quick smoke test, `--no-judge` sc
 
 Seeds and randomness: the model call uses temperature 0 and the kernel is deterministic given its inputs (replay identity is a tested invariant). FDB's own mock-tool latency jitter is unseeded and a hosted model is not bit-reproducible, so two runs differ slightly. That is recorded in `manifest.json`, not hidden.
 
-**Native fallback (no Docker).** On a Linux box with an NVIDIA GPU, Python 3.11 and ffmpeg: `pip install -r requirements-speech.txt`, then `OUT=$PWD/results/manual bash scripts/fdb_v3/repro_inner.sh` with the environment variables from `.env` exported. `repro_inner.sh` is exactly what runs inside the container.
+**Native fallback (no Docker).** On a Linux box with an NVIDIA GPU and root but no container runtime: `bash scripts/fdb_v3/native_setup.sh` (Python venv, PyTorch for CUDA 12.6, the pinned speech stack, a GPU check), then `scripts/fdb_v3/native_run.sh [--ids "travel_01 finance_19"]`. `native_run.sh` reads the same `.env` and runs exactly the `repro_inner.sh` that runs inside the container; the LLM judge is off unless `--judge` is passed.
 
 ## Architecture
 

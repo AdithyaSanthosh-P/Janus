@@ -1,6 +1,8 @@
 # Native (no-Docker) fallback for ./reproduce.sh. Mirrors the pins in
 # docker/fdb_v3/Dockerfile -- keep the two in step. Python 3.11, Linux, NVIDIA
-# GPU (driver >= 580 for the CUDA 13 torch wheels nemo pulls in), ffmpeg on PATH.
+# GPU, ffmpeg on PATH. Install torch==2.14.0 from the CUDA 12.6 index first (as
+# scripts/fdb_v3/native_setup.sh does) so nemo does not pull the CUDA 13 wheel,
+# which needs driver >= 580.
 livekit-agents[openai,google,xai]==1.8.3
 livekit-plugins-ultravox==1.8.3
 livekit-plugins-silero==1.8.3
