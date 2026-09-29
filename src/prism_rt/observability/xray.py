@@ -67,9 +67,12 @@ class TracedQueue(asyncio.Queue):
         self._fh.write(json.dumps(rec, default=str) + "\n")
         self._fh.flush()
 
-    async def put(self, item: Any) -> None:  # type: ignore[override]
+    def put_nowait(self, item: Any) -> None:  # type: ignore[override]
+        # asyncio.Queue.put() ends in put_nowait(), and the kernel's output
+        # writer (entry.py _QueueWriter) calls put_nowait() directly --
+        # overriding only put() missed every outgoing action (found by review).
         self._write(item)
-        await super().put(item)
+        super().put_nowait(item)
 
 
 def load_jsonl(path: str | Path) -> list[dict[str, Any]]:

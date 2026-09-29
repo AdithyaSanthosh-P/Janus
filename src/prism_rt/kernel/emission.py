@@ -204,6 +204,13 @@ class EmissionGate:
             store.goals.update(goal_id, task_state=TaskState.COMPLETED)
 
         store.facts.retract(f"compose.{goal_id}.text", rule="emission.final_consumed")
+        # Which task finished most recently (kernel/replies.py status answers,
+        # interpret_apply._redo_last_goal) -- created_step is creation order,
+        # wrong after a suspend/resume (found by review).
+        store.facts.set(
+            "session.last_finished_goal", goal_id, FactStatus.COMMITTED,
+            Provenance(source="system", step_no=0, ts_us=now_us), rule="emission.last_finished_goal",
+        )
 
         active_fact = store.facts.get("goal.active")
         if active_fact is not None and active_fact.status != FactStatus.RETRACTED and active_fact.value == goal_id:

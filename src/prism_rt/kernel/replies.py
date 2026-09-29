@@ -44,12 +44,19 @@ def done_summary(store, goal_id: str) -> str:
     return "I ran " + "; ".join(parts) + "." if parts else ""
 
 
+def last_finished_goal(store):
+    """The goal whose FINAL went out most recently, or None."""
+    fact = store.facts.get("session.last_finished_goal")
+    if fact is None or fact.status == FactStatus.RETRACTED or not fact.value:
+        return None
+    return store.goals.get(fact.value)
+
+
 def status_text(store) -> str:
     """Answer "did that go through?" about the most recent finished goal."""
-    goals = [g for g in store.goals.all() if g.status != GoalStatus.ACTIVE]
-    if not goals:
+    last = last_finished_goal(store)
+    if last is None:
         return "I haven't done anything yet — what would you like me to do?"
-    last = max(goals, key=lambda g: g.created_step)
     done = done_summary(store, last.goal_id)
     if last.status == GoalStatus.ABANDONED:
         tail = " It didn't finish, so nothing else was done." if done else " It didn't finish, so nothing was done."

@@ -732,10 +732,9 @@ def _redo_last_goal(txn: StoreTxn, interp: TurnInterpretation) -> TurnInterpreta
     correction maps onto one of its actions."""
     if not _live_followups(txn.store) or not interp.slot_deltas:
         return None
-    finished = [g for g in txn.store.goals.all() if g.status != GoalStatus.ACTIVE]
-    if not finished:
+    last = replies.last_finished_goal(txn.store)
+    if last is None:
         return None
-    last = max(finished, key=lambda g: g.created_step)
     actions = action_plans.redo_actions(txn.store, last.goal_id, interp.slot_deltas)
     if not actions:
         return None

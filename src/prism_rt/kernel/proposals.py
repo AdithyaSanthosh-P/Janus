@@ -123,7 +123,9 @@ def fix_step_kind(step, catalog):
     return dataclasses.replace(step, kind=kind, requires_commit_intent=(kind == StepKind.WRITE))
 
 
-_ACTION_SLOT_KEY = re.compile(r"^a\d+\.\w+$")
+# S3 per-action slot name "a<i>.<param>" -- the one definition; kernel/action_plans.py
+# re-exports it (it imports this module, so the reverse would be a cycle).
+ACTION_SLOT_NAME = re.compile(r"^(a\d+)\.(\w+)$")
 
 
 def _normalize_fact_key(raw_key: str | None) -> str | None:
@@ -150,7 +152,7 @@ def _normalize_fact_key(raw_key: str | None) -> str | None:
     job sees in its `facts` view and may bind by that bare name."""
     if raw_key is None:
         return raw_key
-    if "." in raw_key and not _ACTION_SLOT_KEY.match(raw_key):
+    if "." in raw_key and not ACTION_SLOT_NAME.match(raw_key):
         return raw_key
     return f"slot.$G.{raw_key}"
 

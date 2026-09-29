@@ -31,7 +31,7 @@ import dataclasses
 import re
 
 from prism_rt.canonical import canonicalize_spoken_id, normalize_value, to_canonical_json
-from prism_rt.kernel.proposals import fix_step_kind
+from prism_rt.kernel.proposals import ACTION_SLOT_NAME, fix_step_kind  # noqa: F401 -- re-exported
 from prism_rt.model.types import (
     ActionRef,
     ActionSpec,
@@ -47,7 +47,6 @@ from prism_rt.model.types import (
     TurnInterpretation,
 )
 
-ACTION_SLOT_NAME = re.compile(r"^(a\d+)\.(\w+)$")
 
 # Only these may be assumed when unstated (Config.fill_unstated_required_
 # enabled) -- a count, size, budget or yes/no has a least-restrictive value;
@@ -135,6 +134,10 @@ def valid_bind_fact(store, key: str):
     return fact
 
 
+def bind_failure_key(goal_id: str, step_key: str) -> str:
+    return f"bindfail.{goal_id}.{step_key}"
+
+
 def write_bind_facts(txn, goal_id: str, step_key: str, values: dict, read_set, *, rule: str, now_us: int, step_no: int, event_id: str | None = None) -> None:
     """DERIVED with the upstream grounding as `derivation_read_set`, so the
     invalidation fixpoint retracts them if an upstream result changes.
@@ -148,6 +151,9 @@ def write_bind_facts(txn, goal_id: str, step_key: str, values: dict, read_set, *
         if existing is not None and existing.status != FactStatus.RETRACTED and existing.provenance.derivation_read_set != read_set:
             txn.facts.retract(key, rule=f"{rule}.regrounded")
         txn.facts.set(key, value, FactStatus.DERIVED, provenance, rule=rule)
+    # A bind that landed clears the give-up budget (found by review: the
+    # count otherwise carried over into a later re-bind of the same step).
+    txn.facts.retract(bind_failure_key(goal_id, step_key), rule=f"{rule}.failures_cleared")
 
 
 def tool_props(store, tool: str) -> tuple[dict, list]:

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 
-from prism_rt.kernel.action_plans import bind_key, coerce_to_schema, tool_props, valid_bind_fact, write_bind_facts
+from prism_rt.kernel.action_plans import bind_failure_key, bind_key, coerce_to_schema, tool_props, valid_bind_fact, write_bind_facts
 from prism_rt.kernel.executor import PlanExecutor, _bfs_find_field
 from prism_rt.kernel.interpret_apply import active_goal_id
 from prism_rt.kernel.task import DispatchRequest
@@ -39,8 +39,6 @@ from prism_rt.model.types import BindingKind, CallStatus, FactStatus, GoalStatus
 _PATH_TOKENS = re.compile(r"[.\[\]]")
 
 
-def bind_failure_key(goal_id: str, step_key: str) -> str:
-    return f"bindfail.{goal_id}.{step_key}"
 
 
 def _field_name(path: str | None) -> str | None:
@@ -83,8 +81,10 @@ class BindScheduler:
                 continue
             if any(j.target == step.step_key for j in store.jobs.running_by_kind_goal(JobKind.BIND, gid)):
                 continue
-            failures = store.facts.get(bind_failure_key(gid, step.step_key))
-            if failures is not None and failures.status != FactStatus.RETRACTED and failures.value > store.config.max_interpret_retries:
+            # valid_bind_fact also checks the count's grounding: failures
+            # against a since-superseded upstream result don't count.
+            failures = valid_bind_fact(store, bind_failure_key(gid, step.step_key))
+            if failures is not None and failures.value > store.config.max_interpret_retries:
                 names = ", ".join(p.replace("_", " ") for p in sorted(late))
                 self._executor._fail_goal(store, gid, step, now_us, step_no, reason=f"I couldn't work out the {names} from the earlier results")
                 return requests

@@ -180,6 +180,11 @@ def _coerce_override(key: str, raw: str):
     annotations`), so it can't be used to coerce directly."""
     default = getattr(DEFAULT_CONFIG, key)
     text = raw.strip()
+    if isinstance(default, tuple):
+        # e.g. --set read_only_tools=search_flights,track_order (found by
+        # review: fell through to a plain string, which the manifest code
+        # then iterated character by character).
+        return tuple(part.strip() for part in text.split(",") if part.strip())
     if isinstance(default, bool):
         lowered = text.lower()
         if lowered in _TRUE_WORDS:

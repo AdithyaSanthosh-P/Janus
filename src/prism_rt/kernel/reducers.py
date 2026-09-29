@@ -23,7 +23,7 @@ from prism_rt.kernel.interpret_apply import (
 )
 from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.kernel.action_plans import coerce_to_schema, is_compiled, tool_props, write_bind_facts
-from prism_rt.kernel.binder import bind_failure_key
+from prism_rt.kernel.action_plans import bind_failure_key, valid_bind_fact
 from prism_rt.kernel.proposals import (
     fix_step_kind,
     parse_asr,
@@ -612,9 +612,17 @@ def _record_bind_failure(txn: StoreTxn, job, now_us: int, step_no: int, *, event
     if job.goal_id is None or job.target is None:
         return
     key = bind_failure_key(job.goal_id, job.target)
-    prev = txn.facts.get(key)
-    count = (prev.value if prev is not None and prev.status != FactStatus.RETRACTED else 0) + 1
-    txn.facts.set(key, count, FactStatus.COMMITTED, Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us), rule="reducers.bind_failure")
+    # Grounded in the job's own read set: failures against an upstream
+    # result that has since re-run don't carry over to the new re-bind.
+    prev = valid_bind_fact(txn.store, key)
+    count = (prev.value if prev is not None else 0) + 1
+    if prev is None and txn.facts.get(key) is not None:
+        txn.facts.retract(key, rule="reducers.bind_failure.regrounded")
+    txn.facts.set(
+        key, count, FactStatus.COMMITTED,
+        Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us, derivation_read_set=job.read_set),
+        rule="reducers.bind_failure",
+    )
 
 
 _HANDLERS = {
