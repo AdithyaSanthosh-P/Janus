@@ -69,7 +69,7 @@ from prism_rt.profiles import apply_overrides, fdb_v3_config  # noqa: E402
 from prism_rt.adapters.transcript_segmenter import segment_transcript  # noqa: E402
 from prism_rt.entry import setup  # noqa: E402
 from prism_rt.observability import speechlint  # noqa: E402
-from prism_rt.workers.gateway import GeminiProvider  # noqa: E402
+from prism_rt.workers.gateway import GeminiProvider, OpenAIProvider  # noqa: E402
 
 DEFAULT_FDB_ROOT = os.environ.get(
     "FDB_V3_ROOT", os.path.expanduser("~/Desktop/Hackathons/fdb_work/Full-Duplex-Bench/v3")
@@ -295,11 +295,17 @@ async def run_all(args: argparse.Namespace, config: Config) -> list[dict]:
     print(f"Introspected {len(manifest)} FDB tools from {args.fdb_root}/lk_agent_tool.py")
 
     mock_apis_module = _import_fdb_module(args.fdb_root, "mock_apis")
-    provider = GeminiProvider(model=args.model, thinking_budget=args.thinking_budget)
+    if args.provider == "openai":
+        provider = OpenAIProvider(model=args.model)
+    else:
+        provider = GeminiProvider(model=args.model, thinking_budget=args.thinking_budget)
 
     example_dirs = sorted(p for p in Path(args.data_root).iterdir() if p.is_dir() and (p / "metadata.json").is_file())
     if args.only:
         example_dirs = [p for p in example_dirs if args.only in p.name]
+    if args.ids:
+        wanted = [i.strip() for i in args.ids.split(",") if i.strip()]
+        example_dirs = [p for p in example_dirs if any(p.name.startswith(i + "_") for i in wanted)]
     if args.limit:
         example_dirs = example_dirs[: args.limit]
     print(f"Running {len(example_dirs)} scenarios from {args.data_root}")
@@ -454,6 +460,7 @@ async def main_async(args: argparse.Namespace) -> None:
     run_meta = {
         "started_at": started_at,
         "git_commit": _git_commit(),
+        "provider": args.provider,
         "model": args.model,
         "thinking_budget": args.thinking_budget,
         "profile": args.profile,
@@ -471,7 +478,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Janus vs FDB-v3 T3 text-replay harness")
     p.add_argument("--fdb-root", default=DEFAULT_FDB_ROOT)
     p.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
+    p.add_argument("--provider", choices=["gemini", "openai"], default="gemini")
     p.add_argument("--model", default="gemini-3.6-flash")
+    p.add_argument("--ids", default=None, help="comma-separated example ids (e.g. travel_01,housing_10); every speaker recording of each")
     p.add_argument("--thinking-budget", type=int, default=None)
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--only", default=None, help="substring filter on the scenario folder name, for targeted debugging")
