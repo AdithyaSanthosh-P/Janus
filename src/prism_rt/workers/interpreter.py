@@ -157,6 +157,15 @@ def _action_plans_block(view: dict) -> str:
             "- If the user only asks how an earlier request went (\"did that go "
             "through?\"), set status_question to true and leave actions empty.\n"
         )
+    last = view.get("last_task") or []
+    if last:
+        rendered = "; ".join(f"{a['tool']} {a['args']}" for a in last)
+        block += (
+            f"Just finished: {rendered}. If the user now changes one of those "
+            "values (\"make it X instead\", \"what about Y\"), that is a "
+            "slot_update with slot_deltas naming the parameter -- not a status "
+            "question and not unsupported.\n"
+        )
     active = view.get("active_actions") or []
     if active:
         rendered = "; ".join(f"{a['action']}: {a['tool']} {a['args']}" for a in active)

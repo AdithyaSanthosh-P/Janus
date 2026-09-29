@@ -22,7 +22,7 @@ from prism_rt.kernel.interpret_apply import (
     transcription_pending,
 )
 from prism_rt.kernel.perception import PerceptionScheduler
-from prism_rt.kernel.action_plans import coerce_to_schema, is_compiled, tool_props, write_bind_facts
+from prism_rt.kernel.action_plans import coerce_slot_value, coerce_to_schema, is_compiled, tool_props, write_bind_facts
 from prism_rt.kernel.action_plans import bind_failure_key, valid_bind_fact
 from prism_rt.kernel.proposals import (
     fix_step_kind,
@@ -565,6 +565,7 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
             return  # genuinely not stated -- falls through to the ordinary clarify
         if txn.store.config.normalize_spoken_ids:
             value = canonicalize_spoken_id(value)
+        value = coerce_slot_value(txn.store, job.goal_id, job.target, value)
         txn.facts.set(
             job.target,
             value,

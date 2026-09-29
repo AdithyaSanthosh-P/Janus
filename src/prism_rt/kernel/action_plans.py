@@ -71,10 +71,20 @@ def _schema_type(prop: dict) -> str | None:
     return t if isinstance(t, str) else None
 
 
+_NUMBER_WORDS = {
+    w: i
+    for i, w in enumerate(
+        "zero one two three four five six seven eight nine ten eleven twelve".split()
+    )
+}
+
+
 def _parse_number(text: str):
     match = _LEADING_NUMBER.match(text)
     if match is None:
-        return None
+        # A small spoken count ("two", "three bedrooms") -- ASR spells these out.
+        words = text.strip().lower().split()
+        return _NUMBER_WORDS.get(words[0]) if words else None
     number = float(match.group(1).replace(",", ""))
     return int(number) if number.is_integer() else number
 
@@ -165,6 +175,25 @@ def _tool_props(store, tool: str) -> tuple[dict, list]:
     schema = (spec.params_schema if spec is not None else None) or {}
     props = schema.get("properties") or {}
     return props, list(schema.get("required") or ())
+
+
+def coerce_slot_value(store, goal_id: str, slot_key: str, value):
+    """Coerces a value about to be written to `slot_key` to the declared type
+    of the tool parameter that FACT-binds it in the goal's current plan (a
+    re-extracted "two" for an integer `bedrooms` becomes 2), so the rebind
+    doesn't fail validation and clarify the same slot again. Returned as is
+    when no plan step binds the key."""
+    plan = store.plans.current(goal_id)
+    if plan is None:
+        return value
+    template = slot_key.replace(f"slot.{goal_id}.", "slot.$G.", 1)
+    for step in plan.steps:
+        for param, binding in step.bindings.items():
+            if binding.kind == BindingKind.FACT and binding.fact_key in (slot_key, template):
+                prop = _tool_props(store, step.tool)[0].get(param)
+                if isinstance(prop, dict):
+                    return coerce_to_schema(value, prop)
+    return value
 
 
 def _usable(store, tool: str) -> bool:

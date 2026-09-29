@@ -27,6 +27,7 @@ from __future__ import annotations
 from config.templates import (
     ACK_DEFAULT,
     CLARIFY_RETRY_WRITE,
+    CLARIFY_REPEAT_TEMPLATE,
     CLARIFY_TEMPLATE,
     FINAL_FALLBACK,
     FRESH_VIEW_REQUEST,
@@ -264,17 +265,35 @@ class FastResponder:
             if tried is None or tried.status == FactStatus.RETRACTED:
                 return []
         asked = store.facts.get(f"clarify.{goal_id}.asked")
+        repeat = False
         if asked is not None and asked.status != FactStatus.RETRACTED and asked.value == target:
-            return []
-        store.facts.set(
-            f"clarify.{goal_id}.asked",
-            target,
-            FactStatus.COMMITTED,
-            Provenance(source="system", step_no=step_no, ts_us=now_us),
-            rule="responder.clarify",
-        )
+            # Config.conversational_replies_enabled: the user spoke again and
+            # the same thing is still missing -- ask once more, once per new
+            # turn, rather than go silent. The TRIAGE hold above guarantees
+            # that turn has already been interpreted by the time we get here.
+            if not store.config.conversational_replies_enabled:
+                return []
+            latest = _latest_closed_turn_id(store)
+            asked_turn = store.facts.get(f"clarify.{goal_id}.asked_turn")
+            if latest is None or (
+                asked_turn is not None and asked_turn.status != FactStatus.RETRACTED and asked_turn.value == latest
+            ):
+                return []
+            repeat = True
+        provenance = Provenance(source="system", step_no=step_no, ts_us=now_us)
+        store.facts.set(f"clarify.{goal_id}.asked", target, FactStatus.COMMITTED, provenance, rule="responder.clarify")
+        if store.config.conversational_replies_enabled:
+            store.facts.set(
+                f"clarify.{goal_id}.asked_turn",
+                _latest_closed_turn_id(store),
+                FactStatus.COMMITTED,
+                provenance,
+                rule="responder.clarify",
+            )
         friendly = target.rsplit(".", 1)[-1]
         text = CLARIFY_TEMPLATE.format(target=friendly)
+        if repeat and not target.startswith("retry:"):
+            text = CLARIFY_REPEAT_TEMPLATE.format(target=friendly.replace("_", " "))
         # P0.4 (S-02, docs/original_design_audit.md D4): a write-timeout
         # retry confirmation (kernel/executor.py.PlanExecutor.
         # expire_deadlines) is a yes/no question, not a missing-slot one --
@@ -611,3 +630,10 @@ class FastResponder:
                 )
             )
         return actions
+
+
+def _latest_closed_turn_id(store) -> str | None:
+    for turn in reversed(store.turn_log.all()):
+        if turn.closed_ts_us is not None:
+            return turn.turn_id
+    return None

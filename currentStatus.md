@@ -570,6 +570,12 @@ Everything below is uncommitted at the time of writing.
 ### Ultrareview (2026-09-29) — 5 findings, all verified, 4 fixed
 Scope: everything since `7a22495` (S3, live-demo fixes, split-turn merge, device-care/X-ray). Every finding was checked against the cited code before any change; details in `reviews/index.md`. Fixed with regression tests that fail without the fix (`tests/test_review_2026_09_29.py`): BIND give-up counter now scoped to its grounding and cleared on success; "last task" = last *finished* goal (`session.last_finished_goal`, set in `emission._complete_goal`); X-ray `TracedQueue` traces `put_nowait`; `--set` handles tuple fields; one shared `ACTION_SLOT_NAME`. 422/422.
 
+### Live-demo round 3 (2026-09-29) — the agent going silent after a clarifying question
+Found from a live voice session's decision log: the agent asked for a missing value once, then stayed silent through every later turn. Three causes, all fixed (`tests/test_silence_fixes.py`, 4). 428/428.
+- **Re-extracted values were never type-coerced.** The EXTRACT reducer wrote the raw text ("two") into an integer parameter, validation failed, and the same slot was clarified again. `action_plans.coerce_slot_value` now coerces to the parameter that FACT-binds the key; `_parse_number` also reads small number words ("two", "three bhk").
+- **A clarify question was de-duplicated forever.** Under `conversational_replies_enabled`, each new (already-interpreted, via the TRIAGE hold) user turn while the same value is still missing gets `CLARIFY_REPEAT_TEMPLATE` once (`clarify.<gid>.asked_turn`). Flag off: unchanged.
+- **"Make it X" after a finished task was read as a status question.** With no active goal, the INTERPRET view now carries `last_task` (the last finished compiled goal's actions; `session.last_finished_goal` in the read set) and the prompt says a changed value is a `slot_update`, which `_redo_last_goal` re-runs. **Not yet verified live.**
+
 ### Failing / Broken
 **As of 2026-09-28:** Janus's own suite — nothing failing (**359/359**, re-run 2026-09-28). Against FDB-v3, nothing known-broken, but three things are unverified:
 1. **The voice-path silent-scenario count hasn't been re-measured since the Whisper OOM fix.** The last full 26-recording measurement (27 Sep, before that fix) had 4/26 silent. Text replay has zero silent scenarios across all 100.
