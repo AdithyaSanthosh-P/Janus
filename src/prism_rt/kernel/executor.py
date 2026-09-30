@@ -822,6 +822,11 @@ class PlanExecutor:
             rule="executor.clarify",
         )
         store.goals.update(goal_id, task_state=TaskState.CLARIFYING)
+        # TaskStateMachine runs before this in DECIDE, so it only sees the
+        # new CLARIFYING state (and dispatches the Q5 re-extraction) on the
+        # next step. Found in the 30 Sep voice rerun: nothing else woke the
+        # kernel, and the goal sat silent until the 15 s stall salvage.
+        store.timers.schedule(f"clarify_wake:{goal_id}", now_us + 1)
 
     def _write_lineage_confirmed_elsewhere(self, store, goal_id: str, step, fingerprint: str) -> bool:
         """True iff `CommitGate`'s G6 ("no existing effect with the same

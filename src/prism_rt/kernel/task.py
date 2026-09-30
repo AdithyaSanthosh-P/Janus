@@ -28,11 +28,12 @@ from dataclasses import dataclass
 from config.templates import WATCHDOG_FALLBACK
 from prism_rt.kernel.action_plans import active_actions_view, is_compiled
 from prism_rt.kernel.replies import last_finished_goal
-from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, merged_turns
+from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, merged_turns, user_content_pending
 from prism_rt.kernel.replies import salvage_text
 from prism_rt.model.types import (
     CallStatus,
     FactStatus,
+    FloorState,
     GoalStatus,
     JobKind,
     JobRecord,
@@ -181,9 +182,21 @@ class TaskStateMachine:
         last_eot = store.facts.get("session.last_eot_ts")
         if last_eot is None or last_eot.status == FactStatus.RETRACTED:
             return False
-        due_us = last_eot.value + ms * 1000
+        # Measured from the user's latest words, not just the latest end of
+        # turn, and never while they are still talking or their latest turn
+        # is still being interpreted. Found in the 30 Sep voice rerun: a
+        # request spoken in pieces (one end of turn, then 15 s of speech with
+        # none) was salvaged mid-sentence -- "I couldn't finish this in
+        # time" -- and its first action was lost.
+        last_user_us = last_eot.value
+        turns = store.turn_log.all()
+        if turns and turns[-1].chunks:
+            last_user_us = max(last_user_us, turns[-1].chunks[-1].ts_us)
+        due_us = last_user_us + ms * 1000
         store.timers.schedule(f"turn_stall_salvage:{goal_id}", due_us)
         if now_us < due_us:
+            return False
+        if store.floor_state == FloorState.USER_TURN_OPEN or user_content_pending(store):
             return False
         if grounded_compose_text(store, goal_id) is not None:
             return False
