@@ -746,6 +746,11 @@ def _append_to_running_goal(txn: StoreTxn, interp: TurnInterpretation, now_us: i
     if not _live_followups(txn.store) or not interp.actions:
         return False
     gid = active_goal_id(txn.store)
+    if gid is not None and replies.earlier_confirmed_writes(txn.store, None, [a.tool for a in interp.actions]):
+        # A repeat of a write that already went through is never appended to
+        # a running goal, whose go-ahead would carry over to it: it takes the
+        # new-request path, which asks first (goal.<gid>.repeat_of).
+        return False
     goal = txn.store.goals.get(gid) if gid is not None else None
     if goal is None or goal.status != GoalStatus.ACTIVE or goal.task_state not in (TaskState.EXECUTING, TaskState.CLARIFYING):
         return False

@@ -11,7 +11,7 @@ what actually ran (the call ledger), never from model text.
 
 from __future__ import annotations
 
-from prism_rt.model.types import CallStatus, FactStatus, GoalStatus, Provenance
+from prism_rt.model.types import CallStatus, FactStatus, GoalStatus, Provenance, StepKind
 
 HONEST_REPLY_KEY = "session.honest_reply"
 
@@ -61,7 +61,7 @@ def last_goal_that_ran(store, exclude: str | None = None):
     return None
 
 
-_SKIP_FIELDS = {"status", "message", "found", "error"}
+_SKIP_FIELDS = {"status", "message", "found", "error", "reason"}
 
 
 def findings_text(store, limit: int = 4) -> str:
@@ -70,9 +70,14 @@ def findings_text(store, limit: int = 4) -> str:
     my router's name?" right after a diagnosis that named it was refused as
     something the agent can't do. Only what a tool actually returned."""
     parts: list[str] = []
+    seen_steps: set[tuple] = set()
     for call in reversed(store.call_ledger.all()):
         if call.status != CallStatus.CONSUMED:
             continue
+        step = (call.goal_id, call.step_key)
+        if step in seen_steps:
+            continue  # an older run of a step a correction re-ran: not a current finding
+        seen_steps.add(step)
         fact = store.facts.get(f"result.{call.call_id}")
         result = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
         if not isinstance(result, dict):
@@ -157,42 +162,36 @@ def duplicate_write_text(call) -> str:
     return f"I've already done that — {what} went through earlier, so I won't repeat it."
 
 
-def confirmed_writes(store, goal_id: str) -> list:
-    """The goal's state-changing calls that actually went through."""
-    from prism_rt.model.types import StepKind
-
+def _consumed_writes(store, keep) -> list:
     return [
         call for call in store.call_ledger.all()
-        if call.goal_id == goal_id and call.status == CallStatus.CONSUMED and call.kind == StepKind.WRITE
+        if call.status == CallStatus.CONSUMED and call.kind == StepKind.WRITE and keep(call)
     ]
+
+
+def confirmed_writes(store, goal_id: str) -> list:
+    """The goal's state-changing calls that actually went through."""
+    return _consumed_writes(store, lambda call: call.goal_id == goal_id)
+
+
+def earlier_confirmed_writes(store, goal_id: str | None, tools) -> list:
+    """Writes with one of `tools` that went through for any goal other than
+    `goal_id` (None: any goal at all)."""
+    wanted = set(tools)
+    return _consumed_writes(store, lambda call: call.goal_id != goal_id and call.tool in wanted)
+
+
+def write_summary(calls) -> str:
+    return "; ".join(
+        f"{_human(c.tool)} ({', '.join(str(v) for v in c.args.values())})" if c.args else _human(c.tool) for c in calls
+    )
 
 
 def no_second_write_text(calls) -> str:
     """"Make it evening" after a booking already went through -- found live,
     30 Sep: re-running the finished task made a second booking. Say what
     stands instead; there is no tool that changes a confirmed booking."""
-    done = "; ".join(
-        f"{_human(c.tool)} ({', '.join(str(v) for v in c.args.values())})" if c.args else _human(c.tool) for c in calls
-    )
     return (
-        f"That's already done — {done} went through. I can't change it from here, "
+        f"That's already done — {write_summary(calls)} went through. I can't change it from here, "
         "and I won't make a second one."
-    )
-
-
-def earlier_confirmed_writes(store, goal_id: str, tools) -> list:
-    """Writes with one of `tools` that went through for an earlier goal."""
-    from prism_rt.model.types import StepKind
-
-    wanted = set(tools)
-    return [
-        call for call in store.call_ledger.all()
-        if call.goal_id != goal_id and call.status == CallStatus.CONSUMED
-        and call.kind == StepKind.WRITE and call.tool in wanted
-    ]
-
-
-def write_summary(calls) -> str:
-    return "; ".join(
-        f"{_human(c.tool)} ({', '.join(str(v) for v in c.args.values())})" if c.args else _human(c.tool) for c in calls
     )

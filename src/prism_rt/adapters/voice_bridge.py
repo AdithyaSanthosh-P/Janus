@@ -53,8 +53,9 @@ def is_filler_segment(text: str) -> bool:
 
 
 def is_foreign_segment(text: str) -> bool:
-    """True when a segment is mostly not English letters: 15 % or more of its
-    letters fall outside ASCII ("Nóimega déanaí.", "jár", Urdu script).
+    """True when a segment is mostly not English: half its letters in another
+    script (Urdu), or several accented letters making up 15 % or more of it
+    ("Nóimega déanaí.").
     Found live, 30 Sep: with no headphones the agent's own voice came back
     through the microphone and was transcribed as foreign words. Speech-to-
     text is told to write English, so such text is noise; a name with one
@@ -62,8 +63,12 @@ def is_foreign_segment(text: str) -> bool:
     letters = [c for c in text if c.isalpha()]
     if not letters:
         return False
-    foreign = sum(1 for c in letters if ord(c) > 127)
-    return foreign / len(letters) >= 0.15
+    other_script = sum(1 for c in letters if ord(c) > 0x24F)  # beyond Latin Extended-B
+    accented = sum(1 for c in letters if 127 < ord(c) <= 0x24F)
+    if other_script / len(letters) >= 0.5:
+        return True
+    # Accented Latin letters: several of them, not one ("Zürich", "José" stay).
+    return accented >= 2 and accented / len(letters) >= 0.15
 
 
 @dataclass

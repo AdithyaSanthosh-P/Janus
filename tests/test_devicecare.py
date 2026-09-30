@@ -403,3 +403,61 @@ def test_camera_disagreeing_with_the_user_asks_instead_of_overriding():
     asked = [a.body.text for a in actions if a.action_type == ActionType.CLARIFY]
     assert asked == ["The camera shows orange. Did you mean green, or orange?"]
     assert calls(actions) == []
+
+
+def test_a_repeat_booking_is_not_appended_to_a_running_goal():
+    """Review finding: with the first booking done but its goal still running,
+    "No, cancel it. Make it Friday" was appended to that goal, whose go-ahead
+    carried over -- a second booking with no question asked."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "cancel it", _booking("Friday", "afternoon"))
+    provider.register("interpret", "Thursday", {**_booking("Thursday", "morning"), "actions": [
+        {"tool": "book_technician", "args": {"date": "Thursday", "time_slot": "morning"}},
+        {"tool": "get_fix_steps", "args": {}}]})
+    tk = _diagnosed_toolset()
+    ex = tk.make_executor()
+    tools = {t["name"]: {"latency_ms": 5_000 if t["name"] == "get_fix_steps" else 100,
+                         "handler": (lambda args, n=t["name"]: run(ex, n, **args))} for t in tk.manifest}
+    h = SimHarness(demo_config(), seed=3, provider=provider, tools=tools, worker_latency_us=LATENCY)
+    h.send(0, [manifest_event(tk.manifest)])
+    h.send(100_000, [chunk_event("book a technician for Thursday morning and tell me how to fix it")])
+    h.send(150_000, [eot_event()])
+    drain(h, 3_000_000, stop_on_final=False)
+    assert len(tk.bookings) == 1  # booked; the fix-steps lookup is still running
+    h.send(3_100_000, [chunk_event("no, cancel it, make it Friday")])
+    actions = [er.action for er in h.send(3_150_000, [eot_event()]).emit_report.emitted]
+    actions += drain(h, 10_000_000, stop_on_final=False)
+    assert len(tk.bookings) == 1
+    assert any("You already have book technician (Thursday, morning)" in a.body.text
+               for a in actions if a.action_type == ActionType.SPEAK)
+
+
+def test_a_call_built_on_the_camera_value_records_the_actions_own_key():
+    """Review finding: a user value stated later for the action must
+    invalidate a call built on the camera's value, so the action's own
+    (absent) key is in the call's read set."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "look at my router", {
+        "act": "new_goal", "intent": "identify_indicator", "slot_deltas": [], "visual_reference": "at_utterance",
+        "visual_candidates": [{"name": "led_color", "description": "colour"}, {"name": "led_name", "description": "which light"}],
+        "actions": [{"tool": "identify_indicator", "args": {"device_type": "router", "led_state": "solid"}}]})
+    provider.register("vision", "led_color", {"claims": [
+        {"name": "led_color", "value": "orange", "confidence": "high"},
+        {"name": "led_name", "value": "internet", "confidence": "high"}]})
+    provider.register("compose", "identify_indicator", {"text": "No internet.", "claims": []})
+    h = harness(provider, DeviceCareToolset())
+    h.send(50_000, [frame_event("cam-1")])
+    h.send(100_000, [chunk_event("can you look at my router")])
+    h.send(150_000, [eot_event()])
+    drain(h, 4_000_000)
+    call = next(c for c in h.store.call_ledger.all() if c.tool == "identify_indicator")
+    keys = {e.key for e in call.read_set.entries}
+    assert {"slot.g-0001.led_color", "slot.g-0001.a0.led_color"} <= keys
+
+
+def test_clarify_options_only_for_single_word_lists():
+    from prism_rt.kernel.responder import _OPTIONS
+
+    assert _OPTIONS.match("solid, blinking or off.") and _OPTIONS.match("morning, afternoon or evening.")
+    for description in ("City name or zip code", "Date or time", "Name or ID of the account"):
+        assert not _OPTIONS.match(description)

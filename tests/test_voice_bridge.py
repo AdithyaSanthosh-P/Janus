@@ -207,14 +207,15 @@ def test_bye_is_a_filler_segment():
     assert is_filler_segment("Bye.")
 
 
-@pytest.mark.parametrize("text", ["Nóimega déanaí.", "jár", "ہیلو", "بک می اے فلائٹ ٹو چنئی"])
+@pytest.mark.parametrize("text", ["Nóimega déanaí.", "ہیلو", "بک می اے فلائٹ ٹو چنئی"])
 def test_mostly_foreign_segments_are_noise(text):
     from prism_rt.adapters.voice_bridge import is_foreign_segment
 
     assert is_foreign_segment(text)
 
 
-@pytest.mark.parametrize("text", ["Book it for José on Friday.", "find a café near me", "Dovekit", "", "123"])
+@pytest.mark.parametrize("text", ["Book it for José on Friday.", "find a café near me", "Dovekit", "", "123",
+                                  "Zürich.", "São Paulo", "Müller", "jár"])
 def test_english_segments_with_the_odd_accent_are_kept(text):
     from prism_rt.adapters.voice_bridge import is_foreign_segment
 

@@ -18,9 +18,9 @@ existing.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
+from prism_rt.kernel.proposals import is_action_slot_key
 from prism_rt.model.types import (
     Conflict,
     ConflictStatus,
@@ -301,10 +301,9 @@ class PerceptionScheduler:
             if not user_has_value:
                 # A compiled plan keeps the user's value under the action's own
                 # key (slot.<g>.a0.<name>); it outranks the camera just the same.
-                action_value = re.compile(rf"^slot\.{re.escape(question.goal_id)}\.a\d+\.{re.escape(claim.name)}$")
                 for key, fact in txn.store.facts.by_prefix(f"slot.{question.goal_id}.a").items():
                     if (
-                        action_value.match(key)
+                        is_action_slot_key(key, question.goal_id, claim.name)
                         and fact.status not in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS)
                         and fact.provenance.source == "user"
                     ):
@@ -331,11 +330,14 @@ class PerceptionScheduler:
             # A compiled goal asks on the per-action key (slot.<g>.a0.<name>);
             # the executor binds this plain slot when the action has no value
             # of its own, so the camera answers that question too.
-            per_action = re.fullmatch(rf"slot\.{re.escape(question.goal_id)}\.a\d+\.{re.escape(claim.name)}", str(clarify.value)) if clarify is not None else None
-            if clarify is not None and clarify.status != FactStatus.RETRACTED and (clarify.value in answered_keys or per_action):
+            if clarify is not None and clarify.status != FactStatus.RETRACTED and (
+                clarify.value in answered_keys or is_action_slot_key(clarify.value, question.goal_id, claim.name)
+            ):
                 txn.facts.retract(f"goal.{question.goal_id}.clarify_target", rule="perception.clarify_resolved")
             fresh = txn.facts.get(f"perception.{question.goal_id}.fresh_view_for")
-            if fresh is not None and fresh.status != FactStatus.RETRACTED and fresh.value in answered_keys:
+            if fresh is not None and fresh.status != FactStatus.RETRACTED and (
+                fresh.value in answered_keys or is_action_slot_key(fresh.value, question.goal_id, claim.name)
+            ):
                 txn.facts.retract(f"perception.{question.goal_id}.fresh_view_for", rule="perception.fresh_view_received")
 
         if target_names and target_names <= accepted_names and question.status == QuestionStatus.OPEN:

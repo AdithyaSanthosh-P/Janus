@@ -37,7 +37,26 @@ UPSTREAM = "https://api.openai.com/v1/audio/transcriptions"
 PATH = "/v1/audio/transcriptions"
 DEFAULT_MODELS = ("gpt-4o-mini-transcribe-2025-12-15",)
 MAX_BODY = 5 * 1024 * 1024  # a 60 s 16 kHz mono WAV is ~1.9 MB
-_MODEL_FIELD = re.compile(rb'name="model"\r\n\r\n([^\r\n]+)\r\n')
+_BOUNDARY = re.compile(r'boundary="?([^";]+)"?')
+
+
+def model_field(body: bytes, content_type: str) -> str | None:
+    """The value of the one multipart field named "model", or None if the
+    body isn't multipart or has zero or several such fields. Parsed part by
+    part, so a model name planted inside the audio bytes is never mistaken
+    for the field."""
+    match = _BOUNDARY.search(content_type or "")
+    if not match:
+        return None
+    values = []
+    for part in body.split(b"--" + match.group(1).encode())[1:]:
+        head, sep, value = part.partition(b"\r\n\r\n")
+        if not sep:
+            continue
+        disposition = next((line for line in head.split(b"\r\n") if line.lower().startswith(b"content-disposition:")), b"")
+        if re.search(rb';\s*name="model"(;|$)', disposition.strip()):
+            values.append(value.rstrip(b"\r\n-").decode(errors="replace").strip())
+    return values[0] if len(values) == 1 else None
 
 
 def _load_key() -> str:
@@ -93,8 +112,7 @@ def make_handler(key: str, models: tuple[str, ...], limit: _RateLimit, stats: di
                 stats["refused"] += 1
                 return self._reply(413, {"error": f"body must be 1..{MAX_BODY} bytes"})
             body = self.rfile.read(length)
-            match = _MODEL_FIELD.search(body)
-            model = match.group(1).decode(errors="replace") if match else ""
+            model = model_field(body, self.headers.get("Content-Type", "")) or ""
             if model not in models:
                 stats["refused"] += 1
                 return self._reply(403, {"error": f"model {model!r} is not relayed"})

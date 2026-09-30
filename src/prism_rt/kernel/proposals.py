@@ -128,6 +128,12 @@ def fix_step_kind(step, catalog):
 ACTION_SLOT_NAME = re.compile(r"^(a\d+)\.(\w+)$")
 
 
+def is_action_slot_key(key: str, goal_id: str, name: str) -> bool:
+    """True for slot.<goal>.a<i>.<name>: a compiled action's own key for
+    the plain slot <name>."""
+    return re.fullmatch(rf"slot\.{re.escape(goal_id)}\.a\d+\.{re.escape(name)}", str(key)) is not None
+
+
 def plain_slot_name(name: str) -> str:
     """"a0.led_name" -> "led_name": a compiled action's slot under the plain
     name perception, conflicts and camera questions use."""

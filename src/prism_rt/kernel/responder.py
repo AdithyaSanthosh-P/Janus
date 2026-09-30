@@ -658,7 +658,9 @@ def _latest_closed_turn_id(store) -> str | None:
     return None
 
 
-_OPTIONS = re.compile(r"^[A-Za-z][\w -]*(?:, [A-Za-z][\w -]*)* or [A-Za-z][\w -]*\.?$")
+# Three or more single-word values ("solid, blinking or off."); a phrase like
+# "City name or zip code" is a description, not an option list.
+_OPTIONS = re.compile(r"^[A-Za-z]+(?:, [A-Za-z]+)+,? or [A-Za-z]+\.?$")
 
 
 def _option_list(store, goal_id: str, target: str) -> str | None:

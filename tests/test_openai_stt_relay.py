@@ -104,3 +104,17 @@ def _client_post(url: str, path: str, body: bytes, ctype: str = "application/jso
             return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read())
+
+
+def test_a_model_name_planted_in_the_audio_does_not_pass(server):
+    """Review finding: the allowlist was a regex over the whole body, so an
+    allowed model string planted in the audio bytes let another model through."""
+    url, upstream = server
+    boundary = "xyz"
+    body = (
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\n"
+        f"Content-Type: audio/wav\r\n\r\nRIFF name=\"model\"\r\n\r\n{MODEL}\r\n\r\n"
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-1\r\n--{boundary}--\r\n"
+    ).encode()
+    status, _ = _client_post(url, "/v1/audio/transcriptions", body, f"multipart/form-data; boundary={boundary}")
+    assert status == 403 and not upstream.requests

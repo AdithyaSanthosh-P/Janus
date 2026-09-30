@@ -162,7 +162,7 @@ With both set to `openai`, a run needs only LiveKit and OpenAI keys: the same Op
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-python -m pytest tests/ -q          # 480 tests, deterministic: stepped clock, scripted model, mock tools
+python -m pytest tests/ -q          # 493 tests, deterministic: stepped clock, scripted model, mock tools
 docker build -t janus . && docker run --rm janus     # the same suite on Python 3.11
 ```
 

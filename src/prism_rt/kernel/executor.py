@@ -530,6 +530,10 @@ class PlanExecutor:
                         and flat.provenance.source == "perception"
                         and not store.evidence.conflict_open(goal_id, param)
                     ):
+                        # Keep the action's own key in the read set (as
+                        # absent): a value the user states for it later must
+                        # invalidate a call built on the camera's value.
+                        read_keys.append(key)
                         key, fact = flat_key, flat
                 if fact is None or fact.status in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS):
                     return None, key
