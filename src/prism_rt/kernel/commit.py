@@ -80,8 +80,26 @@ def _turn_looks_incomplete(store: SessionStore) -> bool:
     return last_word in INERT_TOKENS or last_word in TRAILING_CONNECTIVES
 
 
-def _effective_settle_us(store: SessionStore) -> int:
+def _uses_assumed_value(store: SessionStore, call: CallRecord) -> bool:
+    """True when one of the call's arguments is a value the user never said
+    (Config.fill_unstated_required_enabled writes those with source
+    "assumed")."""
+    for entry in call.read_set.entries:
+        fact = store.facts.get(entry.key)
+        if fact is not None and fact.provenance.source == "assumed":
+            return True
+    return False
+
+
+def _effective_settle_us(store: SessionStore, call: CallRecord | None = None) -> int:
     if store.config.incomplete_turn_settle_enabled and _turn_looks_incomplete(store):
+        return store.config.settle_ms_incomplete * 1000
+    if store.config.assumed_value_settle_enabled and call is not None and _uses_assumed_value(store, call):
+        # Found in the 30 Sep voice runs: a search went out with an assumed
+        # budget (max_price=10000) in the pause before the user said "around
+        # two thousand", then ran again -- an extra call the benchmark counts
+        # as a failure. A value the user never said is the one most likely
+        # still to come, so such a call waits the longer window.
         return store.config.settle_ms_incomplete * 1000
     return store.config.settle_ms * 1000
 
@@ -125,7 +143,7 @@ class CommitGate:
                 # sentence would change.
                 if store.floor_state != FloorState.USER_TURN_CLOSED:
                     return GateDecision(False, "floor_open", "G3")
-                settle = self._settle_block(store, now_us)
+                settle = self._settle_block(store, now_us, call)
                 if settle is not None:
                     return settle
             return GateDecision(True, None, "G1,G2,G8")
@@ -182,18 +200,18 @@ class CommitGate:
         # closed, AND no newer turn has opened since (a still-open floor
         # already fails G3 above, but a turn can open and close again
         # within the settle window itself, which G3 alone wouldn't catch).
-        settle = self._settle_block(store, now_us)
+        settle = self._settle_block(store, now_us, call)
         if settle is not None:
             return settle
 
         return GateDecision(True, None, "G1-G8")
 
-    def _settle_block(self, store: SessionStore, now_us: int) -> GateDecision | None:
+    def _settle_block(self, store: SessionStore, now_us: int, call: CallRecord | None = None) -> GateDecision | None:
         if not store.config.settle_barrier_enabled:
             return None
         last_eot = store.facts.get("session.last_eot_ts")
         last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else None
-        settle_us = _effective_settle_us(store)
+        settle_us = _effective_settle_us(store, call)
         if last_eot_ts is None or (now_us - last_eot_ts) < settle_us:
             return GateDecision(False, "settle_not_elapsed", "G10")
         if store.turn_log.open_turn_id() is not None:
@@ -275,5 +293,5 @@ class CommitGate:
         goes unread in production, which is all D1 was ever about."""
         last_eot = store.facts.get("session.last_eot_ts")
         last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else now_us
-        due_us = last_eot_ts + _effective_settle_us(store)
+        due_us = last_eot_ts + _effective_settle_us(store, call)
         store.timers.schedule(f"settle:{call.call_id}", due_us)

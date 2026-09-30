@@ -32,6 +32,10 @@ class Config:
     # settle_barrier_enabled=True.
     incomplete_turn_settle_enabled: bool = False
     settle_ms_incomplete: int = 2500
+    # A call with an argument the user never said (an assumed value, see
+    # fill_unstated_required_enabled) waits settle_ms_incomplete too: that
+    # value is the one most likely still to come in the rest of the sentence.
+    assumed_value_settle_enabled: bool = False
     # Day 2 WP2 (docs/fdb_v3_day2_plan.md): the Interpreter/Planner see
     # every action a turn asks for, not just the first (found live: 0 of
     # 34 FDB-v3 multi-action recordings got their full tool set before

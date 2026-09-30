@@ -115,6 +115,7 @@ def fdb_v3_config(**overrides) -> Config:
         echo_ack_enabled=True,
         action_plans_enabled=True,
         fill_unstated_required_enabled=True,
+        assumed_value_settle_enabled=True,
         read_only_tools=FDB_READ_ONLY_TOOLS,
         settle_reads_enabled=True,
         conversational_replies_enabled=True,
