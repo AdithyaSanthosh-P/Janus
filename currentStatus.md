@@ -634,7 +634,7 @@ First full voice-path measurement since S3. Ran with `scripts/fdb_v3/native_run.
   - The README results now include self-correction Pass@1 against the paper's Table 3 (text replay 0.824, voice 0.412; GPT-Realtime 0.588, cascaded 0.176), plus rerun turn-taking (32/32) and first-word latency (7.8 s mean; paper Table 6 first-word means 6.36 / 3.95 / 8.78 s).
   - `measurements.md` has a current-results section, and the stale "doesn't ask shall I go ahead" limitation is removed.
 
-### Live demo round 5 (2026-09-30 night, teammate's camera sessions) — 499/499, uncommitted
+### Live demo round 5 (2026-09-30 night, teammate's camera sessions) — 499/499, committed (`af203b0`)
 Found in the decision logs under `run_output/video/decisions/`. All changes are gated on `vision_enabled` or `idle_replies_enabled`, both off in the FDB profile.
 - **The agent asked for the LED colour while the camera was pointed at it.** Perception ran only when the interpreter flagged a visual reference, and "I'm going to show it to you" came back without one. `PlanExecutor._look_before_asking` now looks at the latest frame once before asking. It applies only to a read-only tool's missing values, and only while frames are arriving (newer than 5 s). If the camera does not answer, the question goes to the user.
 - **A misheard two-word fragment ("ChatGPT. Please.") retargeted the camera question** and discarded a correct reading (internet, orange). A turn under three words no longer retargets an existing question.
@@ -645,6 +645,35 @@ Found in the decision logs under `run_output/video/decisions/`. All changes are 
   - A named light is answered only from its own entries, and a given colour must match.
   - Spoken variants are normalised: "Wi-Fi", "solid orange", "amber", "steady".
 - Each fix has a regression test (`tests/test_devicecare.py`); every new behaviour test was confirmed to fail without its fix.
+
+### Submission (2026-09-30, 23:55 IST) — tagged, repo public
+- **Final tag `PRISM_GENAI_HACKATHON_Y2026` on `main` at `ef98c6a`.** `main` holds the full `fdb-v3-integration` history, the final deck (`VITVellore_AICA_Submission.pptx`) and the AI disclosure. The repo is public.
+- **Fallback tag `backup-best-2026-09-30` at `af203b0`:** the last code commit before the submission-day docs and default changes.
+- **Verified from a fresh clone of the tag:**
+  - 499/499 tests pass.
+  - No keys in the tree.
+  - All three run scripts pass a syntax check.
+  - The demo video (Google Drive) and deck (Google Slides) links in the README open without a sign-in.
+- **`reproduce.sh` and `native_run.sh` default to hosted speech-to-text** (`JANUS_STT=openai`, `gpt-4o-mini-transcribe-2025-12-15`). A run needs LiveKit, `GEMINI_API_KEY` and `OPENAI_API_KEY`; the OpenAI key covers speech-to-text and the judge. `JANUS_STT=local` keeps faster-whisper on the GPU.
+- **README:**
+  - A Highlights block.
+  - An architecture diagram (`docs/architecture.svg` / `.png`).
+  - The hard-recording result.
+  - Neutral limitations wording.
+
+### Voice runs on the current code (2026-09-30, cloud RTX 3090, native path, hosted speech-to-text) — not in the repo
+- **The 64-recording run of 30 Sep 14:05 UTC was contaminated.** The laptop demo worker, registered unnamed on the same LiveKit project, served 33 of the 64 rooms with the device-care tool set, and scored 0/33. Since `5121123` the demo worker only joins rooms that dispatch `janus-demo`.
+- **The 31 rooms the cloud worker did serve** (30 scenario ids):
+  - Old code: 4/30 judged, in the full-100 run.
+  - Current code: 12/31 exact-match, 13/31 judged (41.9 %). Scored locally from the downloaded archive (`janus_openai_140536.tgz`).
+  - That run used the transcription relay (`scripts/fdb_v3/openai_stt_relay.py`); first response averaged 7.1 s, and turn-taking was 64/64.
+- **Clean rerun of the contaminated 29 scenario ids** (41 recordings), with the OpenAI key on the box and no relay:
+  - Old code: 6/41 in the full-100 run.
+  - Current code: **17/41 judged (41.5 %)**.
+  - Gained: ecommerce_04/07/10/13/18, finance_15/18, housing_02/10, travel_07/20/21/23. Lost: ecommerce_19.
+  - Results: `clean29.tgz` (local, audio excluded).
+- **Not measured: a full-100 voice run of the current code.** Old full-100 results plus these hard-subset gains suggest roughly 55–65 %, but that is an estimate, not a result. The README quotes only measured figures.
+- **Housekeeping still open:** remove the OpenAI key from the cloud box and revoke it afterwards (it was used on a machine not under the team's control).
 
 ### Failing / Broken
 **As of 2026-09-28:** Janus's own suite — nothing failing (**359/359**, re-run 2026-09-28). Against FDB-v3, nothing known-broken, but three things are unverified:
