@@ -591,6 +591,12 @@ First full voice-path measurement since S3. Ran with `scripts/fdb_v3/native_run.
   - `repro_inner.sh` logs GPU memory to `gpu_mem.csv` every 10 s and sets `JANUS_EOT_MS=1500` (was 1000).
   - The voice bridge drops filler-only segments ("you", "Hmm.") in FDB mode (`is_filler_segment`); the demo keeps them.
   - New `idle_replies_enabled`, off in `fdb_v3_config`: no immediate "Happy to help" or status reply to a turn with no active task. Follow-up appending and redo stay on.
+- **32-recording voice rerun after those fixes:** 11/32 (same recordings: 8/32 in the full run). Whisper stayed on the GPU (99 CUDA loads, no fallback, GPU memory flat at ~9.9 GB), and there were no client aborts.
+- **Two kernel liveness bugs** found in the rerun, fixed with production-like event-driven tests (`tests/test_clarify_wake.py`):
+  - A clarify target set by `PlanExecutor` (after `TaskStateMachine` in DECIDE) never got its re-extraction dispatched. Nothing woke the kernel, so the goal sat until the stall salvage. Fixed with a 1 µs wake timer.
+  - The stall salvage counted from the last end of turn and fired while the user was still speaking. It now counts from the latest user chunk and never fires with the floor open.
+- **Spoken codes joined for identifier parameters** (`canonical.canonicalize_spoken_id(value, name)`): "F A S T nine nine" → FAST99, "P.O. 999" → PO999. "Bye." is now a filler segment.
+- **Interpreter value rule** for identifier-style enum values and filter keys. Judged full-100 text replay: 77% (was 73%); housing 23% → 35%, finance 96% → 100%.
 - Smaller classes (text-replay-fixable): spoken-ID shapes from Whisper, enum-like values (`driver's license`, free-text `filter_name`), a sequential chain that blocks independent actions, and the unsupported-request rule dropping an action.
 
 ### Failing / Broken
