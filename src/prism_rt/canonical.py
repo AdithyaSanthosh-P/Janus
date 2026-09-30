@@ -59,7 +59,34 @@ def normalize_value(value: Any, schema: dict | None = None) -> Any:
 _SPOKEN_ID_SPLIT = re.compile(r"[\s\-.,]+")
 
 
-def canonicalize_spoken_id(value):
+_ID_PARAM = re.compile(r"(?:^|_)(?:id|number|code|ref)$")
+_DIGIT_WORDS = {
+    w: str(i) for i, w in enumerate("zero one two three four five six seven eight nine".split())
+} | {"oh": "0"}
+
+
+def _join_spoken_identifier(value: str):
+    """For an identifier parameter only: "F A S T nine nine" -> "FAST99",
+    "P.O. 999" -> "PO999", "one, two, three, ABC" -> "123ABC",
+    "DL. five five five" -> "DL555", "E77-2211" -> "E772211". Found in the
+    30 Sep voice runs: Whisper writes a spoken code as letters, digit words
+    and separators. Every piece must be a single character, a digit word,
+    all upper case or contain a digit, so a phrase ("the one from last
+    week") is never glued together. None when the value doesn't look like a spoken code."""
+    tokens = [t for t in _SPOKEN_ID_SPLIT.split(value) if t]
+    if len(tokens) < 2:
+        return None
+    pieces = []
+    for token in tokens:
+        piece = _DIGIT_WORDS.get(token.lower(), token)
+        code_like = len(piece) == 1 or piece.isupper() or any(c.isdigit() for c in piece)
+        if not (piece.isalnum() and code_like):
+            return None
+        pieces.append(piece)
+    return "".join(pieces)
+
+
+def canonicalize_spoken_id(value, name: str | None = None):
     """Q1 (win_plan §6.2): a value spelled out one character at a time
     ("X-Y-Z-8-8") is really one identifier and gets joined back into
     "XYZ88" -- FDB-v3's own ASR frequently renders a spoken confirmation
@@ -72,6 +99,10 @@ def canonicalize_spoken_id(value):
     cycle."""
     if not isinstance(value, str):
         return value
+    if name is not None and _ID_PARAM.search(name.rsplit(".", 1)[-1].lower()):
+        joined = _join_spoken_identifier(value)
+        if joined is not None:
+            return joined
     tokens = [t for t in _SPOKEN_ID_SPLIT.split(value) if t]
     if len(tokens) < 2 or not all(len(t) == 1 and t.isalnum() for t in tokens):
         return value

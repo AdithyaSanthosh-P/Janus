@@ -120,7 +120,7 @@ def _apply_slot_deltas(txn: StoreTxn, goal_id: str, slot_deltas, now_us: int, st
         else:
             value = delta.value
             if txn.store.config.normalize_spoken_ids:
-                value = canonicalize_spoken_id(value)
+                value = canonicalize_spoken_id(value, delta.name)
             provenance = Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us)
             if txn.facts.set(key, value, FactStatus.COMMITTED, provenance, rule="interpret_apply.slot_set"):
                 changed = True

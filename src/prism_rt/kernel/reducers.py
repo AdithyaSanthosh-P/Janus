@@ -564,7 +564,7 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
         if value is None:
             return  # genuinely not stated -- falls through to the ordinary clarify
         if txn.store.config.normalize_spoken_ids:
-            value = canonicalize_spoken_id(value)
+            value = canonicalize_spoken_id(value, job.target)
         value = coerce_slot_value(txn.store, job.goal_id, job.target, value)
         txn.facts.set(
             job.target,

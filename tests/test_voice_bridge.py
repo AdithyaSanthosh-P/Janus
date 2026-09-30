@@ -199,3 +199,9 @@ async def test_filler_segment_is_kept_by_default():
     await bridge.on_segment_final("Thank you.")
     items = await _drain_nowait(events)
     assert [i["payload"]["text"] for i in items] == ["Thank you."]
+
+
+def test_bye_is_a_filler_segment():
+    from prism_rt.adapters.voice_bridge import is_filler_segment
+
+    assert is_filler_segment("Bye.")

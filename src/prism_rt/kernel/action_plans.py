@@ -247,7 +247,7 @@ def _build_steps(txn, goal_id: str, actions, first_index: int, now_us: int, step
                 continue  # an assumed free-text value is dropped -- still asked
             value = coerce_to_schema(raw, prop)
             if config.normalize_spoken_ids:
-                value = canonicalize_spoken_id(value)
+                value = canonicalize_spoken_id(value, param)
             txn.facts.set(
                 f"slot.{goal_id}.{prefix}.{param}",
                 value,

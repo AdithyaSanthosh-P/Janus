@@ -38,7 +38,7 @@ from typing import Awaitable, Callable
 # or breath rather than speech. Found in the 29-30 Sep full voice run: "you"
 # (16 times) and "Hmm." (10) each closed a turn of their own after the user
 # had finished, and the agent answered them.
-_FILLER_ONLY = re.compile(r"^(?:you|thank you|thanks|hmm+|mm+|um+|uh+|ah+|oh|okay|so)$")
+_FILLER_ONLY = re.compile(r"^(?:you|thank you|thanks|bye|hmm+|mm+|um+|uh+|ah+|oh|okay|so)$")
 
 
 def is_filler_segment(text: str) -> bool:
