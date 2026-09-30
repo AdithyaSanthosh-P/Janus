@@ -18,7 +18,7 @@ cp .env.example .env      # fill in the five keys, see "Keys" below
 ./reproduce.sh            # all 100 scenarios, FDB's LLM judge on
 ```
 
-Needs Docker with the NVIDIA container toolkit, an NVIDIA GPU (measured peak ~9 GB VRAM; the CUDA 13 torch wheels need driver ≥ 580), about 40 GB of disk and internet access.
+Needs Docker with the NVIDIA container toolkit, an NVIDIA GPU (measured peak ~10 GB VRAM; the image uses CUDA 12 builds, so any driver ≥ 525), about 40 GB of disk and internet access.
 
 What it does, in order:
 

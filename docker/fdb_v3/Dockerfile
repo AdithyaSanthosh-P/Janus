@@ -40,6 +40,26 @@ RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
 
 WORKDIR /fdb
 
+# PyTorch pinned to its CUDA 12.6 build, installed before everything that
+# depends on it (nemo_toolkit, kokoro, lightning) so none of them pulls the
+# default PyPI wheel -- which is the CUDA 13 build and needs an NVIDIA driver
+# >= 580. The reproduction target promises "CUDA 12.x/13.x": a CUDA 12 build
+# runs on any driver from the 525 series up (CUDA minor-version
+# compatibility), including 580+, so the same image works on both. Same
+# torch version as before (2.14.0), only the CUDA build differs.
+#
+# TORCH_LOCAL_WHEELS=1 installs the same pinned wheels from
+# docker/fdb_v3/wheels/ with no network (for a build host whose connection
+# can't finish the ~3 GB download in one go); the default downloads them.
+ARG TORCH_LOCAL_WHEELS=0
+COPY docker/fdb_v3/wheels/ /tmp/wheels/
+RUN if [ "$TORCH_LOCAL_WHEELS" = "1" ]; then \
+        pip install --no-cache-dir --no-index --find-links /tmp/wheels "torch==2.14.0"; \
+    else \
+        pip install --no-cache-dir --timeout 120 --retries 10 \
+            "torch==2.14.0" --index-url https://download.pytorch.org/whl/cu126; \
+    fi && rm -rf /tmp/wheels
+
 # Pinned per docs/fdb_v3_implementation_plan.md §8. §8 itself recorded
 # livekit==1.1.20 from an earlier session's `~=1.0` resolve, taken
 # independently of livekit-agents's own exact pin -- building this image

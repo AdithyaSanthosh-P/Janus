@@ -17,8 +17,8 @@
 # three evaluators -> writes results/<timestamp>/ (reports, logs, decision
 # logs, manifest.json with commit/versions/config, PROVIDER.txt).
 #
-# Needs: Docker with the NVIDIA container toolkit, an NVIDIA GPU (driver >= 580
-# for the CUDA 13 torch wheels; measured peak ~9 GB VRAM), ~40 GB free disk,
+# Needs: Docker with the NVIDIA container toolkit, an NVIDIA GPU (driver >= 525;
+# the image uses CUDA 12 builds; measured peak ~10 GB VRAM), ~40 GB free disk,
 # internet (LiveKit Cloud, Gemini API, OpenAI judge, Hugging Face at build).
 set -euo pipefail
 
@@ -65,7 +65,7 @@ fi
 say "checking the GPU inside the container"
 docker run --rm --gpus all "$IMAGE" -c \
   "nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader && python -c 'import torch,sys; sys.exit(0 if torch.cuda.is_available() else 3)'" \
-  || die "no usable GPU in the container (NVIDIA driver >= 580 and the NVIDIA container toolkit are required)"
+  || die "no usable GPU in the container (an NVIDIA driver >= 525 and the NVIDIA container toolkit are required)"
 
 # 4. Run -------------------------------------------------------------------------
 STAMP="$(date +%Y%m%d_%H%M%S)"
