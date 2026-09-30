@@ -51,7 +51,7 @@ classDef toolStyle fill:#DCFCE7,stroke:#166534,stroke-width:2.5px,color:#14532D;
 %% -------------------------------------------------
 subgraph Edge["1. Real-Time Edge (Local GPU)"]
     User["User (Voice & Camera)"]
-    LiveKit["LiveKit WebRTC Pipeline<br/>• Silero VAD (Turn Boundaries)<br/>• faster-whisper (STT)<br/>• Kokoro-82M (TTS)"]
+    LiveKit["LiveKit WebRTC Pipeline<br/>• Silero VAD (Turn Boundaries)<br/>• STT: OpenAI gpt-4o-mini-transcribe (default) or faster-whisper<br/>• Kokoro-82M (TTS)"]
     User <-->|"Bi-directional Audio / Video"| LiveKit
 end
 class Edge,User,LiveKit edgeStyle;
