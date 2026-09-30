@@ -153,7 +153,8 @@ def test_status_question_after_a_finished_task_is_answered_from_what_ran():
     drain(h, 3_000_000)
     h.send(3_100_000, [chunk_event("was my search finished")])
     actions = send(h, 3_150_000, [eot_event()]) + drain(h, 4_000_000, stop_on_final=False)
-    assert speaks(actions) == ["For your last request, I ran search flights (Chennai, tomorrow). Nothing else was done."]
+    assert speaks(actions) == ["For your last request, I ran search flights (Chennai, tomorrow). Nothing else was done. "
+                               "What I found: flight id FL1."]
 
 
 def test_thanks_gets_a_polite_reply():

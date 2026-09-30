@@ -318,3 +318,24 @@ def test_voice_bridge_turns_a_camera_frame_into_a_video_frame_event():
 
     ev = asyncio.run(go())
     assert ev["type"] == "video_frame" and ev["payload"] == {"frame_id": "cam-7"}
+
+
+def test_a_question_about_an_earlier_result_is_answered_from_it():
+    """30 Sep live demo: "What's my router's name?" right after a diagnosis
+    that named it was refused as something the agent can't do."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "router's name", {"act": "unclear", "slot_deltas": [], "status_question": True})
+    provider.register("interpret", "orange", {
+        "act": "new_goal", "intent": "identify_indicator", "slot_deltas": [],
+        "actions": [{"tool": "identify_indicator",
+                     "args": {"device_type": "router", "led_color": "orange", "led_state": "solid", "led_name": "internet"}}]})
+    provider.register("compose", "a0", {"text": "No internet.", "claims": []})
+    h = harness(provider, DeviceCareToolset())
+    h.send(100_000, [chunk_event("the internet light is solid orange")])
+    h.send(150_000, [eot_event()])
+    assert [a for a in drain(h, 6_000_000) if a.action_type == ActionType.FINAL]
+    h.send(6_100_000, [chunk_event("what's my router's name")])
+    actions = [er.action for er in h.send(6_150_000, [eot_event()]).emit_report.emitted]
+    actions += drain(h, 8_000_000, stop_on_final=False)
+    said = " ".join(a.body.text for a in actions if a.action_type == ActionType.SPEAK)
+    assert "Aria R500" in said

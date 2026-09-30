@@ -161,7 +161,9 @@ def _action_plans_block(view: dict) -> str:
             "describe it in unsupported (e.g. \"choose by colour\"), and still "
             "return the rest of the request as usual.\n"
             "- If the user only asks how an earlier request went (\"did that go "
-            "through?\"), set status_question to true and leave actions empty.\n"
+            "through?\") or about something an earlier result already told "
+            "them (a name, a time, a reference number), set status_question to "
+            "true and leave actions empty -- that is never unsupported.\n"
         )
     last = view.get("last_task") or []
     if last:

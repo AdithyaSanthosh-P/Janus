@@ -153,5 +153,6 @@ def test_repeat_booking_cancel_and_status_say_what_actually_ran():
     assert "I've already done that — book flight (Ana) went through earlier, so I won't repeat it." in turn(3_100_000, "book Ana again")
     assert turn(5_200_000, "no cancel it") == ["Okay, I've dropped that request. Nothing new was done — your earlier request still stands."]
     assert turn(7_300_000, "was it booked") == [
-        "Your last request was dropped before anything ran. Before that, I ran book flight (Ana). That still stands."]
+        "Your last request was dropped before anything ran. Before that, I ran book flight (Ana). That still stands. "
+        "What I found: booking ref B1."]
     assert_clean(h)

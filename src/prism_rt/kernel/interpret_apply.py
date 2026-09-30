@@ -381,7 +381,9 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         # honestly instead of forcing the turn onto a tool or re-asking.
         current = active_goal_id(txn.store)
         if interp.status_question and current is None:
-            replies.set_honest_reply(txn, interp.turn_id, replies.status_text(txn.store), now_us, step_no, event_id=event_id)
+            replies.set_honest_reply(
+                txn, interp.turn_id, replies.status_text(txn.store, with_findings=True), now_us, step_no, event_id=event_id
+            )
             return None
         if interp.unsupported:
             replies.set_honest_reply(

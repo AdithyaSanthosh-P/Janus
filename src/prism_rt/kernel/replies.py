@@ -61,8 +61,42 @@ def last_goal_that_ran(store, exclude: str | None = None):
     return None
 
 
-def status_text(store) -> str:
-    """Answer "did that go through?" about the most recent finished goal."""
+_SKIP_FIELDS = {"status", "message", "found", "error"}
+
+
+def findings_text(store, limit: int = 4) -> str:
+    """Short facts the most recent results reported ("device Aria R500 Wi-Fi
+    router, booking id BK-0001"), newest first. Found live, 30 Sep: "what's
+    my router's name?" right after a diagnosis that named it was refused as
+    something the agent can't do. Only what a tool actually returned."""
+    parts: list[str] = []
+    for call in reversed(store.call_ledger.all()):
+        if call.status != CallStatus.CONSUMED:
+            continue
+        fact = store.facts.get(f"result.{call.call_id}")
+        result = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
+        if not isinstance(result, dict):
+            continue
+        for key, value in result.items():
+            if key in _SKIP_FIELDS or not isinstance(value, str) or not value or len(value) > 60:
+                continue
+            item = f"{key.replace('_', ' ')} {value}"
+            if item not in parts:
+                parts.append(item)
+            if len(parts) >= limit:
+                return "What I found: " + "; ".join(parts) + "."
+    return "What I found: " + "; ".join(parts) + "." if parts else ""
+
+
+def status_text(store, *, with_findings: bool = False) -> str:
+    """Answer "did that go through?" about the most recent finished goal;
+    with_findings adds what the recent results said (a question about them)."""
+    text = _status_text(store)
+    findings = findings_text(store) if with_findings else ""
+    return f"{text} {findings}" if findings else text
+
+
+def _status_text(store) -> str:
     last = last_finished_goal(store)
     if last is None:
         return "I haven't done anything yet — what would you like me to do?"
