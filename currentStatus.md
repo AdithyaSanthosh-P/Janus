@@ -627,6 +627,7 @@ First full voice-path measurement since S3. Ran with `scripts/fdb_v3/native_run.
   - A camera/user conflict question skips re-extraction.
 - **Assumed-value hold** (`assumed_value_settle_enabled`, FDB profile): a call carrying an assumed value waits `settle_ms_incomplete`. This fixes the voice-run double search (assumed `max_price` 10000, then the stated 2000).
 - **Fragments:** an unclear turn of fewer than three words after a finished task gets the delayed re-ask, not a status summary.
+- **Tried and reverted:** a prompt rule making "set/update a setting" its own action (the filter update folded into a search, housing_13/20/24/25). Judged full-100 text replay: 75% against 77% without it. It fixed the tool selection in housing_24 only, and the other differences were run-to-run noise.
 - **Docs:**
   - The README results now include self-correction Pass@1 against the paper's Table 3 (text replay 0.824, voice 0.412; GPT-Realtime 0.588, cascaded 0.176), plus rerun turn-taking (32/32) and first-word latency (7.8 s mean; paper Table 6 first-word means 6.36 / 3.95 / 8.78 s).
   - `measurements.md` has a current-results section, and the stale "doesn't ask shall I go ahead" limitation is removed.
