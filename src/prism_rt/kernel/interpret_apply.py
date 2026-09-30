@@ -692,17 +692,26 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             # "thank you" deserves a reply, not "I didn't catch that" -- the
             # polite one still invites a request that was misread as chat.
             replies.set_honest_reply(txn, interp.turn_id, replies.POLITE_REPLY, now_us, step_no, event_id=event_id)
-        elif idle_replies and txn.store.goals.all():
+        elif idle_replies and txn.store.goals.all() and _turn_word_count(txn.store, interp.turn_id) >= 3:
             # An unclear turn right after a finished task is most often about
             # that task ("has it been booked?" -- the status_question flag is
             # unreliable on a small model, found live): say where it stands,
             # then invite the next request, instead of "didn't catch that".
+            # A fragment ("The...") is more likely the start of a sentence:
+            # it takes the delayed re-ask below, dropped if the user goes on
+            # (found live, 30 Sep: a status summary answered "The...").
             replies.set_honest_reply(
                 txn, interp.turn_id, replies.status_text(txn.store) + " Anything else?", now_us, step_no, event_id=event_id
             )
         else:
             _flag_unclear_no_goal(txn, interp.turn_id, now_us, step_no, event_id=event_id)
     return gid
+
+
+def _turn_word_count(store, turn_id: str) -> int:
+    turn = store.turn_log.get(turn_id)
+    text = " ".join(chunk.text for chunk in turn.chunks) if turn is not None else ""
+    return len(text.split())
 
 
 def _flag_unclear_no_goal(txn: StoreTxn, turn_id: str, now_us: int, step_no: int, *, event_id: str) -> None:

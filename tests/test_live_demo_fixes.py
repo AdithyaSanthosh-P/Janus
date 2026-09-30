@@ -355,3 +355,20 @@ def test_fdb_profile_keeps_followups_but_not_idle_replies():
     fdb, demo = fdb_v3_config(), demo_config()
     assert fdb.conversational_replies_enabled and not fdb.idle_replies_enabled
     assert demo.conversational_replies_enabled and demo.idle_replies_enabled
+
+
+def test_a_fragment_after_a_finished_task_gets_no_status_summary():
+    """30 Sep live demo: "The..." after a finished task was answered with a
+    full status summary; a fragment is more likely the start of a sentence."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "Sooooo", {"act": "unclear", "slot_deltas": []})
+    provider.register("interpret", "Chennai", CHENNAI_TOMORROW)
+    provider.register("compose", "a0", {"text": "Found a flight.", "claims": []})
+    h = harness(provider, config(never_silent_unclear_enabled=True, unclear_reask_delay_ms=2_000))
+    h.send(0, [manifest_event([SEARCH])])
+    h.send(100_000, [chunk_event("flights to Chennai tomorrow")])
+    first = send(h, 150_000, [eot_event()]) + drain(h, 3_000_000)
+    assert [a for a in first if a.action_type == ActionType.FINAL]  # the task really finished
+    h.send(3_100_000, [chunk_event("Sooooo the...")])
+    actions = send(h, 3_150_000, [eot_event()]) + drain(h, 4_000_000, stop_on_final=False)
+    assert not any(t.startswith("For your last request") for t in speaks(actions))
