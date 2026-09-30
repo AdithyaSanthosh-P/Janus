@@ -315,3 +315,42 @@ def test_unconfirmed_write_stays_silent_with_the_flag_off():
     """Control: the pre-fix behaviour -- nothing is said, nothing runs."""
     _, actions = _unconfirmed_booking(config(conversational_replies_enabled=False))
     assert not any("Shall I go ahead" in t for t in speaks(actions)) and tool_calls(actions) == []
+
+
+def test_idle_replies_off_leaves_small_talk_to_the_delayed_reask():
+    """30 Sep full voice run: "Happy to help" fired at a mid-sentence pause
+    ("Hmm, like I've been thinking about it and...") and talked over the
+    rest of the request. With idle_replies_enabled off (the FDB profile)
+    nothing is said at once; the never-silent re-ask waits and is dropped
+    when the user keeps talking."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "thinking about it", {"act": "smalltalk", "slot_deltas": []})
+    h = harness(provider, config(idle_replies_enabled=False, never_silent_unclear_enabled=True, unclear_reask_delay_ms=2_000))
+    h.send(0, [manifest_event([SEARCH])])
+    h.send(100_000, [chunk_event("hmm like I've been thinking about it and")])
+    actions = send(h, 150_000, [eot_event()]) + drain(h, 1_000_000, stop_on_final=False)
+    assert speaks(actions) == []
+
+
+def test_idle_replies_off_gives_no_status_to_an_unclear_turn():
+    provider = ScriptedProvider()
+    provider.register("interpret", "booked or not", {"act": "unclear", "slot_deltas": []})
+    provider.register("interpret", "Chennai", CHENNAI_TOMORROW)
+    provider.register("compose", "a0", {"text": "Found a flight.", "claims": []})
+    h = harness(provider, config(idle_replies_enabled=False))
+    h.send(0, [manifest_event([SEARCH])])
+    h.send(100_000, [chunk_event("flights to Chennai tomorrow")])
+    send(h, 150_000, [eot_event()])
+    drain(h, 3_000_000)
+    h.send(3_100_000, [chunk_event("booked or not")])
+    actions = send(h, 3_150_000, [eot_event()]) + drain(h, 4_000_000, stop_on_final=False)
+    assert not any(t.startswith("For your last request") for t in speaks(actions))
+    assert_clean(h)
+
+
+def test_fdb_profile_keeps_followups_but_not_idle_replies():
+    from prism_rt.profiles import demo_config, fdb_v3_config
+
+    fdb, demo = fdb_v3_config(), demo_config()
+    assert fdb.conversational_replies_enabled and not fdb.idle_replies_enabled
+    assert demo.conversational_replies_enabled and demo.idle_replies_enabled

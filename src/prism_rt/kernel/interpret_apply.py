@@ -661,11 +661,12 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
     # general assistant.
     gid = active_goal_id(txn.store)
     if gid is None:
-        if txn.store.config.conversational_replies_enabled and interp.act in (InterpretAct.SMALLTALK, InterpretAct.BACKCHANNEL):
+        idle_replies = txn.store.config.conversational_replies_enabled and txn.store.config.idle_replies_enabled
+        if idle_replies and interp.act in (InterpretAct.SMALLTALK, InterpretAct.BACKCHANNEL):
             # "thank you" deserves a reply, not "I didn't catch that" -- the
             # polite one still invites a request that was misread as chat.
             replies.set_honest_reply(txn, interp.turn_id, replies.POLITE_REPLY, now_us, step_no, event_id=event_id)
-        elif txn.store.config.conversational_replies_enabled and txn.store.goals.all():
+        elif idle_replies and txn.store.goals.all():
             # An unclear turn right after a finished task is most often about
             # that task ("has it been booked?" -- the status_question flag is
             # unreliable on a small model, found live): say where it stands,

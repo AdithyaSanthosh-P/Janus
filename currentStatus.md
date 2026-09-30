@@ -580,6 +580,19 @@ Found from a live voice session's decision log: the agent asked for a missing va
   - Replies now say what they refer to. A blocked duplicate write names the earlier write (`replies.duplicate_write_text`). A cancel says what already ran (`replies.abort_text`). A status question after a request dropped before anything ran reports the last request that did run.
   - gpt-4.1 15-recording subset, judge-scored: 8/15 (was 7/15 before these changes), so no regression.
 
+### Full-100 voice run (2026-09-29/30, native path on a cloud RTX 3090) — 41/100 exact-match; root causes found
+First full voice-path measurement since S3. Ran with `scripts/fdb_v3/native_run.sh` (the cloud pod has no Docker; `./reproduce.sh` remains unverified end to end). Results archived locally under `run_output/race_full100/results/20260929_232528` (not committed). Not yet judge-scored.
+- **Whisper fell back to CPU mid-run.** From 00:36:39 every new job process decoded at ~12 s per segment instead of 0.18 s. The switch happens at model load: no process mixed speeds. `voice/speech.py.load_whisper` catches a CUDA load failure and reloads on CPU without logging. STT lag went from ~4.4 s to ~29 s, and the agent was silent in 14 of 20 travel recordings. Pass rate was 47% (35/75) before the switch and 24% (6/25) after. The cause of the CUDA failure is not logged; VRAM exhaustion from per-process model copies is the leading hypothesis.
+- **8 failures are the benchmark client aborting (SIGABRT) after the stream**; the agent's decision logs show correct calls in 6 of them.
+- **Pause splitting:** every Whisper segment closes a turn after 1 s of silence. The consequences are partial interpretations, reads re-run after the rest of the sentence, and truncated IDs. Silence hallucinations ("you", "Hmm.") become turns and trigger the conversational replies.
+- Judge-scored with gpt-4o locally: 42/100 (exact match 41), so the value-formatting classes are not where the points are.
+- **Fixes (30 Sep, 447/447, NOT VERIFIED on the voice path yet):**
+  - `load_whisper` logs the device and GPU memory at every load and warns on a CPU fallback. `JANUS_REQUIRE_GPU=1` makes the fallback an error; it is off by default.
+  - `repro_inner.sh` logs GPU memory to `gpu_mem.csv` every 10 s and sets `JANUS_EOT_MS=1500` (was 1000).
+  - The voice bridge drops filler-only segments ("you", "Hmm.") in FDB mode (`is_filler_segment`); the demo keeps them.
+  - New `idle_replies_enabled`, off in `fdb_v3_config`: no immediate "Happy to help" or status reply to a turn with no active task. Follow-up appending and redo stay on.
+- Smaller classes (text-replay-fixable): spoken-ID shapes from Whisper, enum-like values (`driver's license`, free-text `filter_name`), a sequential chain that blocks independent actions, and the unsupported-request rule dropping an action.
+
 ### Failing / Broken
 **As of 2026-09-28:** Janus's own suite — nothing failing (**359/359**, re-run 2026-09-28). Against FDB-v3, nothing known-broken, but three things are unverified:
 1. **The voice-path silent-scenario count hasn't been re-measured since the Whisper OOM fix.** The last full 26-recording measurement (27 Sep, before that fix) had 4/26 silent. Text replay has zero silent scenarios across all 100.

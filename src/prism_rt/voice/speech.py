@@ -61,21 +61,54 @@ def _cuda_available() -> bool:
         return False
 
 
+def _gpu_memory() -> str:
+    """Free/total GPU memory for log lines; never raises."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            free, total = torch.cuda.mem_get_info()
+            return f"{free / 2**30:.1f}/{total / 2**30:.1f} GiB free"
+    except Exception:  # noqa: BLE001 - diagnostics only
+        pass
+    return "unknown"
+
+
+def _require_gpu() -> bool:
+    return os.environ.get("JANUS_REQUIRE_GPU", "").strip().lower() in ("1", "true", "yes")
+
+
 def load_whisper(device: str | None = None):
+    """Loads Whisper on the GPU when one is present. A CUDA load failure
+    used to fall back to CPU silently -- found in the 29-30 Sep full run,
+    where every job process after the GPU filled up decoded ~65x slower and
+    the agent heard users ~29 s late. The fallback now logs a warning with
+    the GPU memory state, and JANUS_REQUIRE_GPU=1 (benchmark runs) makes it
+    an error instead."""
     from faster_whisper import WhisperModel
     from huggingface_hub import snapshot_download
 
     path = snapshot_download(WHISPER_REPO, revision=WHISPER_REVISION)
     device = device or ("cuda" if _cuda_available() else "cpu")
+    gpu_compute = os.environ.get("JANUS_WHISPER_COMPUTE") or "float16"
     try:
-        gpu_compute = os.environ.get("JANUS_WHISPER_COMPUTE") or "float16"
         model = WhisperModel(path, device=device, compute_type=gpu_compute if device == "cuda" else "int8")
         _transcribe(model, np.zeros(WHISPER_SAMPLE_RATE, dtype=np.float32))
     except Exception:
         if device != "cuda":
             raise
+        logger.warning(
+            "janus.voice.speech: Whisper failed to load on the GPU (%s); falling back to CPU", _gpu_memory(), exc_info=True
+        )
+        if _require_gpu():
+            raise
+        device, gpu_compute = "cpu", "int8"
         model = WhisperModel(path, device="cpu", compute_type="int8")
         _transcribe(model, np.zeros(WHISPER_SAMPLE_RATE, dtype=np.float32))
+    logger.info(
+        "janus.voice.speech: Whisper loaded on %s (%s), GPU %s (pid %d)",
+        device, gpu_compute if device == "cuda" else "int8", _gpu_memory(), os.getpid(),
+    )
     return model
 
 
@@ -209,6 +242,7 @@ def load_kokoro(device: str | None = None) -> KokoroEngine:
     pipeline = KPipeline(lang_code="a", repo_id=KOKORO_REPO, model=model)
     engine = KokoroEngine(pipeline, os.path.join(path, "voices", f"{KOKORO_VOICE}.pt"))
     engine.synthesize_pcm16("Ready.")
+    logger.info("janus.voice.speech: Kokoro loaded on %s, GPU %s (pid %d)", device, _gpu_memory(), os.getpid())
     return engine
 
 

@@ -28,9 +28,28 @@ and Janus's own internal clock stay on one time base.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
+
+
+# Whole-segment transcripts that are Whisper's well-known output on silence
+# or breath rather than speech. Found in the 29-30 Sep full voice run: "you"
+# (16 times) and "Hmm." (10) each closed a turn of their own after the user
+# had finished, and the agent answered them.
+_FILLER_ONLY = re.compile(r"^(?:you|thank you|thanks|hmm+|mm+|um+|uh+|ah+|oh|okay|so)$")
+
+
+def is_filler_segment(text: str) -> bool:
+    """True when a finalized segment carries no content at all -- only a
+    filler or a silence hallucination -- once case, punctuation and
+    ellipses are ignored. An empty segment is not filler (see
+    `on_segment_final`: it still opens a turn on purpose)."""
+    words = re.sub(r"[^\w\s']", " ", text.lower()).split()
+    if not words:
+        return False
+    return all(_FILLER_ONLY.match(w) for w in words) or _FILLER_ONLY.match(" ".join(words)) is not None
 
 
 @dataclass
@@ -40,6 +59,7 @@ class VoiceBridge:
     say: Callable[[str], Awaitable[None]]
     execute_tool: Callable[[str, dict], Awaitable[dict]]  # (tool_name, args) -> result dict
     t_eot_ms: int = 1000
+    drop_filler_segments: bool = False  # see is_filler_segment
     clock: Callable[[], float] = field(default=time.monotonic)
     on_interruption_logged: Callable[[str], None] = field(default=lambda msg: None)
     # Day 2 WP5 (docs/fdb_v3_day2_plan.md): a caller driving a replay
@@ -118,6 +138,10 @@ class VoiceBridge:
         transcript, which a live model reads as UNCLEAR, which
         `never_silent_unclear_enabled` already turns into a spoken
         re-ask instead of silence."""
+        if self.drop_filler_segments and is_filler_segment(text):
+            # Not speech: no chunk, and the running end-of-turn countdown
+            # (if any) is left alone rather than restarted.
+            return
         await self.events.put({"type": "text_chunk", "ts_us": self.now_us(), "payload": {"text": text.strip()}})
         self._restart_eot_timer()
 

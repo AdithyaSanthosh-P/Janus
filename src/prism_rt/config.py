@@ -296,6 +296,14 @@ class Config:
     # never fires while the agent is waiting on the user's answer to a
     # question it asked.
     conversational_replies_enabled: bool = False
+    # Under conversational_replies_enabled: answer a turn that arrives with
+    # no active task at once -- "Happy to help" to small talk, a status
+    # summary to an unclear turn after a finished task. Off, those turns take
+    # the older never_silent_unclear path (a delayed re-ask, dropped if the
+    # user keeps talking). Found in the 29-30 Sep full voice run: the
+    # immediate replies fired at mid-sentence pauses and at Whisper's
+    # silence hallucinations ("you"), talking over single-turn recordings.
+    idle_replies_enabled: bool = True
     # A turn that closes while an earlier one is still waiting to be
     # interpreted is merged with it: one INTERPRET over the combined text.
     # Found live (28 Sep, housing_10 over LiveKit): a mid-sentence pause

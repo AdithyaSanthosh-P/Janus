@@ -70,10 +70,22 @@ log "recordings: $(ls "$OUT/data" | wc -l)"
 rm -f /tmp/agent_tool_calls.log
 export JANUS_DECISION_LOG_DIR="$OUT/decisions"
 export JANUS_WHISPER_COMPUTE="${JANUS_WHISPER_COMPUTE:-float16}"
+# Silence that closes a user turn. 1000 ms split mid-sentence pauses ("the ID
+# is A B ... C 1 2 3") into separate turns in the 29-30 Sep run; 1500 ms costs
+# ~0.5 s of latency per turn. Override with JANUS_EOT_MS.
+export JANUS_EOT_MS="${JANUS_EOT_MS:-1500}"
+# GPU memory every 10 s for the whole run: the 29-30 Sep run lost its GPU
+# Whisper partway through with nothing in the logs to say why.
+GPU_MON_PID=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi --query-gpu=timestamp,memory.used,memory.total,utilization.gpu --format=csv -l 10 \
+    > "$OUT/gpu_mem.csv" 2>/dev/null &
+  GPU_MON_PID=$!
+fi
 cd "$REPO"
 python -m prism_rt.voice.agent start > "$OUT/agent.log" 2>&1 &
 AGENT_PID=$!
-trap 'kill $AGENT_PID 2>/dev/null || true' EXIT
+trap 'kill $AGENT_PID $GPU_MON_PID 2>/dev/null || true' EXIT
 
 log "waiting for the worker to register (model load can take a few minutes)"
 for _ in $(seq 1 240); do

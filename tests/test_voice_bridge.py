@@ -166,3 +166,36 @@ async def test_manifest_is_emitted_with_ts_us():
     assert items[0]["type"] == "manifest"
     assert items[0]["payload"]["tools"] == [{"name": "search_flights"}]
     assert isinstance(items[0]["ts_us"], int)
+
+
+# 30 Sep: Whisper's silence hallucinations ("you", "Hmm.") closed turns of
+# their own after a single-request recording had finished.
+
+@pytest.mark.parametrize("text", ["you", "You.", "Hmm.", "Um...", "Thank you.", "mmm", "you you"])
+def test_filler_only_segments_are_recognised(text):
+    from prism_rt.adapters.voice_bridge import is_filler_segment
+
+    assert is_filler_segment(text)
+
+
+@pytest.mark.parametrize("text", ["", "   ", "you know", "Hmm, like I've been thinking", "Oh, and book it", "B O B"])
+def test_segments_with_content_are_not_filler(text):
+    from prism_rt.adapters.voice_bridge import is_filler_segment
+
+    assert not is_filler_segment(text)
+
+
+async def test_filler_segment_is_dropped_when_enabled():
+    bridge, events, _actions, _said = _make_bridge()
+    bridge.drop_filler_segments = True
+    await bridge.on_segment_final("you")
+    await bridge.on_segment_final("track order BOB")
+    items = await _drain_nowait(events)
+    assert [i["payload"]["text"] for i in items] == ["track order BOB"]
+
+
+async def test_filler_segment_is_kept_by_default():
+    bridge, events, _actions, _said = _make_bridge()
+    await bridge.on_segment_final("Thank you.")
+    items = await _drain_nowait(events)
+    assert [i["payload"]["text"] for i in items] == ["Thank you."]

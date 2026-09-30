@@ -234,6 +234,10 @@ async def entrypoint(ctx: JobContext) -> None:
         say=say,
         execute_tool=toolset.make_executor(room_name),
         t_eot_ms=_int_env("JANUS_EOT_MS", 1000),
+        # Single-request benchmark recordings: a lone "you"/"Hmm." after the
+        # request is Whisper on silence, not a new turn. Kept in demo mode,
+        # where a live person may say "thank you" and expect a reply.
+        drop_filler_segments=MODE != "demo" and os.environ.get("JANUS_KEEP_FILLER_SEGMENTS") != "1",
     )
 
     # gemini-3.6-flash, thinking off (28 Sep): same judge-scored full-100 as
