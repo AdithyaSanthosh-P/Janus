@@ -30,6 +30,9 @@ Environment:
   JANUS_IDLE_PROCESSES    prewarmed job processes, each with its own models (default 1)
   JANUS_JOB_EXECUTOR      "process" (default) or "thread" (jobs share one model copy;
                           saves VRAM, but was flaky over long runs -- see _SHARED)
+  JANUS_STT               "local" (faster-whisper on the GPU, default) or "openai" (hosted
+                          transcription, needs OPENAI_API_KEY; OPENAI_BASE_URL is honoured)
+  JANUS_STT_MODEL         override the hosted transcription model (default: speech.OPENAI_STT_MODEL)
   JANUS_WHISPER_HOTWORDS  1 = prime the recognizer with the tool vocabulary (off by default;
                           not yet A/B-tested on the benchmark)
   JANUS_WHISPER_COMPUTE   CTranslate2 compute type on GPU (default float16; the dev
@@ -68,7 +71,7 @@ from prism_rt.entry import setup
 from prism_rt.observability.xray import TracedQueue
 from prism_rt.profiles import demo_config, fdb_v3_config
 from prism_rt.voice.camera import FrameStore, pump_video_track
-from prism_rt.voice.speech import FasterWhisperSTT, KokoroTTS, load_kokoro, load_whisper
+from prism_rt.voice.speech import FasterWhisperSTT, KokoroTTS, OpenAITranscribeSTT, load_kokoro, load_whisper
 from prism_rt.workers.gateway import GeminiProvider, OpenAIProvider
 
 logger = logging.getLogger("janus.voice")
@@ -140,6 +143,12 @@ def fdb_toolset() -> Toolset:
 
 
 MODE = os.environ.get("JANUS_MODE", "fdb").strip().lower()
+# Speech-to-text: "local" (faster-whisper on the GPU, the default) or "openai"
+# (hosted transcription, speech.OPENAI_STT_MODEL; needs OPENAI_API_KEY, and
+# honours OPENAI_BASE_URL so the key can sit behind a relay).
+STT_BACKEND = os.environ.get("JANUS_STT", "local").strip().lower()
+if STT_BACKEND not in ("local", "openai"):
+    raise SystemExit(f"JANUS_STT must be 'local' or 'openai', not {STT_BACKEND!r}")
 if MODE not in ("fdb", "demo"):
     raise SystemExit(f"JANUS_MODE must be 'fdb' or 'demo', not {MODE!r}")
 
@@ -168,7 +177,8 @@ def _shared_models() -> dict:
     with _SHARED_LOCK:
         if not _SHARED:
             _SHARED["vad"] = silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
-            _SHARED["whisper"] = load_whisper()
+            if STT_BACKEND == "local":
+                _SHARED["whisper"] = load_whisper()
             _SHARED["kokoro"] = load_kokoro()
             _SHARED["toolset"] = demo_toolset() if MODE == "demo" else fdb_toolset()
         return _SHARED
@@ -199,15 +209,16 @@ async def entrypoint(ctx: JobContext) -> None:
     toolset: Toolset = userdata["toolset"]
     logger.info("janus joining room %s", room_name)
 
+    if STT_BACKEND == "openai":
+        recognizer = OpenAITranscribeSTT()
+    else:
+        recognizer = FasterWhisperSTT(
+            userdata["whisper"],
+            hotwords=vocabulary_hotwords(toolset.manifest) if os.environ.get("JANUS_WHISPER_HOTWORDS") == "1" else None,
+        )
     session = AgentSession(
         vad=userdata["vad"],
-        stt=stt.StreamAdapter(
-            stt=FasterWhisperSTT(
-                userdata["whisper"],
-                hotwords=vocabulary_hotwords(toolset.manifest) if os.environ.get("JANUS_WHISPER_HOTWORDS") == "1" else None,
-            ),
-            vad=userdata["vad"],
-        ),
+        stt=stt.StreamAdapter(stt=recognizer, vad=userdata["vad"]),
         tts=KokoroTTS(userdata["kokoro"]),
         min_interruption_words=_int_env("JANUS_MIN_INTERRUPTION_WORDS", 1 if MODE == "demo" else 2),
     )

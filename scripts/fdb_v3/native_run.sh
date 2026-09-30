@@ -23,11 +23,27 @@ done
 die() { echo "ERROR: $*" >&2; exit 1; }
 [[ -x "$VENV/bin/python" ]] || die "no venv at $VENV; run scripts/fdb_v3/native_setup.sh first"
 if [[ -f "$REPO/.env" ]]; then set -a; source "$REPO/.env"; set +a; fi
+# Same key rules as ./reproduce.sh: JANUS_LLM_PROVIDER=gemini|openai, JANUS_STT=local|openai.
+# JANUS_STT=openai with OPENAI_BASE_URL pointing at scripts/fdb_v3/openai_stt_relay.py keeps
+# the real OpenAI key on another machine (OPENAI_API_KEY is then only a placeholder).
+LLM_PROVIDER="${JANUS_LLM_PROVIDER:-gemini}"; STT_BACKEND="${JANUS_STT:-local}"
 missing=()
-for v in LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET GEMINI_API_KEY; do [[ -n "${!v:-}" ]] || missing+=("$v"); done
-[[ $JUDGE == 0 ]] && unset OPENAI_API_KEY || { [[ -n "${OPENAI_API_KEY:-}" ]] || missing+=("OPENAI_API_KEY"); }
+for v in LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET; do [[ -n "${!v:-}" ]] || missing+=("$v"); done
+case "$LLM_PROVIDER" in
+  gemini) [[ -n "${GEMINI_API_KEY:-}" ]] || missing+=("GEMINI_API_KEY") ;;
+  openai) [[ -n "${OPENAI_API_KEY:-}" ]] || missing+=("OPENAI_API_KEY") ;;
+  *) die "JANUS_LLM_PROVIDER must be gemini or openai" ;;
+esac
+case "$STT_BACKEND" in
+  local) ;;
+  openai) [[ -n "${OPENAI_API_KEY:-}" ]] || missing+=("OPENAI_API_KEY (JANUS_STT=openai; a placeholder is fine behind the relay)") ;;
+  *) die "JANUS_STT must be local or openai" ;;
+esac
+if [[ $JUDGE == 1 && -z "${OPENAI_API_KEY:-}" ]]; then missing+=("OPENAI_API_KEY (--judge)"); fi
+if [[ $JUDGE == 0 && $LLM_PROVIDER != openai && $STT_BACKEND != openai ]]; then unset OPENAI_API_KEY; fi
 [[ ${#missing[@]} -eq 0 ]] || die "missing in the environment or .env: ${missing[*]}"
-echo "==> keys present: LiveKit, Gemini$([[ $JUDGE == 1 ]] && echo ', OpenAI judge')"
+export JANUS_LLM_PROVIDER="$LLM_PROVIDER" JANUS_STT="$STT_BACKEND" REPRO_JUDGE="$JUDGE"
+echo "==> keys present: LiveKit; reasoning: $LLM_PROVIDER; speech-to-text: $STT_BACKEND; judge: $([[ $JUDGE == 1 ]] && echo on || echo off)"
 
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"

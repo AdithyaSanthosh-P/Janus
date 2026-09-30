@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-command reproduction of Janus on Full-Duplex-Bench v3 (FDB-v3).
 #
-#   cp .env.example .env    # fill in the five keys (see README "Keys")
+#   cp .env.example .env    # fill in the keys (see README "Keys")
 #   ./reproduce.sh          # all 100 scenarios, LLM judge on
 #
 # Options:
@@ -9,6 +9,9 @@
 #   --no-judge                     exact-match scoring only (no OPENAI_API_KEY needed)
 #   --skip-build                   reuse an already built image
 #   --low-vram                     for GPUs < 16 GB shared with FDB's scorer
+#
+# Environment (optional): JANUS_LLM_PROVIDER=gemini|openai, JANUS_STT=local|openai.
+# With both set to openai the run needs only LiveKit and OpenAI keys.
 #
 # What it does: checks the environment (never printing key values) ->
 # builds the pinned Docker image (model weights baked in) -> inside the
@@ -41,14 +44,26 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 
 # 1. Environment ------------------------------------------------------------
 if [[ -f "$REPO/.env" ]]; then set -a; source "$REPO/.env"; set +a; fi
+# Which hosted services this run uses decides which keys it needs.
+#   JANUS_LLM_PROVIDER  gemini (default) | openai   -- the model behind the kernel's decisions
+#   JANUS_STT           local (default)  | openai   -- speech-to-text (local = faster-whisper on the GPU)
+LLM_PROVIDER="${JANUS_LLM_PROVIDER:-gemini}"; STT_BACKEND="${JANUS_STT:-local}"
 missing=()
-for v in LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET GEMINI_API_KEY; do
-  [[ -n "${!v:-}" ]] || missing+=("$v")
-done
+for v in LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET; do [[ -n "${!v:-}" ]] || missing+=("$v"); done
+case "$LLM_PROVIDER" in
+  gemini) [[ -n "${GEMINI_API_KEY:-}" ]] || missing+=("GEMINI_API_KEY (or JANUS_LLM_PROVIDER=openai)") ;;
+  openai) [[ -n "${OPENAI_API_KEY:-}" ]] || missing+=("OPENAI_API_KEY (JANUS_LLM_PROVIDER=openai)") ;;
+  *) die "JANUS_LLM_PROVIDER must be gemini or openai" ;;
+esac
+case "$STT_BACKEND" in
+  local) ;;
+  openai) [[ -n "${OPENAI_API_KEY:-}" ]] || missing+=("OPENAI_API_KEY (JANUS_STT=openai)") ;;
+  *) die "JANUS_STT must be local or openai" ;;
+esac
 if [[ $JUDGE == 1 && -z "${OPENAI_API_KEY:-}" ]]; then missing+=("OPENAI_API_KEY (or pass --no-judge)"); fi
-[[ $JUDGE == 1 ]] || unset OPENAI_API_KEY
+if [[ $JUDGE == 0 && $LLM_PROVIDER != openai && $STT_BACKEND != openai ]]; then unset OPENAI_API_KEY; fi
 [[ ${#missing[@]} -eq 0 ]] || die "missing in the environment or .env: ${missing[*]}"
-say "keys present: LiveKit, Gemini$([[ $JUDGE == 1 ]] && echo ', OpenAI judge')"
+say "keys present: LiveKit; reasoning: $LLM_PROVIDER; speech-to-text: $STT_BACKEND; judge: $([[ $JUDGE == 1 ]] && echo on || echo off)"
 
 command -v docker >/dev/null || die "docker not found"
 docker info >/dev/null 2>&1 || die "cannot talk to the docker daemon (permissions? try sudo or the docker group)"
@@ -82,7 +97,9 @@ docker run --rm --gpus all --network host \
   -e IDS="$IDS" -e REPRO_LOW_VRAM="$LOW_VRAM" \
   -e JANUS_COMMIT="$COMMIT" -e JANUS_DIRTY="$DIRTY" \
   -e LIVEKIT_URL -e LIVEKIT_API_KEY -e LIVEKIT_API_SECRET -e GEMINI_API_KEY \
-  -e OPENAI_API_KEY \
+  -e OPENAI_API_KEY -e REPRO_JUDGE="$JUDGE" \
+  -e JANUS_LLM_PROVIDER="$LLM_PROVIDER" -e JANUS_STT="$STT_BACKEND" \
+  ${OPENAI_BASE_URL:+-e OPENAI_BASE_URL} ${JANUS_STT_MODEL:+-e JANUS_STT_MODEL} \
   ${JANUS_WHISPER_COMPUTE:+-e JANUS_WHISPER_COMPUTE} ${JANUS_LLM_MODEL:+-e JANUS_LLM_MODEL} \
   "$IMAGE" -c "bash /janus/scripts/fdb_v3/repro_inner.sh" 2>&1 | tee "$OUT/reproduce.log"
 status=${PIPESTATUS[0]}

@@ -10,8 +10,10 @@
 #   OUT               results directory for this run (required)
 #   FDB_CACHE_DIR     where FDB is cloned / its data extracted (default $OUT/../.fdb_cache)
 #   IDS               space-separated example ids (e.g. "travel_01 finance_19"); empty = all 100
-#   LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, GEMINI_API_KEY   (required)
-#   OPENAI_API_KEY    FDB's LLM judge; without it the reports are exact-match only
+#   LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET   (required)
+#   GEMINI_API_KEY    the kernel's model (JANUS_LLM_PROVIDER=gemini, the default)
+#   OPENAI_API_KEY    FDB's LLM judge, and JANUS_LLM_PROVIDER=openai / JANUS_STT=openai
+#   REPRO_JUDGE       1/0: run FDB's LLM judge (default: on when OPENAI_API_KEY is set)
 #   REPRO_LOW_VRAM=1  dev-laptop workaround (CPU-first NeMo checkpoint load); not needed on >= 16 GB
 set -euo pipefail
 
@@ -103,8 +105,13 @@ cd "$FDB_ROOT"
 "${SHIM[@]}" python run_tool_benchmark_all_released.py --provider janus --root_dir "$OUT/data" --force \
   | tee "$OUT/runner.log"
 
-# 7. FDB's evaluators, LLM judge on when a key is present.
-USE_LLM=""; [[ -n "${OPENAI_API_KEY:-}" ]] && USE_LLM="--use-llm"
+# 7. FDB's evaluators. REPRO_JUDGE (set by reproduce.sh / native_run.sh) decides whether
+#    the LLM judge runs; an OpenAI key may be present for speech-to-text alone.
+if [[ -n "${REPRO_JUDGE:-}" ]]; then
+  USE_LLM=""; [[ "$REPRO_JUDGE" == "1" ]] && USE_LLM="--use-llm"
+else
+  USE_LLM=""; [[ -n "${OPENAI_API_KEY:-}" ]] && USE_LLM="--use-llm"
+fi
 python evaluate_pass_rate.py --benchmark benchmark_data_v2.json --results-dir "$OUT/data" \
   --provider janus --output "$OUT/pass_rate_report.json" $USE_LLM | tee "$OUT/eval_pass_rate.log"
 python evaluate_tool_calls.py --benchmark benchmark_data_v2.json --results-dir "$OUT/data" \

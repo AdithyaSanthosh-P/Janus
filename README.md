@@ -138,7 +138,16 @@ Copy `.env.example` to `.env`. It is git-ignored; keys are never in the repo.
 |---|---|
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Any LiveKit Cloud project; FDB's client and the Janus worker meet in a room there. |
 | `GEMINI_API_KEY` | The hosted model behind Interpret / Plan / Compose / Vision (Google AI Studio). About 500 calls per full run. |
-| `OPENAI_API_KEY` | FDB's LLM judge (semantic argument matching, response quality). Optional with `--no-judge`. |
+| `OPENAI_API_KEY` | FDB's LLM judge (semantic argument matching, response quality). Optional with `--no-judge`. Also used by the two OpenAI options below. |
+
+Two optional switches choose the hosted services (set them in `.env` or the shell):
+
+| Variable | Values | Effect |
+|---|---|---|
+| `JANUS_LLM_PROVIDER` | `gemini` (default) · `openai` | The model behind the kernel's decisions (`openai` = gpt-4.1, equal to Gemini 3.6 Flash on our judged 15-recording comparison). |
+| `JANUS_STT` | `local` (default) · `openai` | Speech-to-text: faster-whisper on the GPU, or OpenAI's `gpt-4o-mini-transcribe-2025-12-15` (pinned snapshot). |
+
+With both set to `openai`, a run needs only LiveKit and OpenAI keys: the same OpenAI key the judge already uses. To keep an OpenAI key off a GPU machine you don't control, run `scripts/fdb_v3/openai_stt_relay.py` on your own machine and open a reverse SSH tunnel. The relay adds the key itself and forwards only transcription requests; the script's docstring has the commands.
 
 ## Tests
 

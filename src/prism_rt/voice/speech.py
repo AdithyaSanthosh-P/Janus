@@ -206,6 +206,75 @@ class FasterWhisperSTT(stt.STT):
         )
 
 
+# Hosted speech-to-text (JANUS_STT=openai). Pinned to a dated snapshot so a
+# re-run months later transcribes with the same model. Chosen on 30 Sep by
+# transcribing the benchmark recordings local Whisper got wrong: it heard every
+# name and code correctly ("Chicago", "Milan", "BOB12") and writes spoken codes
+# compactly ("123ABC", "P88990011").
+OPENAI_STT_MODEL = "gpt-4o-mini-transcribe-2025-12-15"
+
+
+def _wav_bytes(audio: np.ndarray) -> bytes:
+    import io
+    import wave
+
+    pcm = np.clip(audio * 32768.0, -32768, 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(WHISPER_SAMPLE_RATE)
+        wav.writeframes(pcm.tobytes())
+    return buf.getvalue()
+
+
+class OpenAITranscribeSTT(stt.STT):
+    """Same contract as FasterWhisperSTT (one VAD-delimited segment in, one
+    final transcript out, never raises), backed by OpenAI's transcription
+    API. The client reads OPENAI_API_KEY and OPENAI_BASE_URL from the
+    environment, so the key can stay on another machine behind a relay
+    (scripts/fdb_v3/openai_stt_relay.py)."""
+
+    def __init__(self, *, model: str | None = None, language: str = "en", timeout_s: float = 15.0) -> None:
+        super().__init__(capabilities=stt.STTCapabilities(streaming=False, interim_results=False))
+        import openai
+
+        self._client = openai.AsyncOpenAI(timeout=timeout_s, max_retries=0)
+        self._model = model or os.environ.get("JANUS_STT_MODEL") or OPENAI_STT_MODEL
+        self._language = language
+
+    async def _recognize_impl(
+        self,
+        buffer,
+        *,
+        language: NotGivenOr[str] = NOT_GIVEN,
+        conn_options: APIConnectOptions,
+    ) -> stt.SpeechEvent:
+        audio = _to_mono_16k(buffer)
+        logger.info(
+            "janus.voice.speech: recognizing buffer -- %d samples (%.2fs at %dHz) via %s",
+            len(audio), len(audio) / WHISPER_SAMPLE_RATE, WHISPER_SAMPLE_RATE, self._model,
+        )
+        data = _wav_bytes(audio)
+        text = ""
+        for attempt in (1, 2):
+            try:
+                result = await self._client.audio.transcriptions.create(
+                    model=self._model, file=("segment.wav", data, "audio/wav"), language=self._language
+                )
+                text = clean_transcript(getattr(result, "text", "") or "")
+                break
+            except Exception:  # noqa: BLE001 - same never-raise rule as FasterWhisperSTT
+                logger.exception("janus.voice.speech: transcription attempt %d failed", attempt)
+                if attempt == 1:
+                    await asyncio.sleep(0.2)
+        logger.info("janus.voice.speech: recognized text=%r", text)
+        return stt.SpeechEvent(
+            type=stt.SpeechEventType.FINAL_TRANSCRIPT,
+            alternatives=[stt.SpeechData(language=self._language, text=text)],
+        )
+
+
 class KokoroEngine:
     def __init__(self, pipeline, voice_path: str, speed: float = 1.0) -> None:
         self._pipeline = pipeline

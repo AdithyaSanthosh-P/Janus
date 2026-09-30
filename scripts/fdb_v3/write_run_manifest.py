@@ -66,8 +66,16 @@ def main() -> None:
     from prism_rt.profiles import fdb_v3_config
 
     cfg = fdb_v3_config(watchdog_timeout_ms=int(os.environ.get("JANUS_WATCHDOG_MS", "105000")))
-    model = os.environ.get("JANUS_LLM_MODEL", "gemini-3.6-flash")
-    thinking = os.environ.get("JANUS_THINKING_BUDGET", "0")
+    llm_provider = os.environ.get("JANUS_LLM_PROVIDER", "gemini")
+    model = os.environ.get("JANUS_LLM_MODEL", "gpt-4.1" if llm_provider == "openai" else "gemini-3.6-flash")
+    thinking = os.environ.get("JANUS_THINKING_BUDGET", "0") if llm_provider == "gemini" else "n/a"
+    stt_backend = os.environ.get("JANUS_STT", "local")
+    if stt_backend == "openai":
+        stt_model = os.environ.get("JANUS_STT_MODEL") or "gpt-4o-mini-transcribe-2025-12-15"
+        stt_desc = f"{stt_model} (hosted OpenAI API)"
+    else:
+        stt_desc = "faster-whisper large-v3-turbo (local, GPU)"
+    llm_desc = f"{model} (hosted {'OpenAI' if llm_provider == 'openai' else 'Gemini'} API"
 
     pass_rate = _load(os.path.join(args.out, "pass_rate_report.json")) or {}
     tools = _load(os.path.join(args.out, "tool_calls_report.json")) or {}
@@ -91,7 +99,8 @@ def main() -> None:
             "llm_thinking_budget": thinking or "model default",
             "llm_temperature": 0,
             "seed": 0,
-            "stt": "faster-whisper large-v3-turbo (local, GPU)",
+            "llm_provider": llm_provider,
+            "stt": stt_desc,
             "tts": "Kokoro-82M af_heart (local, GPU)",
             "vad": "Silero VAD (local)",
             "eot_ms": os.environ.get("JANUS_EOT_MS", "1000"),
@@ -105,16 +114,17 @@ def main() -> None:
         "headline": headline,
         "notes": [
             "FDB's own mock-tool latency jitter is unseeded; repeat runs differ slightly.",
-            "The LLM is a hosted API (Gemini): temperature 0, but hosted models are not bit-reproducible.",
+            "The LLM is a hosted API: temperature 0, but hosted models are not bit-reproducible.",
         ],
     }
     with open(os.path.join(args.out, "manifest.json"), "w") as fh:
         json.dump(manifest, fh, indent=2, default=str)
 
+    thinking_part = f", thinking budget {thinking or 'default'}" if llm_provider == "gemini" else ""
     provider = (
         "Provider declaration: custom LiveKit agent (Janus). Decisions by the Janus kernel with "
-        f"{model} (hosted Gemini API, thinking budget {thinking or 'default'}, temperature 0); "
-        "speech: faster-whisper large-v3-turbo (STT), Kokoro-82M (TTS), Silero VAD, all local."
+        f"{llm_desc}{thinking_part}, temperature 0); "
+        f"speech: {stt_desc} (STT), Kokoro-82M (TTS, local), Silero VAD (local)."
     )
     with open(os.path.join(args.out, "PROVIDER.txt"), "w") as fh:
         fh.write(provider + "\n")
