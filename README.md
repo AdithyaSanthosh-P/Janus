@@ -43,6 +43,8 @@ Seeds and randomness: the model call uses temperature 0 and the kernel is determ
 
 ## Architecture
 
+![Janus architecture](docs/architecture.png)
+
 ```mermaid
 flowchart LR
 %% -------------------------------------------------
