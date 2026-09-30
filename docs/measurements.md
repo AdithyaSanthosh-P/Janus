@@ -125,6 +125,27 @@ Bounded, not exhaustive: latency knobs are per worker *kind*, event order is alw
 
 Current suite: **246/246 passing**, Docker-verified on Python 3.11.
 
+## FDB-v3: current results (30 Sep 2026)
+
+FDB-v3's own runner and evaluators at the pinned commit `3e799c45`, unmodified. "Judged" means FDB's `--use-llm` with `gpt-4o`, the organizers' evaluation setting.
+
+| Run | Strict Pass@1 | Tool sel. | Arg. acc. | Resp. quality | Self-correction (Pass@1) |
+|---|---|---|---|---|---|
+| Text replay, all 100, Gemini 3.6 Flash (thinking 0), judged | **0.770** | 0.959 | 0.807 | 0.840 | **0.824** |
+| Voice over LiveKit, all 100, cloud RTX 3090, native path, judged (29-30 Sep, before the fixes below) | 0.420 | 0.844 | 0.611 | 0.597 | 0.412 |
+| Voice, 32-recording rerun of that run's hardest recordings, after the GPU fix, exact match | 11/32 (was 8/32) | | | | |
+
+By domain (text replay): finance 1.00, travel 0.95, e-commerce 0.83, housing 0.35. By number of tool calls: 1 call 0.82, 2 calls 0.72, 3 calls 0.63.
+
+What the full voice run's decision logs showed, each fixed with a regression test (details in `currentStatus.md`):
+
+- **Speech-to-text fell back from GPU to CPU** in every job process started after ~75 recordings (decode 0.18 s → ~12 s per segment; the agent heard users ~29 s late). Pass rate 47 % before the switch, 24 % after. Now logged with GPU memory, and can be made fatal (`JANUS_REQUIRE_GPU=1`); `repro_inner.sh` records `gpu_mem.csv`.
+- **Two kernel liveness bugs**: a clarifying question set late in a step was never dispatched when no other event arrived; the stall salvage could fire while the user was still speaking. Both invisible to the fixed-tick simulator; now covered by event-driven tests (`tests/test_clarify_wake.py`).
+- **Whisper artefacts**: silence hallucinations ("you", "Hmm.") became turns; spoken codes ("F A S T nine nine") were not joined into identifiers.
+- **8 recordings lost to the benchmark client aborting (SIGABRT) after the stream**; the agent's decision logs show correct tool calls in 6 of them.
+
+Hosted transcription (`JANUS_STT=openai`, `gpt-4o-mini-transcribe-2025-12-15`) heard every name and code local Whisper got wrong on the checked recordings ("Chicago", "Milan", "BOB12", "123ABC", "P88990011"); a voice run with it has not been scored yet.
+
 ## FDB-v3 published baselines (docs/fdb_v3_implementation_plan.md Day 1)
 
 From the FDB-v3 paper (arXiv 2604.04847, Lin/Chen/Chen/Lee, NTU + NVIDIA), Tables 2/4/5/6 — quoted exactly, not re-derived. All six baselines are voice-native systems run over real audio through LiveKit; Janus's own Day-1 numbers below are a **text replay** (no voice yet, see `currentStatus.md`'s FDB-v3 Day 1 section) and are not directly comparable on latency/turn-taking, only on tool-selection/Pass@1 as a rough sanity check of the reasoning core.
@@ -146,7 +167,9 @@ Mean latency breakdown in seconds (Table 6, First Word / Tool Call / Task Comple
 
 Two qualitative findings worth carrying into Day 2's own design: (1) **Gemini Live 3.1 is "the silent worker"** — fastest when it responds, but 22% of scenarios get no speech at all despite 86% of those silent cases having actually executed the right tool calls; a disconnect between reasoning and speech generation the paper calls out as its own failure mode, distinct from Janus's own "no honest failure on a stalled call" gap found this session (see `currentStatus.md`) but a useful cross-check that "acts correctly but says nothing" is a known failure shape in this benchmark, not unique to Janus. (2) **self-correction is the hardest category for every system** (GPT-Realtime leads at only 0.588; Cascaded scores just 0.176, "the downstream LLM has no opportunity for state rollback") — this is exactly the class of correction/rollback Janus's own architecture (read-set invalidation, same-step cancellation) was built for, so it is the single highest-leverage place Janus's design should differentiate once voice is wired up.
 
-**Janus's own Day-1 numbers, for rough sanity-check context (not apples-to-apples — see caveat above):** 20-scenario subset (gemini-3.5-flash-lite, post bare-fact-key fix, exact-match scoring): strict Pass@1 40.0% — inside the published baselines' range (0.410–0.600), comparable to Grok/Ultravox/Gemini-2.5. Full 100-scenario run: strict Pass@1 21.0% — below the published range, understood to be suppressed by the G4/commit-intent gap diagnosed the same session (`currentStatus.md`'s FDB-v3 Day 1 section) rather than a real reasoning-quality ceiling; re-measure after Day 2's commit-intent policy lands. All argument-accuracy numbers are exact-match (no `OPENAI_API_KEY` yet) where the paper's are presumably judge-scored, so Janus's true numbers are likely higher than quoted here.
+Pass@1 by disfluency (Table 3): self-correction is the hardest category for every system: GPT-Realtime 0.588, Gemini Live 2.5 0.471, Gemini Live 3.1 0.353, Ultravox 0.353, Grok 0.294, Cascaded 0.176.
+
+**Historical (25 Sep, superseded by the section above) — Janus's own Day-1 numbers, for rough sanity-check context (not apples-to-apples — see caveat above):** 20-scenario subset (gemini-3.5-flash-lite, post bare-fact-key fix, exact-match scoring): strict Pass@1 40.0% — inside the published baselines' range (0.410–0.600), comparable to Grok/Ultravox/Gemini-2.5. Full 100-scenario run: strict Pass@1 21.0% — below the published range, understood to be suppressed by the G4/commit-intent gap diagnosed the same session (`currentStatus.md`'s FDB-v3 Day 1 section) rather than a real reasoning-quality ceiling; re-measure after Day 2's commit-intent policy lands. All argument-accuracy numbers are exact-match (no `OPENAI_API_KEY` yet) where the paper's are presumably judge-scored, so Janus's true numbers are likely higher than quoted here.
 
 ## Known gaps in this data
 

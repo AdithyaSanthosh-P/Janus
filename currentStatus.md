@@ -599,6 +599,25 @@ First full voice-path measurement since S3. Ran with `scripts/fdb_v3/native_run.
 - **Interpreter value rule** for identifier-style enum values and filter keys. Judged full-100 text replay: 77% (was 73%); housing 23% → 35%, finance 96% → 100%.
 - Smaller classes (text-replay-fixable): spoken-ID shapes from Whisper, enum-like values (`driver's license`, free-text `filter_name`), a sequential chain that blocks independent actions, and the unsupported-request rule dropping an action.
 
+### Hosted speech-to-text and OpenAI-only reproduction (2026-09-30)
+- **`JANUS_STT=openai`** (`voice/speech.py.OpenAITranscribeSTT`, pinned `gpt-4o-mini-transcribe-2025-12-15`).
+  - Contract: the same segment contract and never-raise rule as faster-whisper; Whisper is not loaded in that mode. Local faster-whisper stays the default.
+  - Transcription quality: on the recordings local Whisper got wrong, it heard every name and code ("Chicago", "Milan", "BOB12", "123ABC", "P88990011").
+  - English-only prompt: a fixed prompt keeps the output English, after accented speech came back in Urdu script live.
+- **`reproduce.sh` / `native_run.sh` pick keys by provider** (`JANUS_LLM_PROVIDER`, `JANUS_STT`). With both set to `openai`, a run needs only LiveKit and OpenAI keys. The judge is an explicit flag (`REPRO_JUDGE`); `PROVIDER.txt` and `manifest.json` declare the providers actually used.
+- **`scripts/fdb_v3/openai_stt_relay.py`** keeps the OpenAI key on a trusted machine behind a reverse SSH tunnel. It forwards only transcription for the pinned model, size- and rate-limited (tests in `tests/test_openai_stt_relay.py`).
+- **NOT VERIFIED on the voice benchmark.** The planned check is the 32-recording RACE rerun through the relay, compared with 11/32; the default switches only if clearly better.
+
+### Live demo round 4 (2026-09-30, device care over the LiveKit console with camera) — four fixes
+- **The camera answered, and the goal kept asking.** A compiled step binds per-action keys, while perception writes the plain slot. The executor now uses a perception-sourced plain slot when the action has no value of its own (a user value still wins), and a camera answer resolves a question asked on the per-action key.
+- **Double booking, twice** (the serious one):
+  1. "Make it evening" after a confirmed booking re-ran the finished task. A correction to a finished task whose write went through is now answered honestly and never re-run (`replies.no_second_write_text`).
+  2. "No, cancel it. Make it Friday" was read as a new request. A new request whose write tool already went through this session has its go-ahead withheld, so CommitGate G4 holds it and the question names the booking that stands. An explicit yes still books it.
+- **Clarify questions offer the parameter's option list** when its description is just that list ("What's the time slot: morning, afternoon or evening?").
+- **Questions about earlier results** ("What's my router's name?") are answered from what the tools returned ("What I found: …").
+- **Noise filtering:** segments whose letters are 15 % or more non-English are dropped (the agent's own voice picked up without headphones).
+- Suite 480/480. Each fix has a regression test replaying the live session.
+
 ### Failing / Broken
 **As of 2026-09-28:** Janus's own suite — nothing failing (**359/359**, re-run 2026-09-28). Against FDB-v3, nothing known-broken, but three things are unverified:
 1. **The voice-path silent-scenario count hasn't been re-measured since the Whisper OOM fix.** The last full 26-recording measurement (27 Sep, before that fix) had 4/26 silent. Text replay has zero silent scenarios across all 100.

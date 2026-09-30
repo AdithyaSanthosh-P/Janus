@@ -4,7 +4,7 @@ A full-duplex, interruptible voice agent built around one idea: **no model ever 
 
 Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptible Real-Time Agents**, and evaluated on **Full-Duplex-Bench v3 (FDB-v3)** over LiveKit.
 
-> **Provider declaration.** Custom LiveKit agent (Janus). Decisions: the Janus kernel with **Gemini 3.6 Flash** (hosted Gemini API, thinking budget 0, temperature 0). Speech, all local on the GPU: **faster-whisper large-v3-turbo** (STT), **Kokoro-82M** (TTS), **Silero VAD**. Nothing else is called at evaluation time.
+> **Provider declaration.** Custom LiveKit agent (Janus). Decisions: the Janus kernel with **Gemini 3.6 Flash** (hosted Gemini API, thinking budget 0, temperature 0). Speech, all local on the GPU: **faster-whisper large-v3-turbo** (STT), **Kokoro-82M** (TTS), **Silero VAD**. Nothing else is called at evaluation time. Two switches can move decisions and/or speech-to-text to OpenAI instead (see [Keys](#keys)); every run writes the providers it actually used to `PROVIDER.txt`.
 > (The Python import path is `prism_rt`; the distribution is named `janus`. That mismatch is deliberate.)
 
 ## Contents
@@ -14,7 +14,7 @@ Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptib
 ## Reproduce the benchmark (one command)
 
 ```bash
-cp .env.example .env      # fill in the five keys, see "Keys" below
+cp .env.example .env      # fill in the keys, see "Keys" below
 ./reproduce.sh            # all 100 scenarios, FDB's LLM judge on
 ```
 
@@ -89,6 +89,11 @@ The kernel X-ray draws a session from its decision log: what the user said, what
 
 - **Tools** (mock services over a small local knowledge base, `src/prism_rt/devicecare/`): `identify_indicator`, `lookup_error_code`, `get_fix_steps`, `check_warranty` (reads) and `book_technician`, `open_support_ticket` (writes). Two devices: a Wi-Fi router (LED patterns) and a washing machine (error codes, so it also works audio-only).
 - **Same kernel, different profile.** `demo_config()` in `src/prism_rt/profiles.py`: vision on, tool mutability declared by the manifest, a booking needs the user's explicit go-ahead and waits out the settle window, missing details are asked about instead of assumed.
+- **Conversation safeguards**, each from a live session and each with a regression test:
+  - A booking without a clear go-ahead is not made in silence: the agent asks *"Shall I go ahead and book technician (Friday, afternoon)?"* and a yes supplies the go-ahead.
+  - A change after a booking went through is never re-run as a second booking: *"That's already done — book technician (Thursday, morning) went through. I can't change it from here, and I won't make a second one."* A new request for the same kind of booking asks first and names the one that already stands.
+  - A missing detail is asked with its allowed values (*"What's the time slot: morning, afternoon or evening?"*), and the camera can answer a question the plan already asked.
+  - A question about something an earlier result said (*"What's my router's name?"*) is answered from that result; a request no tool covers is declined honestly, with what the agent can do instead.
 - **Camera.** The worker samples the room's video track at about 1 frame per second into JPEGs (`src/prism_rt/voice/camera.py`). The kernel only sees a `frame_id`; the vision worker resolves the bytes.
 
 Run it:
@@ -98,9 +103,11 @@ Run it:
 PYTHONPATH=src:. python demo/run_device_care_demo.py [--image photo.jpg] [--trace]
 
 # 2. Voice + real camera, in a browser: start the worker in demo mode ...
-JANUS_MODE=demo JANUS_DECISION_LOG_DIR=run_output/demo python -m prism_rt.voice.agent start
-#    ... then join the same LiveKit project with the LiveKit Agents Playground
-#    (https://agents-playground.livekit.io), enable microphone and camera, and talk.
+JANUS_MODE=demo JANUS_STT=openai JANUS_DECISION_LOG_DIR=run_output/demo python -m prism_rt.voice.agent start
+#    ... then join the same LiveKit project from the LiveKit Cloud console or the Agents
+#    Playground (https://agents-playground.livekit.io), enable microphone and camera, and talk.
+#    Hosted transcription (JANUS_STT=openai) copes better with accents; use headphones so the
+#    agent does not hear itself.
 ```
 
 Tested without a network in `tests/test_devicecare.py`; the camera pump was checked against LiveKit Cloud with a synthetic video track.
@@ -128,6 +135,7 @@ Read this table carefully:
   
   Eight recordings were also lost to the benchmark client itself aborting after the stream; our decision logs show correct tool calls in six of them. The full voice run has not yet been repeated with these fixes.
 - By domain (text replay): finance 100 %, travel 95 %, e-commerce 83 %, **housing 35 %**. Housing is the weakest domain for every published system too; ours fails mostly on argument values in long, constraint-heavy requests.
+- **Self-correction** ("…no wait, make it Friday") is the category the paper finds hardest for every system (Table 3, Pass@1 per category: GPT-Realtime 0.588, Gemini Live 3.1 0.353, the cascaded Whisper pipeline 0.176). It is what the kernel is built for: **0.824** in text replay, and **0.412** on the voice run above, against 0.176 for the published cascaded pipeline, the same family as ours.
 - The organizers' own re-run is what scores. `./reproduce.sh` produces the voice-path number on their hardware.
 
 ## Keys
@@ -153,7 +161,7 @@ With both set to `openai`, a run needs only LiveKit and OpenAI keys: the same Op
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-python -m pytest tests/ -q          # 462 tests, deterministic: stepped clock, scripted model, mock tools
+python -m pytest tests/ -q          # 480 tests, deterministic: stepped clock, scripted model, mock tools
 docker build -t janus . && docker run --rm janus     # the same suite on Python 3.11
 ```
 
@@ -166,7 +174,7 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 - **Speech-to-text still mishears some names** (e.g. a city); replacing faster-whisper with Parakeet ASR is the next step.
 - **Housing (35 %)** is the weakest domain; argument values in long constraint-heavy requests are the main loss.
 - **The model is a hosted API.** Temperature 0 does not make it bit-reproducible, and evaluation needs network access to Gemini.
-- **A declared write with no explicit go-ahead stays blocked, and Janus does not yet ask "shall I go ahead?"** on its own. The stall salvage eventually says so. This matters only for the extension's booking; FDB's undeclared-mutability tools are exempted by policy.
+- **No cancel or modify tool.** A booking that went through cannot be changed; the agent says so and will not make a second one without an explicit yes, but it cannot undo the first.
 - **Camera:** one frame per second, one still image per question. It cannot tell a *blinking* light from a solid one, so the user says that part.
 - **The extension's tools are mocks** over a small knowledge base of two devices; it demonstrates the safe-action pattern, not a product catalogue.
 - Python 3.10/3.12 are supported by construction only; the tested targets are 3.11 (Docker) and the 3.14 dev venv.
