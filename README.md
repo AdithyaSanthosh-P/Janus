@@ -111,14 +111,23 @@ All numbers below are FDB-v3's own runner and evaluators, unmodified, at the pin
 
 | Setting | Strict pass rate (Pass@1) | Tool selection | Argument accuracy | Response quality |
 |---|---|---|---|---|
-| **Janus, text replay**, all 100 scenarios, Gemini 3.6 Flash | **73.0 %** | 0.953 | 0.760 | 0.830 |
-| Janus, **voice** over LiveKit, 26-recording sample, earlier build (27 Sep; 4 of 26 silent, since fixed) | 57.7 % | 0.97 | 0.68 | not judged |
+| **Janus, text replay** (reasoning & safety core), all 100 scenarios, Gemini 3.6 Flash | **77.0 %** | 0.959 | 0.807 | 0.840 |
+| Janus, **voice** over LiveKit, all 100 recordings, cloud RTX 3090, native path (29–30 Sep, before the fixes below) | 42.0 % | 0.844 | 0.611 | 0.597 |
+| Janus, **voice**, 32-recording rerun of that run's hardest recordings, after the speech-to-text GPU fix | 11 / 32 (was 8 / 32) | | | exact-match |
 | Published FDB-v3 baselines (paper, Table 2): GPT-Realtime / Gemini Live 3.1 / Cascaded | 60.0 % / 54.0 % / 45.0 % | 0.876 / 0.817 / 0.803 | 0.680 / 0.588 / 0.562 | 0.792 / 0.718 / 0.600 |
 
 Read this table carefully:
 
-- The **text-replay** row feeds each recording's ground-truth transcript straight to the kernel. It measures the reasoning and safety core, not speech recognition, turn-taking or latency, so it is *not* comparable to the voice-native baselines on those. The **voice** row is the number over the real audio path, but it predates the last week's fixes and covers 26 of 100 recordings.
-- By domain (text replay): finance 96 %, travel 95 %, e-commerce 83 %, **housing 23 %**. Housing is the weakest domain for every published system too; ours fails mostly on argument values in long, constraint-heavy requests.
+- The **text-replay** row feeds each recording's ground-truth transcript straight to the kernel. It measures the reasoning and safety core, not speech recognition, turn-taking or latency, so it is *not* comparable to the voice-native baselines on those.
+- The **full voice run** is the real audio path. Its decision logs showed the gap was mostly infrastructure, and each cause is now fixed with a regression test:
+  - Speech-to-text silently fell back from GPU to CPU in every job process started after the first ~75 recordings, so the agent heard users ~29 s late. It is now logged, GPU memory is recorded, and the fallback can be made fatal.
+  - A kernel liveness bug left a clarifying question undispatched when no other event arrived.
+  - The stall timeout could fire while the user was still speaking.
+  - Whisper's silence hallucinations ("you", "Hmm.") were taken as turns.
+  - Spoken codes ("F A S T nine nine") were not joined into identifiers.
+  
+  Eight recordings were also lost to the benchmark client itself aborting after the stream; our decision logs show correct tool calls in six of them. The full voice run has not yet been repeated with these fixes.
+- By domain (text replay): finance 100 %, travel 95 %, e-commerce 83 %, **housing 35 %**. Housing is the weakest domain for every published system too; ours fails mostly on argument values in long, constraint-heavy requests.
 - The organizers' own re-run is what scores. `./reproduce.sh` produces the voice-path number on their hardware.
 
 ## Keys
@@ -135,7 +144,7 @@ Copy `.env.example` to `.env`. It is git-ignored; keys are never in the repo.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-python -m pytest tests/ -q          # 418 tests, deterministic: stepped clock, scripted model, mock tools
+python -m pytest tests/ -q          # 462 tests, deterministic: stepped clock, scripted model, mock tools
 docker build -t janus . && docker run --rm janus     # the same suite on Python 3.11
 ```
 
@@ -143,8 +152,10 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 
 ## Honest limitations
 
-- **The number that scores is the voice path, and our best recent measurement of it is old.** The text-replay figure is not a substitute. Silence on hard-to-transcribe recordings was reduced by several fixes but not re-measured on the full 100.
-- **Housing (23 %)** is weak; argument values in long constraint-heavy requests are the main loss.
+- **The number that scores is the voice path.** Our full voice run (42 %) predates the fixes above and has not been repeated on all 100; the text-replay figure is not a substitute.
+- **`./reproduce.sh` has been verified in its parts but not end to end.** Our voice runs used the same inner script natively (`scripts/fdb_v3/native_run.sh`) on a cloud GPU without Docker.
+- **Speech-to-text still mishears some names** (e.g. a city); replacing faster-whisper with Parakeet ASR is the next step.
+- **Housing (35 %)** is the weakest domain; argument values in long constraint-heavy requests are the main loss.
 - **The model is a hosted API.** Temperature 0 does not make it bit-reproducible, and evaluation needs network access to Gemini.
 - **A declared write with no explicit go-ahead stays blocked, and Janus does not yet ask "shall I go ahead?"** on its own. The stall salvage eventually says so. This matters only for the extension's booking; FDB's undeclared-mutability tools are exempted by policy.
 - **Camera:** one frame per second, one still image per question. It cannot tell a *blinking* light from a solid one, so the user says that part.
