@@ -104,10 +104,14 @@ PYTHONPATH=src:. python demo/run_device_care_demo.py [--image photo.jpg] [--trac
 
 # 2. Voice + real camera, in a browser: start the worker in demo mode ...
 JANUS_MODE=demo JANUS_STT=openai JANUS_DECISION_LOG_DIR=run_output/demo python -m prism_rt.voice.agent start
-#    ... then join the same LiveKit project from the LiveKit Cloud console or the Agents
-#    Playground (https://agents-playground.livekit.io), enable microphone and camera, and talk.
-#    Hosted transcription (JANUS_STT=openai) copes better with accents; use headphones so the
-#    agent does not hear itself.
+#    ... make a token that asks for the demo agent by name ...
+python scripts/make_demo_token.py
+#    ... and join from the LiveKit Agents Playground (https://agents-playground.livekit.io,
+#    manual connect: paste the URL and token), enable microphone and camera, and talk.
+#    The demo worker registers as "janus-demo" and joins only rooms that ask for it, so it
+#    never takes a benchmark room on the same LiveKit project. Hosted transcription
+#    (JANUS_STT=openai) copes better with accents; use headphones so the agent does not
+#    hear itself.
 ```
 
 Tested without a network in `tests/test_devicecare.py`; the camera pump was checked against LiveKit Cloud with a synthetic video track.

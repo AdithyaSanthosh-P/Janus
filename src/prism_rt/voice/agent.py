@@ -30,6 +30,8 @@ Environment:
   JANUS_IDLE_PROCESSES    prewarmed job processes, each with its own models (default 1)
   JANUS_JOB_EXECUTOR      "process" (default) or "thread" (jobs share one model copy;
                           saves VRAM, but was flaky over long runs -- see _SHARED)
+  JANUS_AGENT_NAME        LiveKit agent name (demo mode default "janus-demo": explicit dispatch
+                          only, so a demo worker never takes benchmark rooms; "" = automatic)
   JANUS_STT               "local" (faster-whisper on the GPU, default) or "openai" (hosted
                           transcription, needs OPENAI_API_KEY; OPENAI_BASE_URL is honoured)
   JANUS_STT_MODEL         override the hosted transcription model (default: speech.OPENAI_STT_MODEL)
@@ -202,7 +204,15 @@ server = AgentServer(
 )
 
 
-@server.rtc_session()
+# Demo mode registers under a name, which makes LiveKit dispatch it only to
+# rooms that ask for that agent. Found live, 30 Sep: an unnamed demo worker on
+# the same LiveKit project as a benchmark run was handed 33 of the benchmark's
+# rooms. Benchmark mode stays unnamed (automatic dispatch), which FDB's client
+# relies on. Join a demo with a token from scripts/make_demo_token.py.
+AGENT_NAME = os.environ.get("JANUS_AGENT_NAME", "janus-demo" if MODE == "demo" else "")
+
+
+@server.rtc_session(agent_name=AGENT_NAME)
 async def entrypoint(ctx: JobContext) -> None:
     room_name = ctx.room.name
     userdata = ctx.proc.userdata
