@@ -39,7 +39,7 @@ Seeds and randomness: the model call uses temperature 0 and the kernel is determ
 ```mermaid
 flowchart LR
   subgraph Host["LiveKit room (audio in / audio out)"]
-    MIC["user audio"] --> VAD["Silero VAD"] --> STT["faster-whisper (local)"]
+    MIC["user audio"] --> VAD["Silero VAD"] --> STT["speech-to-text<br/>faster-whisper (local) or OpenAI"]
     TTS["Kokoro (local)"] --> SPK["agent audio"]
   end
   STT -->|"text chunks, end-of-turn,<br/>interruptions"| MBX
@@ -48,7 +48,7 @@ flowchart LR
   end
   DEC -. "jobs" .-> W
   W["async workers (outside the kernel)<br/>Interpret · Plan · Compose · Vision"] -. "proposals" .-> MBX
-  W <--> LLM["Gemini (hosted)"]
+  W <--> LLM["Gemini (hosted)<br/>or OpenAI"]
   GATE -->|"SPEAK / TOOL_CALL /<br/>CANCEL / FINAL"| TTS
   GATE -->|"one admitted call"| TOOLS["tools (FDB mock APIs / device care)"]
   TOOLS -->|"results"| MBX
