@@ -618,6 +618,19 @@ First full voice-path measurement since S3. Ran with `scripts/fdb_v3/native_run.
 - **Noise filtering:** segments whose letters are 15 % or more non-English are dropped (the agent's own voice picked up without headphones).
 - Suite 480/480. Each fix has a regression test replaying the live session.
 
+### Polish pass (2026-09-30 evening) — 486/486
+- **Camera requests compile.** A follow-up said during the camera diagnosis ("How do I fix it?") is now appended after it instead of replacing it.
+  - `proposals.plain_slot_name` maps a compiled action's slot (`a0.led_name`) to the plain name perception uses; it is applied when waiting for the camera, when checking and voiding conflicts, and in perception's user-value check.
+  - A user-stated value still outranks the camera: the disagreement is asked about.
+- **Two liveness fixes:**
+  - A failed re-extraction (model error) now counts as tried, so the question is asked. Before, the clarify waited while the job was re-dispatched.
+  - A camera/user conflict question skips re-extraction.
+- **Assumed-value hold** (`assumed_value_settle_enabled`, FDB profile): a call carrying an assumed value waits `settle_ms_incomplete`. This fixes the voice-run double search (assumed `max_price` 10000, then the stated 2000).
+- **Fragments:** an unclear turn of fewer than three words after a finished task gets the delayed re-ask, not a status summary.
+- **Docs:**
+  - The README results now include self-correction Pass@1 against the paper's Table 3 (text replay 0.824, voice 0.412; GPT-Realtime 0.588, cascaded 0.176), plus rerun turn-taking (32/32) and first-word latency (7.8 s mean; paper Table 6 first-word means 6.36 / 3.95 / 8.78 s).
+  - `measurements.md` has a current-results section, and the stale "doesn't ask shall I go ahead" limitation is removed.
+
 ### Failing / Broken
 **As of 2026-09-28:** Janus's own suite — nothing failing (**359/359**, re-run 2026-09-28). Against FDB-v3, nothing known-broken, but three things are unverified:
 1. **The voice-path silent-scenario count hasn't been re-measured since the Whisper OOM fix.** The last full 26-recording measurement (27 Sep, before that fix) had 4/26 silent. Text replay has zero silent scenarios across all 100.
