@@ -4,6 +4,8 @@ A full-duplex, interruptible voice agent built around one idea: **no model ever 
 
 Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptible Real-Time Agents**, and evaluated on **Full-Duplex-Bench v3 (FDB-v3)** over LiveKit.
 
+**Demo video:** [Google Drive](https://drive.google.com/drive/folders/1voRXefVFo-aI9aMh7W6LHp6Px0K2_CcE?usp=drive_link) · **Slide deck:** [Google Slides](https://docs.google.com/presentation/d/16pbvTmVLDricxOrwYgVnJDcXBt5EJ9KR/edit?usp=sharing&ouid=117062392495455542034&rtpof=true&sd=true)
+
 **Highlights**
 - **Self-correction, the category FDB-v3 finds hardest for every system:** 0.412 Pass@1 on our full voice run, against 0.176 for the published cascaded pipeline (the same family as ours); 0.824 for the reasoning core in text replay.
 - **77 % strict pass rate for the reasoning core** on all 100 FDB-v3 scenarios (text replay, judged with gpt-4o); 42 % on the full voice path, with the hardest recordings since improved from 4 to 13 of 31.
