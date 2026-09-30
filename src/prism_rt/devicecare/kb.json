@@ -1,0 +1,63 @@
+{
+  "devices": {
+    "router": {
+      "name": "Aria R500 Wi-Fi router",
+      "indicators": [
+        {"led": "power", "color": "green", "state": "solid", "issue": "ok_power",
+         "meaning": "Power is on and the router has started normally."},
+        {"led": "power", "color": "orange", "state": "blinking", "issue": "router_booting",
+         "meaning": "The router is starting up or installing a firmware update. Do not unplug it."},
+        {"led": "internet", "color": "orange", "state": "solid", "issue": "router_no_internet",
+         "meaning": "The router is powered and connected to your devices, but it cannot reach the internet."},
+        {"led": "internet", "color": "orange", "state": "blinking", "issue": "router_no_internet",
+         "meaning": "The router is trying and failing to reach the internet, usually a broken link to the provider."},
+        {"led": "internet", "color": "red", "state": "solid", "issue": "router_wan_fault",
+         "meaning": "The internet cable or the provider line has a hard fault."},
+        {"led": "wifi", "color": "off", "state": "off", "issue": "router_wifi_off",
+         "meaning": "The Wi-Fi radio is switched off."},
+        {"led": "internet", "color": "green", "state": "solid", "issue": "ok_normal",
+         "meaning": "The router is connected to the internet and working normally."},
+        {"led": "wifi", "color": "green", "state": "solid", "issue": "ok_normal",
+         "meaning": "Wi-Fi is switched on and working normally."},
+        {"led": "wifi", "color": "green", "state": "blinking", "issue": "ok_normal",
+         "meaning": "Wi-Fi is on and data is moving over it. This is normal."}
+      ]
+    },
+    "washer": {
+      "name": "AquaLine W7 washing machine",
+      "error_codes": {
+        "E1": {"issue": "washer_no_water", "meaning": "The drum is not filling with water."},
+        "E3": {"issue": "washer_drain_blocked", "meaning": "The water is not draining out of the drum."},
+        "UE": {"issue": "washer_unbalanced", "meaning": "The load is unbalanced in the drum."},
+        "LE": {"issue": "washer_door_lock", "meaning": "The door lock has not engaged."}
+      }
+    }
+  },
+  "issues": {
+    "ok_normal": {"title": "Normal operation", "technician_needed": false,
+                  "fix_steps": ["Nothing to fix. This light is behaving normally."]},
+    "ok_power": {"title": "Normal operation", "technician_needed": false,
+      "fix_steps": ["Nothing to fix. The power light is behaving normally."]},
+    "router_booting": {"title": "Router is starting up", "technician_needed": false,
+      "fix_steps": ["Wait about five minutes without unplugging the router.", "If the light is still blinking after ten minutes, unplug the power for thirty seconds and plug it back in."]},
+    "router_no_internet": {"title": "Router cannot reach the internet", "technician_needed": true,
+      "fix_steps": ["Unplug the router's power for thirty seconds, then plug it back in and wait three minutes.", "Check that the cable in the port labelled WAN is pushed in firmly at both ends.", "Try the same cable in another port on the provider's box, if there is one.", "If the internet light is still orange, book a technician."]},
+    "router_wan_fault": {"title": "Internet line fault", "technician_needed": true,
+      "fix_steps": ["Replace the WAN cable with a known-good one.", "If the light stays red, the line itself needs a technician."]},
+    "router_wifi_off": {"title": "Wi-Fi switched off", "technician_needed": false,
+      "fix_steps": ["Press the Wi-Fi button on the side of the router for two seconds.", "The Wi-Fi light should turn green within ten seconds."]},
+    "washer_no_water": {"title": "No water inlet", "technician_needed": true,
+      "fix_steps": ["Make sure the tap behind the machine is fully open.", "Check the inlet hose for kinks.", "Clean the inlet filter at the back of the machine.", "If E1 returns, book a technician."]},
+    "washer_drain_blocked": {"title": "Drain blocked", "technician_needed": true,
+      "fix_steps": ["Switch the machine off and unplug it.", "Open the small service flap at the bottom front and clean the drain filter.", "Check the drain hose for kinks.", "If E3 returns, book a technician."]},
+    "washer_unbalanced": {"title": "Unbalanced load", "technician_needed": false,
+      "fix_steps": ["Pause the cycle and redistribute the laundry evenly.", "Avoid washing a single heavy item on its own."]},
+    "washer_door_lock": {"title": "Door lock fault", "technician_needed": true,
+      "fix_steps": ["Open the door and check that nothing is caught in the seal.", "Close it firmly until it clicks.", "If LE returns, book a technician."]}
+  },
+  "warranty": {
+    "SN-R500-1042": {"device": "router", "status": "active", "expires": "2027-03-14"},
+    "SN-W7-7788": {"device": "washer", "status": "expired", "expires": "2026-01-09"}
+  },
+  "technician_slots": ["morning", "afternoon", "evening"]
+}

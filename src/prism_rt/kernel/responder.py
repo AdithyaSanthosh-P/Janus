@@ -24,16 +24,22 @@ as everything else for free.
 
 from __future__ import annotations
 
+import re
+
 from config.templates import (
     ACK_DEFAULT,
     CLARIFY_RETRY_WRITE,
+    CLARIFY_REPEAT_TEMPLATE,
     CLARIFY_TEMPLATE,
     FINAL_FALLBACK,
     FRESH_VIEW_REQUEST,
     INFORM_DUPLICATE_WRITE,
     INFORM_UNKNOWN_WRITE_OUTCOME,
+    UNCLEAR_NO_GOAL,
 )
 from prism_rt.kernel.commit import CommitGate
+from prism_rt.kernel.proposals import plain_slot_name
+from prism_rt.kernel.replies import HONEST_REPLY_KEY, duplicate_write_text
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, user_content_pending
 from prism_rt.model.actions import FinalBody, IntendedAction, SpeakBody
 from prism_rt.model.types import (
@@ -107,6 +113,8 @@ class FastResponder:
         actions.extend(self._inform_blocked_writes(store, now_us, step_no, skip_call_ids))
         actions.extend(self._inform_write_timeout(store, now_us, step_no))
         actions.extend(self._reconcile_completed_after_cancel(store, now_us, step_no))
+        actions.extend(self._unclear_no_goal(store, now_us, step_no))
+        actions.extend(self._honest_reply(store, now_us, step_no))
 
         gid = active_goal_id(store)
         if gid is None:
@@ -119,8 +127,13 @@ class FastResponder:
             actions.extend(self._ack_plan_dispatch(store, gid, now_us, step_no))
         if goal.status == GoalStatus.ACTIVE and goal.task_state == TaskState.CLARIFYING:
             actions.extend(self._clarify(store, gid, now_us, step_no))
+        if goal.status == GoalStatus.ACTIVE and goal.task_state in (TaskState.EXECUTING, TaskState.CLARIFYING):
+            # S3: before the S-10 notice below, which it suppresses for the
+            # same write -- one acknowledgement, not two.
+            actions.extend(self._ack_compiled_plan(store, gid, now_us, step_no))
         if goal.status == GoalStatus.ACTIVE and goal.task_state == TaskState.EXECUTING:
             actions.extend(self._intended_for_settling_write(store, gid, now_us, step_no, skip_call_ids))
+            actions.extend(self._confirm_unconfirmed_write(store, gid, now_us, step_no, skip_call_ids))
         if goal.task_state == TaskState.RESPONDING:
             actions.extend(self._final(store, goal, now_us, step_no))
 
@@ -142,7 +155,7 @@ class FastResponder:
             rule="responder.ack",
         )
         grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
-        text = self._content_ack_text(store) or ACK_DEFAULT
+        text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
         return [
             IntendedAction(
                 action_type=ActionType.SPEAK,
@@ -151,6 +164,53 @@ class FastResponder:
                 rule_id="responder.ack",
             )
         ]
+
+    def _ack_compiled_plan(self, store, goal_id: str, now_us: int, step_no: int) -> list[IntendedAction]:
+        """S3 (`kernel/action_plans.py`): a compiled plan never dispatches a
+        PLAN job, so `_ack_plan_dispatch` (which keys off one) never fires
+        for it. Same acknowledgement, same text priority, once per goal --
+        a later in-place recompile (plan_rev + 1) never re-ACKs. Also marks
+        the first settle-held write as already acknowledged, so the S-10
+        "On it — <tool> now." notice doesn't speak a second ACK for the
+        same call in the same step."""
+        plan = store.plans.current(goal_id)
+        if plan is None or plan.origin != "compiled":
+            return []
+        acked = store.facts.get(f"ack.{goal_id}.compiled")
+        if acked is not None and acked.status != FactStatus.RETRACTED:
+            return []
+        provenance = Provenance(source="system", step_no=step_no, ts_us=now_us)
+        store.facts.set(f"ack.{goal_id}.compiled", plan.plan_rev, FactStatus.COMMITTED, provenance, rule="responder.ack")
+        for call in store.call_ledger.proposed():
+            if call.goal_id == goal_id and call.kind == StepKind.WRITE:
+                store.facts.set(f"ack.{goal_id}.intended_call", call.call_id, FactStatus.COMMITTED, provenance, rule="responder.ack")
+                break
+        grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
+        text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
+        unsupported = store.facts.get(f"goal.{goal_id}.unsupported")
+        if unsupported is not None and unsupported.status != FactStatus.RETRACTED and unsupported.value:
+            text = f"{text} I can't do \"{unsupported.value}\" here, though."
+        return [
+            IntendedAction(
+                action_type=ActionType.SPEAK,
+                body=SpeakBody(text=text, kind="ack", claim_grade=grade),
+                read_set=EMPTY_READ_SET,
+                rule_id="responder.ack",
+            )
+        ]
+
+    def _echo_ack_text(self, store, goal_id: str) -> str | None:
+        """Q7 (win_plan §6.2): the Interpreter's own `ack_phrase`, when the
+        model provided one — takes priority over the single-value
+        `_content_ack_text` since it names every requested action, not
+        just the one HIGH-confidence value QuickDetector happened to
+        catch."""
+        if not store.config.echo_ack_enabled:
+            return None
+        fact = store.facts.get(f"goal.{goal_id}.ack_phrase")
+        if fact is None or fact.status == FactStatus.RETRACTED or not fact.value:
+            return None
+        return fact.value
 
     def _content_ack_text(self, store) -> str | None:
         """Phase 6 (`docs/prompt 2.txt` §9.3): "emit a content-bearing ACK
@@ -182,6 +242,7 @@ class FastResponder:
         if not live:
             return None
         name, value = sorted(live.items())[0]  # deterministic pick
+        name = name.rsplit(".", 1)[-1]  # S3: a per-action slot name ("a0.city") speaks as "city"
         return f"Got it — {name.replace('_', ' ')}: {value}."
 
     def _clarify(self, store, goal_id: str, now_us: int, step_no: int) -> list[IntendedAction]:
@@ -189,18 +250,64 @@ class FastResponder:
         if target_fact is None or target_fact.status == FactStatus.RETRACTED:
             return []
         target = target_fact.value
+        # Q5 (win_plan §6.2): a plain missing-slot target gets one narrow
+        # re-extraction attempt (kernel/task.py.TaskStateMachine._maybe_
+        # reextract) before this ever speaks -- hold until that attempt
+        # has actually resolved (`reextract.<goal>.<target>` set), so the
+        # generic "what should X be" question doesn't go out the same
+        # step the targeted attempt was dispatched. A resolved-with-value
+        # attempt retracts clarify_target itself (short-circuiting the
+        # check above on the next step); a resolved-with-null attempt
+        # falls through to the ordinary clarify below.
+        if (
+            store.config.clarify_reextract_enabled
+            and isinstance(target, str)
+            and target.startswith(f"slot.{goal_id}.")
+            and not (
+                store.config.vision_enabled
+                and store.evidence.conflict_open(goal_id, plain_slot_name(target[len(f"slot.{goal_id}."):]))
+            )
+        ):
+            tried = store.facts.get(f"reextract.{goal_id}.{target}")
+            if tried is None or tried.status == FactStatus.RETRACTED:
+                return []
         asked = store.facts.get(f"clarify.{goal_id}.asked")
+        repeat = False
         if asked is not None and asked.status != FactStatus.RETRACTED and asked.value == target:
-            return []
-        store.facts.set(
-            f"clarify.{goal_id}.asked",
-            target,
-            FactStatus.COMMITTED,
-            Provenance(source="system", step_no=step_no, ts_us=now_us),
-            rule="responder.clarify",
-        )
+            # Config.conversational_replies_enabled: the user spoke again and
+            # the same thing is still missing -- ask once more, once per new
+            # turn, rather than go silent. The TRIAGE hold above guarantees
+            # that turn has already been interpreted by the time we get here.
+            if not store.config.conversational_replies_enabled:
+                return []
+            latest = _latest_closed_turn_id(store)
+            asked_turn = store.facts.get(f"clarify.{goal_id}.asked_turn")
+            if latest is None or (
+                asked_turn is not None and asked_turn.status != FactStatus.RETRACTED and asked_turn.value == latest
+            ):
+                return []
+            repeat = True
+        provenance = Provenance(source="system", step_no=step_no, ts_us=now_us)
+        store.facts.set(f"clarify.{goal_id}.asked", target, FactStatus.COMMITTED, provenance, rule="responder.clarify")
+        if store.config.conversational_replies_enabled:
+            store.facts.set(
+                f"clarify.{goal_id}.asked_turn",
+                _latest_closed_turn_id(store),
+                FactStatus.COMMITTED,
+                provenance,
+                rule="responder.clarify",
+            )
         friendly = target.rsplit(".", 1)[-1]
         text = CLARIFY_TEMPLATE.format(target=friendly)
+        options = _option_list(store, goal_id, target) if store.config.conversational_replies_enabled else None
+        if options:
+            # "What's the led state: solid, blinking or off?" -- the parameter's
+            # own description, when it is just the list of allowed values.
+            text = f"What's the {friendly.replace('_', ' ')}: {options}?"
+        if repeat and not target.startswith("retry:"):
+            text = CLARIFY_REPEAT_TEMPLATE.format(target=friendly.replace("_", " "))
+            if options:
+                text = f"Sorry, I still need the {friendly.replace('_', ' ')}: {options}?"
         # P0.4 (S-02, docs/original_design_audit.md D4): a write-timeout
         # retry confirmation (kernel/executor.py.PlanExecutor.
         # expire_deadlines) is a yes/no question, not a missing-slot one --
@@ -311,11 +418,10 @@ class FastResponder:
             # claim D3 found. CS-06's spirit: a claim must be supported by
             # ledger state, not just "some earlier attempt exists".
             blocking_effect = store.effect_ledger.by_fingerprint(call.fingerprint)
-            text = (
-                INFORM_DUPLICATE_WRITE
-                if blocking_effect is not None and blocking_effect.status == EffectStatus.CONFIRMED
-                else INFORM_UNKNOWN_WRITE_OUTCOME
-            )
+            confirmed = blocking_effect is not None and blocking_effect.status == EffectStatus.CONFIRMED
+            text = INFORM_DUPLICATE_WRITE if confirmed else INFORM_UNKNOWN_WRITE_OUTCOME
+            if confirmed and store.config.conversational_replies_enabled:
+                text = duplicate_write_text(call)
             actions.append(
                 IntendedAction(
                     action_type=ActionType.SPEAK,
@@ -403,6 +509,114 @@ class FastResponder:
             ]
         return []
 
+    def _unclear_no_goal(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
+        """Q6a (win_plan §6.2): the spoken half of the housing_11/
+        housing_13 silent-stall fix -- `kernel/interpret_apply.py` flags
+        exactly one turn_id here, at most once per turn (a later turn
+        overwrites it with its own turn_id, which is fine — the "sent"
+        fact below is keyed per turn_id, so a *new* unclear turn still
+        gets its own honest re-ask). Unconditional read of the flag
+        (config gating already happened where it was set)."""
+        fact = store.facts.get("session.unclear_no_goal_turn")
+        if fact is None or fact.status == FactStatus.RETRACTED:
+            return []
+        turn_id = fact.value
+        already = store.facts.get(f"unclear.{turn_id}.sent")
+        if already is not None and already.status != FactStatus.RETRACTED:
+            return []
+        # Superseded: the user has already said more (a newer turn exists) or
+        # a goal now exists -- their follow-up is being handled; re-asking
+        # about the fragment would talk over it.
+        turns = store.turn_log.all()
+        if (turns and turns[-1].turn_id != turn_id) or active_goal_id(store) is not None:
+            return []
+        delay_ms = store.config.unclear_reask_delay_ms
+        if delay_ms:
+            due_us = fact.provenance.ts_us + delay_ms * 1000
+            if now_us < due_us:
+                store.timers.schedule(f"unclear_reask:{turn_id}", due_us)
+                return []
+        store.facts.set(
+            f"unclear.{turn_id}.sent",
+            True,
+            FactStatus.COMMITTED,
+            Provenance(source="system", step_no=step_no, ts_us=now_us),
+            rule="responder.unclear_no_goal",
+        )
+        return [
+            IntendedAction(
+                action_type=ActionType.SPEAK,
+                body=SpeakBody(text=UNCLEAR_NO_GOAL, kind="clarify"),
+                read_set=EMPTY_READ_SET,
+                rule_id="responder.unclear_no_goal",
+            )
+        ]
+
+    def _confirm_unconfirmed_write(self, store, goal_id: str, now_us: int, step_no: int, skip_call_ids) -> list[IntendedAction]:
+        """Config.conversational_replies_enabled: a write held only because
+        the user never confirmed it (CommitGate G4) used to sit PROPOSED in
+        silence until the stall salvage gave up. Ask once, naming the call;
+        a CONFIRM answer supplies the commit intent (interpret_apply)."""
+        if not store.config.conversational_replies_enabled:
+            return []
+        for call in store.call_ledger.proposed():
+            if call.goal_id != goal_id or call.kind != StepKind.WRITE or call.call_id in skip_call_ids:
+                continue
+            decision = self._commit_gate.evaluate(call, store, now_us)
+            if decision.allowed or decision.rule_id != "G4":
+                continue
+            asked = store.facts.get(f"confirm.{call.call_id}.asked")
+            if asked is not None and asked.status != FactStatus.RETRACTED:
+                return []
+            prov = Provenance(source="system", step_no=step_no, ts_us=now_us)
+            store.facts.set(f"confirm.{call.call_id}.asked", True, FactStatus.COMMITTED, prov, rule="responder.confirm_write")
+            store.facts.set(f"goal.{goal_id}.awaiting_confirmation", call.call_id, FactStatus.COMMITTED, prov, rule="responder.confirm_write")
+            values = ", ".join(str(v) for v in call.args.values())
+            text = f"Shall I go ahead and {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
+            repeat = store.facts.get(f"goal.{goal_id}.repeat_of")
+            if repeat is not None and repeat.status != FactStatus.RETRACTED:
+                text = (
+                    f"You already have {repeat.value} confirmed, and I can't cancel or change it from here. "
+                    f"Do you want a second one: {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
+                )
+            return [
+                IntendedAction(
+                    action_type=ActionType.SPEAK,
+                    body=SpeakBody(text=text, kind="clarify"),
+                    read_set=EMPTY_READ_SET,
+                    rule_id="responder.confirm_write",
+                )
+            ]
+        return []
+
+    def _honest_reply(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
+        """Config.conversational_replies_enabled (kernel/replies.py): the
+        one reply kernel/interpret_apply.py chose for a turn -- an honest
+        "can't do that", a status summary, or a polite answer to thanks.
+        Once per turn, and dropped if the user has already said more."""
+        fact = store.facts.get(HONEST_REPLY_KEY)
+        if fact is None or fact.status == FactStatus.RETRACTED or not isinstance(fact.value, dict):
+            return []
+        turn_id = fact.value.get("turn")
+        already = store.facts.get(f"honest.{turn_id}.sent")
+        if already is not None and already.status != FactStatus.RETRACTED:
+            return []
+        turns = store.turn_log.all()
+        if turns and turns[-1].turn_id != turn_id:
+            return []
+        store.facts.set(
+            f"honest.{turn_id}.sent", True, FactStatus.COMMITTED,
+            Provenance(source="system", step_no=step_no, ts_us=now_us), rule="responder.honest_reply",
+        )
+        return [
+            IntendedAction(
+                action_type=ActionType.SPEAK,
+                body=SpeakBody(text=fact.value.get("text") or "", kind="inform"),
+                read_set=EMPTY_READ_SET,
+                rule_id="responder.honest_reply",
+            )
+        ]
+
     def _reconcile_completed_after_cancel(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
         """I-15: a write that got cancelled but completed anyway (or whose
         outcome is now unknown) must be reported — never silently dropped
@@ -435,3 +649,33 @@ class FastResponder:
                 )
             )
         return actions
+
+
+def _latest_closed_turn_id(store) -> str | None:
+    for turn in reversed(store.turn_log.all()):
+        if turn.closed_ts_us is not None:
+            return turn.turn_id
+    return None
+
+
+# Three or more single-word values ("solid, blinking or off."); a phrase like
+# "City name or zip code" is a description, not an option list.
+_OPTIONS = re.compile(r"^[A-Za-z]+(?:, [A-Za-z]+)+,? or [A-Za-z]+\.?$")
+
+
+def _option_list(store, goal_id: str, target: str) -> str | None:
+    """The allowed values of the tool parameter a clarify target binds, when
+    its description is nothing but that list ("solid, blinking or off.")."""
+    plan = store.plans.current(goal_id)
+    if plan is None or not target.startswith(f"slot.{goal_id}."):
+        return None
+    template = target.replace(f"slot.{goal_id}.", "slot.$G.", 1)
+    for step in plan.steps:
+        for param, binding in step.bindings.items():
+            if binding.fact_key == template:
+                spec = store.catalog.get(step.tool)
+                prop = ((spec.params_schema or {}).get("properties") or {}).get(param) if spec else None
+                desc = (prop or {}).get("description", "") if isinstance(prop, dict) else ""
+                desc = desc.strip()
+                return desc.rstrip(".") if desc and len(desc) <= 60 and _OPTIONS.match(desc) else None
+    return None

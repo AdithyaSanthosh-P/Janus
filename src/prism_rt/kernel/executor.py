@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from prism_rt.kernel.action_plans import bind_key, valid_bind_fact
+from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.interpret_apply import active_goal_id
 from prism_rt.model.actions import CancelBody, IntendedAction
 from prism_rt.model.types import (
@@ -30,13 +32,19 @@ from prism_rt.model.types import (
     FactStatus,
     GoalStatus,
     Provenance,
+    Question,
     QuestionMode,
     QuestionStatus,
+    QuestionTarget,
     ReadSet,
     StepKind,
     TaskState,
+    ToolMutability,
     fingerprint_for,
 )
+
+# A camera frame newer than this counts as a live camera (`_look_before_asking`).
+_LIVE_CAMERA_US = 5_000_000
 
 # V4 / C10 (docs/theme05_implementation_blueprint.md §5.5): a WRITE
 # parameter is identifier-like if the schema marks it (enum, format=uuid)
@@ -54,6 +62,51 @@ def _is_identifier_param(param: str, prop_schema: dict) -> bool:
     if prop_schema.get("format") == "uuid":
         return True
     return bool(_IDENTIFIER_NAME_RE.search(param))
+
+
+@dataclass(frozen=True)
+class _FieldSearchResult:
+    found: bool
+    ambiguous: bool
+    value: object = None
+
+
+def _bfs_find_field(root: object, field_name: str) -> _FieldSearchResult:
+    """Breadth-first, schema-free search for a dict key named
+    `field_name` anywhere under `root` (docs/fdb_v3_implementation_plan.md
+    §5.8): a live Planner names a chained-call binding's `path` from the
+    upstream tool's *name* alone -- FDB publishes no result schemas, so a
+    literal dotted path like "product_id" routinely doesn't match the
+    real nesting (e.g. `search_products` returns
+    `{"products": [{"product_id": ...}]}`, not a top-level `product_id`).
+    Used only as a fallback once the literal path has already failed to
+    resolve (`_bind`'s STEP_OUTPUT branch) -- never overrides a path that
+    already worked. Two or more *distinct* matches are reported
+    ambiguous rather than picking one: the step must block and clarify,
+    never guess silently."""
+    queue: list = [root]
+    matches: list = []
+    seen_ids: set[int] = set()
+    while queue:
+        node = queue.pop(0)
+        if id(node) in seen_ids:
+            continue
+        seen_ids.add(id(node))
+        if isinstance(node, dict):
+            if field_name in node:
+                matches.append(node[field_name])
+            queue.extend(node.values())
+        elif isinstance(node, list):
+            queue.extend(node)
+    if not matches:
+        return _FieldSearchResult(found=False, ambiguous=False)
+    distinct = []
+    for m in matches:
+        if m not in distinct:
+            distinct.append(m)
+    if len(distinct) > 1:
+        return _FieldSearchResult(found=True, ambiguous=True)
+    return _FieldSearchResult(found=True, ambiguous=False, value=distinct[0])
 
 
 @dataclass(frozen=True)
@@ -311,7 +364,10 @@ class PlanExecutor:
                 # this doesn't distinguish — no test scenario needs that
                 # nuance; see kernel/perception.py's module docstring.)
                 if missing_key is not None and (
-                    missing_key.startswith("claim.") or self._perception_will_answer(store, gid, missing_key)
+                    missing_key.startswith("claim.")
+                    or missing_key.startswith("bind.")  # S3: kernel/binder.py will decide it -- never ask the user
+                    or self._perception_will_answer(store, gid, missing_key)
+                    or self._look_before_asking(store, gid, step, missing_key, now_us)
                 ):
                     continue
                 self._ask_for(store, gid, missing_key, now_us, step_no)
@@ -461,10 +517,31 @@ class PlanExecutor:
                     # blocks the step even though the user's own value is
                     # still on record (§9.1: rank 1/2 vs rank 3, different
                     # -> "Open conflict; blocks steps using the slot").
-                    name = key[len(f"slot.{goal_id}."):]
+                    name = plain_slot_name(key[len(f"slot.{goal_id}."):])
                     if store.evidence.conflict_open(goal_id, name):
                         return None, key
                 fact = store.facts.get(key)
+                if (fact is None or fact.status in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS)) and step.slot_prefix:
+                    # A compiled step binds its own per-action key
+                    # (slot.<g>.a0.led_state), but perception writes the plain
+                    # slot (slot.<g>.led_state). Found live, 30 Sep: the camera
+                    # answered and the goal kept asking. Use a perception-sourced
+                    # plain slot when the action has no value of its own -- a
+                    # value the user stated for the action always wins.
+                    flat_key = f"slot.{goal_id}.{param}"
+                    flat = store.facts.get(flat_key)
+                    if (
+                        store.config.vision_enabled
+                        and flat is not None
+                        and flat.status not in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS)
+                        and flat.provenance.source == "perception"
+                        and not store.evidence.conflict_open(goal_id, param)
+                    ):
+                        # Keep the action's own key in the read set (as
+                        # absent): a value the user states for it later must
+                        # invalidate a call built on the camera's value.
+                        read_keys.append(key)
+                        key, fact = flat_key, flat
                 if fact is None or fact.status in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS):
                     return None, key
                 if store.config.reference_bound_identifiers and step.kind == StepKind.WRITE:
@@ -473,6 +550,19 @@ class PlanExecutor:
                         store, binding, fact.value, fact
                     ):
                         return None, f"identifier.{step.tool}.{param}"
+                args[param] = fact.value
+                read_keys.append(key)
+                continue
+
+            if binding.kind == BindingKind.LATE:
+                # S3 (kernel/binder.py): the value BindScheduler picked from
+                # the upstream step's real result. Missing, retracted, or
+                # grounded in a result that has since changed -> wait (see
+                # propose_ready_calls: a `bind.` key never clarifies).
+                key = bind_key(goal_id, step.step_key, param)
+                fact = valid_bind_fact(store, key)
+                if fact is None:
+                    return None, key
                 args[param] = fact.value
                 read_keys.append(key)
                 continue
@@ -521,16 +611,32 @@ class PlanExecutor:
                     return None, result_key
                 value = fact.value
                 if binding.path:
+                    resolved = value
                     for part in binding.path.split("."):
-                        if isinstance(value, dict):
-                            value = value.get(part)
-                        elif isinstance(value, list) and part.lstrip("-").isdigit():
+                        if isinstance(resolved, dict):
+                            resolved = resolved.get(part)
+                        elif isinstance(resolved, list) and part.lstrip("-").isdigit():
                             index = int(part)
-                            value = value[index] if -len(value) <= index < len(value) else None
+                            resolved = resolved[index] if -len(resolved) <= index < len(resolved) else None
                         else:
-                            value = None
-                        if value is None:
+                            resolved = None
+                        if resolved is None:
                             break
+                    if resolved is None:
+                        # Day 1 (docs/fdb_v3_implementation_plan.md §5.8):
+                        # the literal path didn't resolve -- fall back to
+                        # a generic, schema-free search for a field with
+                        # that name anywhere in the upstream result,
+                        # rather than silently binding None. Never guess
+                        # on an ambiguous match: block the step for a
+                        # clarify instead (same path a missing fact takes).
+                        field_name = binding.path.rsplit(".", 1)[-1]
+                        found = _bfs_find_field(value, field_name)
+                        if found.ambiguous:
+                            return None, f"ambiguous_field.{step.tool}.{param}.{field_name}"
+                        if found.found:
+                            resolved = found.value
+                    value = resolved
                 args[param] = value
                 read_keys.append(result_key)
                 continue
@@ -592,8 +698,12 @@ class PlanExecutor:
         schema = spec.params_schema or {}
         required = frozenset(schema.get("required") or ())
         properties = schema.get("properties") or {}
+        # S3: a compiled step's own slots live at slot.<gid>.a<i>.<name>
+        # (kernel/action_plans.py) -- tracking the flat key would let a
+        # later "a1.mode" correction miss the consumed call entirely.
+        prefix = f"slot.{goal_id}.{step.slot_prefix}." if step.slot_prefix else f"slot.{goal_id}."
         return [
-            f"slot.{goal_id}.{name}"
+            f"{prefix}{name}"
             for name in properties
             if name not in args and name not in required and name not in perception_governed
         ]
@@ -640,7 +750,7 @@ class PlanExecutor:
         M-09), or with an open conflict (M-06), fall through and ask."""
         if not store.config.vision_enabled or not key.startswith(f"slot.{goal_id}."):
             return False
-        name = key[len(f"slot.{goal_id}."):]
+        name = plain_slot_name(key[len(f"slot.{goal_id}."):])  # a compiled action's key too
         if store.evidence.conflict_open(goal_id, name):
             return False
         question = store.evidence.latest_active_question(goal_id)
@@ -649,6 +759,54 @@ class PlanExecutor:
         if name not in {t.name for t in question.targets}:
             return False
         return question.pending_job_id is not None or question.analyzed_obs_id is None
+
+    def _look_before_asking(self, store, goal_id: str, step, key: str, now_us: int) -> bool:
+        """With the camera on, a lookup's missing value is looked for in the
+        latest frame once before the user is asked. Perception otherwise ran
+        only when the interpreter flagged a visual reference, and it missed
+        "I'm going to show it to you": found live, 30 Sep, the agent asked
+        for the LED colour three times while the camera was pointed at it.
+        Read-only tools only (a booking's date is never on camera), only
+        while frames are arriving, and only once per goal: if the look
+        comes back without the value, `_perception_will_answer` lets the
+        question through to the user."""
+        if not store.config.vision_enabled or not key.startswith(f"slot.{goal_id}."):
+            return False
+        spec = store.catalog.get(step.tool)
+        if spec is None or spec.mutability != ToolMutability.READ_ONLY:
+            return False
+        frames = store.evidence.observations_by_modality("frame")
+        if not frames or now_us - frames[-1].capture_ts_us > _LIVE_CAMERA_US:
+            return False
+        if store.evidence.latest_active_question(goal_id) is not None:
+            return False
+        names = []
+        for param, binding in step.bindings.items():
+            if binding.kind != BindingKind.FACT or not (binding.fact_key or "").startswith("slot.$G."):
+                continue
+            slot_key = binding.fact_key.replace("$G", goal_id)
+            fact = store.facts.get(slot_key)
+            if fact is None or fact.status in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS):
+                names.append(param)
+        if plain_slot_name(key[len(f"slot.{goal_id}."):]) not in names:
+            return False
+        store.evidence.create_question(
+            Question(
+                question_id=store.ids.next("question"),
+                goal_id=goal_id,
+                targets=tuple(
+                    QuestionTarget(name=n, description=self._param_schema(store, step.tool, n).get("description", ""))
+                    for n in names
+                ),
+                mode=QuestionMode.AT_UTTERANCE,
+                anchor_ts_us=now_us,
+                created_by="demand",
+            )
+        )
+        # PerceptionScheduler ran earlier in this DECIDE phase; wake the
+        # kernel so it dispatches the look without waiting for the next frame.
+        store.timers.schedule(f"look_wake:{goal_id}", now_us + 1)
+        return True
 
     def _invalid_slot_input(self, step, goal_id: str, errors) -> str | None:
         """The `slot.<goal>.<name>` key behind the first invalid argument,
@@ -741,6 +899,11 @@ class PlanExecutor:
             rule="executor.clarify",
         )
         store.goals.update(goal_id, task_state=TaskState.CLARIFYING)
+        # TaskStateMachine runs before this in DECIDE, so it only sees the
+        # new CLARIFYING state (and dispatches the Q5 re-extraction) on the
+        # next step. Found in the 30 Sep voice rerun: nothing else woke the
+        # kernel, and the goal sat silent until the 15 s stall salvage.
+        store.timers.schedule(f"clarify_wake:{goal_id}", now_us + 1)
 
     def _write_lineage_confirmed_elsewhere(self, store, goal_id: str, step, fingerprint: str) -> bool:
         """True iff `CommitGate`'s G6 ("no existing effect with the same

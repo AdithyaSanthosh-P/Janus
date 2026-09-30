@@ -56,6 +56,12 @@ class MockToolRegistry:
             error = {"code": "transient", "message": "scripted transient failure"}
         status = "error" if error else "ok"
         response = cfg.get("response")
+        # `handler(args) -> response`: a live-use stand-in for a stateful mock
+        # service (demo/run_device_care_demo.py), evaluated when the call is
+        # emitted -- i.e. when a real write would actually take effect.
+        handler = cfg.get("handler")
+        if handler is not None and error is None:
+            response = handler(args)
         self._scheduled[call_id] = (due_us, status, response, error)
 
     def on_cancel(self, call_id: str) -> None:
@@ -101,7 +107,7 @@ class SimHarness:
         self.log = DecisionLogger()
         self.provider = provider if provider is not None else ScriptedProvider()
         self.gateway = ModelGateway(self.provider)
-        default_latency = {JobKind.INTERPRET: 50_000, JobKind.PLAN: 50_000, JobKind.COMPOSE: 50_000}
+        default_latency = {JobKind.INTERPRET: 50_000, JobKind.PLAN: 50_000, JobKind.COMPOSE: 50_000, JobKind.BIND: 50_000}
         # blob_resolver (Phase 3): optional, live-use-only — resolves a
         # harness-given frame_id/clip_id into real bytes for VISION/ASR
         # jobs. None by default, so every existing SimHarness caller

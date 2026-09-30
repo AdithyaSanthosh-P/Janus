@@ -24,11 +24,39 @@ COMPOSE_SCHEMA = {
 
 
 def build_prompt(view: dict) -> str:
+    # Day 2 WP3 (docs/fdb_v3_day2_plan.md): found live -- without being
+    # told which tools actually ran, the Composer wrote "your flight has
+    # been successfully confirmed" from a search_flights result alone
+    # (book_flight was never planned/run for that turn). `executed_calls`
+    # and `not_done` are additive (absent for any caller that predates
+    # this, e.g. every ScriptedProvider-driven test) -- when present,
+    # the instruction below is explicit that only what's listed as
+    # executed may be reported as done.
+    executed_calls = view.get("executed_calls")
+    not_done = view.get("not_done")
+    honesty_block = ""
+    if executed_calls is not None:
+        honesty_block = (
+            f"\nexecuted_calls (the ONLY actions that actually ran): {executed_calls}\n"
+            "Report only what executed_calls shows -- never say something was "
+            "booked, added, confirmed, updated, or tracked unless the matching "
+            "tool is actually in that list. State the concrete values from "
+            "facts/effects (IDs, prices, dates) for what did run."
+        )
+        if not_done:
+            honesty_block += f" Plainly say that {not_done} was not completed.\n"
+        else:
+            honesty_block += "\n"
     return (
         f"facts: {view.get('facts')}\n"
         f"effects: {view.get('effects')}\n"
         f"open_questions: {view.get('open_questions')}\n"
-        "Write a short, grounded response and return JSON matching the schema."
+        f"{honesty_block}"
+        "Write a short, grounded response and return JSON matching the schema. "
+        "It is spoken aloud by a voice agent: one or two plain sentences, no "
+        "markdown, bullets, lists or headings, and only the key result of each "
+        "action (found live: a bulleted, bolded paragraph was read out and cut "
+        "off mid-sentence)."
     )
 
 

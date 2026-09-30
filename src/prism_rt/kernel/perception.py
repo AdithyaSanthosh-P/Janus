@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from prism_rt.kernel.proposals import is_action_slot_key
 from prism_rt.model.types import (
     Conflict,
     ConflictStatus,
@@ -279,6 +280,12 @@ class PerceptionScheduler:
         for claim in claims:
             if claim.name not in target_names or claim.confidence == Confidence.LOW:
                 continue  # non-target claims dropped; LOW never accepted as a fact
+            if claim.value is None or (isinstance(claim.value, str) and not claim.value.strip()):
+                # An empty value is "couldn't see it", whatever confidence the
+                # model attached. Found live, 30 Sep: a blurry frame came back
+                # null for the LED's name and colour, the empty values were
+                # written as slots, and the agent asked for both again.
+                continue
             accepted_names.add(claim.name)
             txn.facts.set(
                 f"claim.{question.question_id}.{claim.name}",
@@ -297,6 +304,17 @@ class PerceptionScheduler:
                 and existing_slot.status not in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS)
                 and existing_slot.provenance.source == "user"
             )
+            if not user_has_value:
+                # A compiled plan keeps the user's value under the action's own
+                # key (slot.<g>.a0.<name>); it outranks the camera just the same.
+                for key, fact in txn.store.facts.by_prefix(f"slot.{question.goal_id}.a").items():
+                    if (
+                        is_action_slot_key(key, question.goal_id, claim.name)
+                        and fact.status not in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS)
+                        and fact.provenance.source == "user"
+                    ):
+                        existing_slot, user_has_value = fact, True
+                        break
             if user_has_value and existing_slot.value != claim.value:
                 self._open_conflict(
                     txn, question.goal_id, claim.name, existing_slot.value, claim.value, obs_id=obs_id, now_us=now_us
@@ -315,10 +333,17 @@ class PerceptionScheduler:
             # (`interpret_apply`'s clarify_resolved retraction).
             clarify = txn.facts.get(f"goal.{question.goal_id}.clarify_target")
             answered_keys = (slot_key, f"claim.{question.question_id}.{claim.name}")
-            if clarify is not None and clarify.status != FactStatus.RETRACTED and clarify.value in answered_keys:
+            # A compiled goal asks on the per-action key (slot.<g>.a0.<name>);
+            # the executor binds this plain slot when the action has no value
+            # of its own, so the camera answers that question too.
+            if clarify is not None and clarify.status != FactStatus.RETRACTED and (
+                clarify.value in answered_keys or is_action_slot_key(clarify.value, question.goal_id, claim.name)
+            ):
                 txn.facts.retract(f"goal.{question.goal_id}.clarify_target", rule="perception.clarify_resolved")
             fresh = txn.facts.get(f"perception.{question.goal_id}.fresh_view_for")
-            if fresh is not None and fresh.status != FactStatus.RETRACTED and fresh.value in answered_keys:
+            if fresh is not None and fresh.status != FactStatus.RETRACTED and (
+                fresh.value in answered_keys or is_action_slot_key(fresh.value, question.goal_id, claim.name)
+            ):
                 txn.facts.retract(f"perception.{question.goal_id}.fresh_view_for", rule="perception.fresh_view_received")
 
         if target_names and target_names <= accepted_names and question.status == QuestionStatus.OPEN:

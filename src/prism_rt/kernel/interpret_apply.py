@@ -17,6 +17,11 @@ structural change, not currently executing) still replans.
 
 from __future__ import annotations
 
+import dataclasses
+
+from prism_rt.canonical import canonicalize_spoken_id  # re-exported: tests and reducers import it from here
+from prism_rt.kernel import action_plans, replies
+from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.model.types import (
     BindingKind,
@@ -114,14 +119,17 @@ def _apply_slot_deltas(txn: StoreTxn, goal_id: str, slot_deltas, now_us: int, st
             if txn.facts.retract(key, rule="interpret_apply.slot_clear"):
                 changed = True
         else:
+            value = delta.value
+            if txn.store.config.normalize_spoken_ids:
+                value = canonicalize_spoken_id(value, delta.name)
             provenance = Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us)
-            if txn.facts.set(key, delta.value, FactStatus.COMMITTED, provenance, rule="interpret_apply.slot_set"):
+            if txn.facts.set(key, value, FactStatus.COMMITTED, provenance, rule="interpret_apply.slot_set"):
                 changed = True
         # V3: a fresh user statement about a slot name resolves whatever
         # perception conflict was open on it (§9.1's "answer binding" —
         # "any delta on the target sets status answered").
         if delta.scope != "session" and txn.store.config.vision_enabled:
-            txn.evidence.void_conflict(goal_id, delta.name)
+            txn.evidence.void_conflict(goal_id, plain_slot_name(delta.name))
     return changed
 
 
@@ -135,6 +143,12 @@ def _apply_visual_reference(
     turn's close time as a simplified stand-in for "timestamp of the chunk
     carrying the visual reference" (not tracked per-chunk)."""
     if not txn.store.config.vision_enabled or interp.visual_reference == "none":
+        return
+    if txn.evidence.latest_active_question(goal_id) is not None and _turn_word_count(txn.store, interp.turn_id) < 3:
+        # A retarget throws away what the camera already answered. Found
+        # live, 30 Sep: a misheard two-word fragment ("ChatGPT. Please.")
+        # came back with a visual reference and discarded a correct reading
+        # of the LED. A real redirect ("actually, the other one") is longer.
         return
     turn = txn.store.turn_log.get(interp.turn_id)
     anchor_ts_us = turn.closed_ts_us if turn is not None and turn.closed_ts_us is not None else now_us
@@ -174,7 +188,7 @@ def _abandon_goal(txn: StoreTxn, goal_id: str, now_us: int, step_no: int, *, eve
     txn.store.goals.update(goal_id, status=GoalStatus.ABANDONED, task_state=TaskState.RESPONDING)
     txn.facts.set(
         f"compose.{goal_id}.text",
-        "Okay, cancelled.",
+        replies.abort_text(txn.store, goal_id) if txn.store.config.conversational_replies_enabled else "Okay, cancelled.",
         FactStatus.COMMITTED,
         Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
         rule="interpret_apply.abort_final",
@@ -300,6 +314,42 @@ def enqueue_interpretation(txn: StoreTxn, turn_id: str, provenance: Provenance, 
     txn.facts.set(_PENDING, turn_id, FactStatus.COMMITTED, provenance, rule=rule)
 
 
+def merged_turns(store, turn_id: str) -> list[str]:
+    """Earlier turns folded into `turn_id` (Config.merge_split_turns_enabled),
+    oldest first; empty when none."""
+    fact = store.facts.get(f"turn.{turn_id}.merged")
+    return list(fact.value) if _active(fact) and fact.value else []
+
+
+def merge_outstanding_turns(txn: StoreTxn, turn_id: str, provenance: Provenance) -> None:
+    """Config.merge_split_turns_enabled: every turn still waiting to be
+    interpreted (pending, waiting on its own speculative job, or queued) is
+    folded into `turn_id`, which becomes the one pending turn. Their own
+    in-flight jobs are simply never applied (neither pending nor
+    eot_waiting any more); `turn.<id>.merged` is in every INTERPRET read set
+    under this flag, so `turn_id`'s own speculative job -- which saw only
+    its half of the sentence -- goes stale too."""
+    earlier: list[str] = []
+    pending = txn.facts.get(_PENDING)
+    if _active(pending) and pending.value:
+        earlier.append(pending.value)
+        txn.facts.retract(_PENDING, rule="interpret_apply.merged")
+    for key, fact in txn.store.facts.by_prefix("spec_interpret.").items():
+        if key.endswith(".eot_waiting") and _active(fact) and fact.value:
+            earlier.append(key[len("spec_interpret."):-len(".eot_waiting")])
+            txn.facts.retract(key, rule="interpret_apply.merged")
+    queued = txn.facts.get(_QUEUED)
+    if _active(queued) and queued.value:
+        earlier.extend(queued.value)
+        txn.facts.retract(_QUEUED, rule="interpret_apply.merged")
+    order = {t.turn_id: i for i, t in enumerate(txn.store.turn_log.all())}
+    folded: list[str] = []
+    for tid in sorted(set(earlier) - {turn_id}, key=lambda t: order.get(t, 0)):
+        folded.extend(merged_turns(txn.store, tid) + [tid])
+    txn.facts.set(f"turn.{turn_id}.merged", folded, FactStatus.COMMITTED, provenance, rule="interpret_apply.merged")
+    txn.facts.set(_PENDING, turn_id, FactStatus.COMMITTED, provenance, rule="interpret_apply.merged")
+
+
 def advance_interpretation_queue(txn: StoreTxn, now_us: int, step_no: int, *, event_id: str) -> None:
     """Once nothing is outstanding, promote the next queued turn (if any)
     to pending, so TaskStateMachine dispatches its INTERPRET job."""
@@ -331,7 +381,24 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         gid = active_goal_id(txn.store)
         if gid is not None:
             _abandon_goal(txn, gid, now_us, step_no, event_id=event_id)
+        elif txn.store.config.conversational_replies_enabled and txn.store.config.idle_replies_enabled:
+            replies.set_honest_reply(txn, interp.turn_id, replies.nothing_to_cancel_text(txn.store), now_us, step_no, event_id=event_id)
         return gid
+
+    if txn.store.config.conversational_replies_enabled and not interp.actions:
+        # Config.conversational_replies_enabled (28 Sep live demo): answer
+        # honestly instead of forcing the turn onto a tool or re-asking.
+        current = active_goal_id(txn.store)
+        if interp.status_question and current is None:
+            replies.set_honest_reply(
+                txn, interp.turn_id, replies.status_text(txn.store, with_findings=True), now_us, step_no, event_id=event_id
+            )
+            return None
+        if interp.unsupported:
+            replies.set_honest_reply(
+                txn, interp.turn_id, replies.unsupported_text(txn.store, interp.unsupported), now_us, step_no, event_id=event_id
+            )
+            return current
 
     if interp.act == InterpretAct.RETURN_TO_GOAL and interp.resume_goal_id:
         target = txn.store.goals.get(interp.resume_goal_id)
@@ -341,7 +408,14 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         txn.store.goals.update(interp.resume_goal_id, status=GoalStatus.ACTIVE)
         _set_active_goal(txn, interp.resume_goal_id, now_us, step_no, event_id=event_id)
         gid = interp.resume_goal_id
-        _apply_slot_deltas(txn, gid, interp.slot_deltas, now_us, step_no, event_id=event_id)
+        compiled_goal = action_plans.is_compiled(txn.store, gid)
+        deltas = interp.slot_deltas
+        if compiled_goal:
+            mapped, unmapped = action_plans.map_deltas(txn.store, gid, deltas)
+            deltas = tuple(action_plans.coerce_deltas(txn.store, gid, mapped)) + tuple(unmapped)
+        _apply_slot_deltas(txn, gid, deltas, now_us, step_no, event_id=event_id)
+        if compiled_goal:
+            action_plans.ensure_bindings(txn, gid, [d.name for d in deltas if d.op == SlotOp.SET])
         if interp.commit_intent:
             txn.facts.set(
                 f"goal.{gid}.commit_intent",
@@ -350,8 +424,14 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.commit_intent",
             )
-        txn.store.goals.update(gid, task_state=TaskState.PLANNING)
+        # S3: a compiled goal resumes where it was -- its plan keeps its step
+        # keys (see kernel/action_plans.py.is_compiled for why a replan
+        # would be unsafe); every still-valid consumed call carries over.
+        txn.store.goals.update(gid, task_state=TaskState.EXECUTING if compiled_goal else TaskState.PLANNING)
         return gid
+
+    if interp.act == InterpretAct.NEW_GOAL and _append_to_running_goal(txn, interp, now_us, step_no, event_id=event_id):
+        return active_goal_id(txn.store)
 
     if interp.act == InterpretAct.NEW_GOAL:
         _suspend_current_goal(txn)
@@ -374,8 +454,47 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.intent",
             )
-        _apply_slot_deltas(txn, gid, interp.slot_deltas, now_us, step_no, event_id=event_id)
-        if interp.commit_intent:
+        # S3: compile the plan straight from the per-action interpretation
+        # (kernel/action_plans.py) -- None means the ordinary PLAN path runs.
+        compiled = None
+        if txn.store.config.action_plans_enabled:
+            compiled = action_plans.compile_actions(txn, gid, interp, now_us, step_no, event_id=event_id)
+        # Day 2 WP2 (docs/fdb_v3_day2_plan.md): every tool the turn asked
+        # for, in order -- tells the Planner to emit one step per action
+        # instead of just one for `intent`. Additive fact; a plan built
+        # without this flag never reads it.
+        if txn.store.config.multi_action_enabled and (interp.requested_actions or compiled is not None):
+            txn.facts.set(
+                f"goal.{gid}.actions",
+                [step.tool for step in compiled.steps] if compiled is not None else list(interp.requested_actions),
+                FactStatus.COMMITTED,
+                Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
+                rule="interpret_apply.requested_actions",
+            )
+        if compiled is None:
+            deltas = interp.slot_deltas
+            if txn.store.config.action_plans_enabled and not deltas and interp.actions:
+                # The Interpreter may leave slot_deltas empty once `actions`
+                # is filled; the fallback PLAN path still needs flat slots.
+                deltas = action_plans.flat_deltas_from_actions(interp.actions)
+            _apply_slot_deltas(txn, gid, deltas, now_us, step_no, event_id=event_id)
+        tools = [step.tool for step in compiled.steps] if compiled is not None else list(interp.requested_actions or [interp.intent])
+        earlier = replies.earlier_confirmed_writes(txn.store, gid, tools) if _live_followups(txn.store) else []
+        if earlier:
+            # Found live, 30 Sep: "No, cancel it. Make it Friday" after a
+            # confirmed booking was read as a new request and booked a second
+            # technician. A repeat of a write that already went through this
+            # session never runs on the interpretation alone: the go-ahead is
+            # withheld (CommitGate G4 holds it) and the confirmation question
+            # names what already stands (responder._confirm_unconfirmed_write).
+            txn.facts.set(
+                f"goal.{gid}.repeat_of",
+                replies.write_summary(earlier),
+                FactStatus.COMMITTED,
+                Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
+                rule="interpret_apply.repeat_write",
+            )
+        elif interp.commit_intent:
             txn.facts.set(
                 f"goal.{gid}.commit_intent",
                 True,
@@ -383,18 +502,100 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.commit_intent",
             )
+        # Q7 (win_plan §6.2): the Interpreter's own `ack_phrase` (already
+        # parsed onto `TurnInterpretation.ack_phrase` in kernel/proposals.py
+        # but never consumed anywhere before this) is stored as a fact so
+        # `kernel/responder.py.FastResponder._ack_plan_dispatch` can speak
+        # it verbatim once the plan actually dispatches, instead of the
+        # generic ACK_DEFAULT string.
+        if interp.ack_phrase and txn.store.config.echo_ack_enabled:
+            txn.facts.set(
+                f"goal.{gid}.ack_phrase",
+                interp.ack_phrase,
+                FactStatus.COMMITTED,
+                Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
+                rule="interpret_apply.ack_phrase",
+            )
         _apply_visual_reference(txn, interp, gid, now_us, step_no)
+        if interp.unsupported and txn.store.config.conversational_replies_enabled:
+            # Part of the request no tool can do -- said alongside the ACK
+            # (kernel/responder.py._ack_compiled_plan), never silently dropped.
+            txn.facts.set(
+                f"goal.{gid}.unsupported",
+                interp.unsupported,
+                FactStatus.COMMITTED,
+                Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
+                rule="interpret_apply.unsupported",
+            )
+        if compiled is not None:
+            # No PLAN job: straight to executing the compiled plan.
+            txn.store.goals.update(gid, task_state=TaskState.EXECUTING)
         return gid
+
+    if (
+        interp.act in _SLOT_UPDATE_ACTS
+        and interp.actions
+        and txn.store.config.action_plans_enabled
+        and active_goal_id(txn.store) is None
+    ):
+        # S3: with no goal there is nothing to update -- a live model still
+        # sometimes labels a first request "raise my max price and..." as
+        # slot_update/addition (found live, housing_13). When it also listed
+        # the concrete tool calls, those are the new goal; apply them as one
+        # rather than discard them into the unclear re-ask below.
+        return apply_interpretation(
+            dataclasses.replace(interp, act=InterpretAct.NEW_GOAL, intent=interp.intent or interp.actions[0].tool),
+            txn,
+            now_us,
+            step_no,
+            event_id=event_id,
+        )
 
     if interp.act in _SLOT_UPDATE_ACTS:
         gid = active_goal_id(txn.store)
         if gid is None:
+            last = replies.last_finished_goal(txn.store)
+            writes = replies.confirmed_writes(txn.store, last.goal_id) if last is not None and interp.slot_deltas else []
+            if writes and _live_followups(txn.store):
+                # A correction to a task whose write already went through is
+                # never re-run: that would be a second booking.
+                replies.set_honest_reply(txn, interp.turn_id, replies.no_second_write_text(writes), now_us, step_no, event_id=event_id)
+                return None
+            redo = _redo_last_goal(txn, interp)
+            if redo is not None:
+                return apply_interpretation(redo, txn, now_us, step_no, event_id=event_id)
+            # S2 validation finding (housing_13, 2026-09-27): a live model
+            # sometimes classifies a genuinely-first, no-goal-yet
+            # utterance as SLOT_UPDATE/ADDITION/etc. rather than NEW_GOAL
+            # -- superficially it reads like a correction ("let's raise
+            # the max price... and also bump up...") even with no prior
+            # turn to correct. This branch has the exact same silent-stall
+            # shape Q6a already fixed for BACKCHANNEL/SMALLTALK/UNCLEAR
+            # (`_flag_unclear_no_goal` below) -- found live: a standalone
+            # repro of the identical input returned `slot_update` on 2 of
+            # 4 attempts and `new_goal` on the other 2, so this is real
+            # response variance, not a one-off.
+            _flag_unclear_no_goal(txn, interp.turn_id, now_us, step_no, event_id=event_id)
             return None
         goal = txn.store.goals.get(gid)
         if goal is None or goal.status != GoalStatus.ACTIVE:
             return gid
 
-        changed = _apply_slot_deltas(txn, gid, interp.slot_deltas, now_us, step_no, event_id=event_id)
+        # S3: on a compiled goal, a flat correction/answer ("destination")
+        # is mapped onto the one action's own slot ("a1.destination"); an
+        # ADDITION appends its new actions to the compiled plan.
+        compiled_goal = action_plans.is_compiled(txn.store, gid)
+        deltas = interp.slot_deltas
+        extended = False
+        if compiled_goal:
+            if interp.act == InterpretAct.ADDITION and interp.actions:
+                extended = action_plans.extend_compiled_plan(txn, gid, interp, now_us, step_no, event_id=event_id)
+            mapped, unmapped = action_plans.map_deltas(txn.store, gid, deltas)
+            deltas = tuple(action_plans.coerce_deltas(txn.store, gid, mapped)) + tuple(unmapped)
+        changed = _apply_slot_deltas(txn, gid, deltas, now_us, step_no, event_id=event_id)
+        if compiled_goal:
+            action_plans.ensure_bindings(txn, gid, [d.name for d in deltas if d.op == SlotOp.SET])
+            changed = changed or extended
 
         if interp.act == InterpretAct.DENY:
             txn.facts.set(
@@ -404,7 +605,9 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.deny",
             )
-        elif interp.commit_intent:
+        elif interp.commit_intent or (interp.act == InterpretAct.CONFIRM and _awaiting_confirmation(txn.store, gid)):
+            # A "yes" to responder._confirm_unconfirmed_write's question counts
+            # as the commit intent the held write was waiting for.
             txn.facts.set(
                 f"goal.{gid}.commit_intent",
                 True,
@@ -457,7 +660,12 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             txn.facts.retract(f"goal.{gid}.clarify_target", rule="interpret_apply.clarify_resolved")
         if changed and goal.task_state not in (TaskState.COMPLETED, TaskState.FAILED):
             changed_names = {d.name for d in interp.slot_deltas if d.scope != "session"}
-            if (
+            if compiled_goal:
+                # S3: never replan a compiled goal (kernel/action_plans.py.
+                # is_compiled). The slot write above already invalidated the
+                # affected action's call; PlanExecutor rebinds it next DECIDE.
+                txn.store.goals.update(gid, task_state=TaskState.EXECUTING)
+            elif (
                 txn.store.config.rebinder_enabled
                 and goal.task_state == TaskState.EXECUTING
                 and _can_rebind(txn.store, gid, changed_names)
@@ -474,5 +682,118 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         _apply_visual_reference(txn, interp, gid, now_us, step_no)
         return gid
 
-    # BACKCHANNEL / SMALLTALK / UNCLEAR: nothing further to do.
-    return active_goal_id(txn.store)
+    # BACKCHANNEL / SMALLTALK / UNCLEAR: nothing further to do -- except
+    # when there is no active goal at all to backchannel/make smalltalk
+    # against, which is the exact shape of the housing_11/housing_13
+    # silent stalls (Q4, win_plan §6.2): a heavily disfluent, self-
+    # correcting first utterance the live model failed to extract any
+    # goal from. With no goal, nothing else in this project ever produces
+    # output for the turn -- the whole scenario would otherwise run out
+    # the clock in total silence. Gated (not unconditional): a genuinely
+    # contentless first turn ("hi") would also trip this, which is
+    # correct for a task-oriented benchmark but a judgment call for a
+    # general assistant.
+    gid = active_goal_id(txn.store)
+    if gid is None:
+        idle_replies = txn.store.config.conversational_replies_enabled and txn.store.config.idle_replies_enabled
+        if idle_replies and interp.act in (InterpretAct.SMALLTALK, InterpretAct.BACKCHANNEL):
+            # "thank you" deserves a reply, not "I didn't catch that" -- the
+            # polite one still invites a request that was misread as chat.
+            replies.set_honest_reply(txn, interp.turn_id, replies.POLITE_REPLY, now_us, step_no, event_id=event_id)
+        elif idle_replies and txn.store.goals.all() and _turn_word_count(txn.store, interp.turn_id) >= 3:
+            # An unclear turn right after a finished task is most often about
+            # that task ("has it been booked?" -- the status_question flag is
+            # unreliable on a small model, found live): say where it stands,
+            # then invite the next request, instead of "didn't catch that".
+            # A fragment ("The...") is more likely the start of a sentence:
+            # it takes the delayed re-ask below, dropped if the user goes on
+            # (found live, 30 Sep: a status summary answered "The...").
+            replies.set_honest_reply(
+                txn, interp.turn_id, replies.status_text(txn.store) + " Anything else?", now_us, step_no, event_id=event_id
+            )
+        else:
+            _flag_unclear_no_goal(txn, interp.turn_id, now_us, step_no, event_id=event_id)
+    return gid
+
+
+def _turn_word_count(store, turn_id: str) -> int:
+    turn = store.turn_log.get(turn_id)
+    text = " ".join(chunk.text for chunk in turn.chunks) if turn is not None else ""
+    return len(text.split())
+
+
+def _flag_unclear_no_goal(txn: StoreTxn, turn_id: str, now_us: int, step_no: int, *, event_id: str) -> None:
+    """Shared by both no-op-classification paths that can leave a turn
+    with no active goal and no further mutation: the BACKCHANNEL/
+    SMALLTALK/UNCLEAR fallthrough above, and `_SLOT_UPDATE_ACTS`'s own
+    `if gid is None: return None` -- found live (2026-09-27) that a
+    real model can emit SLOT_UPDATE for a genuinely-first utterance too,
+    the identical silent-stall shape under a different act value.
+    `kernel/responder.py.FastResponder._unclear_no_goal` speaks
+    `UNCLEAR_NO_GOAL` once per flagged turn_id."""
+    if not txn.store.config.never_silent_unclear_enabled:
+        return
+    txn.facts.set(
+        "session.unclear_no_goal_turn",
+        turn_id,
+        FactStatus.COMMITTED,
+        Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
+        rule="interpret_apply.unclear_no_goal",
+    )
+
+
+def _live_followups(store) -> bool:
+    return store.config.conversational_replies_enabled and store.config.action_plans_enabled
+
+
+def _append_to_running_goal(txn: StoreTxn, interp: TurnInterpretation, now_us: int, step_no: int, *, event_id: str) -> bool:
+    """A new request while a compiled goal is still running is appended to
+    it (kernel/action_plans.py.append_actions) instead of suspending it --
+    found live, 28 Sep: four requests in a row each silently parked the
+    previous one. The appended part gets its own ACK."""
+    if not _live_followups(txn.store) or not interp.actions:
+        return False
+    gid = active_goal_id(txn.store)
+    if gid is not None and replies.earlier_confirmed_writes(txn.store, None, [a.tool for a in interp.actions]):
+        # A repeat of a write that already went through is never appended to
+        # a running goal, whose go-ahead would carry over to it: it takes the
+        # new-request path, which asks first (goal.<gid>.repeat_of).
+        return False
+    goal = txn.store.goals.get(gid) if gid is not None else None
+    if goal is None or goal.status != GoalStatus.ACTIVE or goal.task_state not in (TaskState.EXECUTING, TaskState.CLARIFYING):
+        return False
+    if not action_plans.append_actions(txn, gid, interp.actions, now_us, step_no, event_id=event_id, turn_id=interp.turn_id):
+        return False
+    prov = Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us)
+    plan = txn.store.plans.current(gid)
+    txn.facts.set(f"goal.{gid}.actions", [step.tool for step in plan.steps], FactStatus.COMMITTED, prov, rule="interpret_apply.appended_actions")
+    if interp.ack_phrase and txn.store.config.echo_ack_enabled:
+        txn.facts.set(f"goal.{gid}.ack_phrase", interp.ack_phrase, FactStatus.COMMITTED, prov, rule="interpret_apply.ack_phrase")
+    txn.facts.retract(f"ack.{gid}.compiled", rule="interpret_apply.appended_actions")  # the appended part gets its own ACK
+    if goal.task_state == TaskState.EXECUTING:
+        txn.store.goals.update(gid, task_state=TaskState.EXECUTING)
+    return True
+
+
+def _redo_last_goal(txn: StoreTxn, interp: TurnInterpretation) -> TurnInterpretation | None:
+    """"No, make it ten dollars" right after a task finished: re-run that
+    (compiled) task with the correction, as a new request -- found live,
+    28 Sep: with the goal closed, the correction was answered "I can't do
+    that". None when there is no finished compiled task to redo or no
+    correction maps onto one of its actions."""
+    if not _live_followups(txn.store) or not interp.slot_deltas:
+        return None
+    last = replies.last_finished_goal(txn.store)
+    if last is None:
+        return None
+    actions = action_plans.redo_actions(txn.store, last.goal_id, interp.slot_deltas)
+    if not actions:
+        return None
+    return dataclasses.replace(
+        interp, act=InterpretAct.NEW_GOAL, intent=actions[0].tool, actions=tuple(actions), slot_deltas=(), unsupported=None
+    )
+
+
+def _awaiting_confirmation(store, goal_id: str) -> bool:
+    fact = store.facts.get(f"goal.{goal_id}.awaiting_confirmation")
+    return _active(fact) and bool(fact.value)

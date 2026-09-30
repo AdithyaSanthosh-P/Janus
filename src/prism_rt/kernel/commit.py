@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from config.lexicons import HOLD_CUES, INERT_TOKENS, TRAILING_CONNECTIVES
 from prism_rt.kernel.interpret_apply import user_content_pending
 from prism_rt.model.actions import IntendedAction, ToolCallBody
 from prism_rt.model.types import (
@@ -52,6 +53,57 @@ class GateRejection:
     blocked_reason: str | None
 
 
+def _turn_looks_incomplete(store: SessionStore) -> bool:
+    """Day 2 (docs/fdb_v3_day2_plan.md WP1): does the latest *closed*
+    user turn's own text end mid-thought ("...add two apples and",
+    "...to the")? Checked against the turn's real chunk text
+    (`store.turn_log`), not the `turn.<id>.prefix` fact -- that fact's
+    value is a digest (read-set validity only), never the raw text.
+    A turn with no chunks or empty text is never "incomplete" -- there's
+    nothing to judge."""
+    turns = store.turn_log.all()
+    if not turns:
+        return False
+    turn = turns[-1]
+    if not turn.chunks:
+        return False
+    text = " ".join(chunk.text for chunk in turn.chunks).strip()
+    if not text:
+        return False
+    stripped = text.rstrip(" .,!?;:\"'").lower()
+    if not stripped:
+        return False
+    for cue in HOLD_CUES:
+        if stripped.endswith(cue.rstrip(",")):
+            return True
+    last_word = stripped.split()[-1]
+    return last_word in INERT_TOKENS or last_word in TRAILING_CONNECTIVES
+
+
+def _uses_assumed_value(store: SessionStore, call: CallRecord) -> bool:
+    """True when one of the call's arguments is a value the user never said
+    (Config.fill_unstated_required_enabled writes those with source
+    "assumed")."""
+    for entry in call.read_set.entries:
+        fact = store.facts.get(entry.key)
+        if fact is not None and fact.provenance.source == "assumed":
+            return True
+    return False
+
+
+def _effective_settle_us(store: SessionStore, call: CallRecord | None = None) -> int:
+    if store.config.incomplete_turn_settle_enabled and _turn_looks_incomplete(store):
+        return store.config.settle_ms_incomplete * 1000
+    if store.config.assumed_value_settle_enabled and call is not None and _uses_assumed_value(store, call):
+        # Found in the 30 Sep voice runs: a search went out with an assumed
+        # budget (max_price=10000) in the pause before the user said "around
+        # two thousand", then ran again -- an extra call the benchmark counts
+        # as a failure. A value the user never said is the one most likely
+        # still to come, so such a call waits the longer window.
+        return store.config.settle_ms_incomplete * 1000
+    return store.config.settle_ms * 1000
+
+
 class CommitGate:
     def evaluate(self, call: CallRecord, store: SessionStore, now_us: int) -> GateDecision:
         # G1: tool exists and is usable
@@ -84,6 +136,16 @@ class CommitGate:
             return GateDecision(False, "interpretation_pending", "G3")
 
         if call.kind != StepKind.WRITE:
+            if store.config.settle_reads_enabled:
+                # Config.settle_reads_enabled: a read waits out the same
+                # floor + settle barrier as a write, so a turn closed early
+                # by a mid-sentence pause can't fire a call the rest of the
+                # sentence would change.
+                if store.floor_state != FloorState.USER_TURN_CLOSED:
+                    return GateDecision(False, "floor_open", "G3")
+                settle = self._settle_block(store, now_us, call)
+                if settle is not None:
+                    return settle
             return GateDecision(True, None, "G1,G2,G8")
 
         # --- write-only conditions ------------------------------------
@@ -99,10 +161,19 @@ class CommitGate:
         # G3: floor closed (no commit while the user may still be correcting)
         if store.floor_state != FloorState.USER_TURN_CLOSED:
             return GateDecision(False, "floor_open", "G3")
-        # G4: commit_intent true for the call's goal
-        intent_fact = store.facts.get(f"goal.{call.goal_id}.commit_intent")
-        if intent_fact is None or intent_fact.status == FactStatus.RETRACTED or intent_fact.value is not True:
-            return GateDecision(False, "commit_intent_false", "G4")
+        # G4: commit_intent true for the call's goal. Day 2 (§5.2,
+        # Config.g4_exempt_undeclared_mutability's own docstring): a tool
+        # whose mutability was never declared (DEFAULTED to STATE_CHANGING,
+        # the catalog's safe default -- e.g. every FDB-v3 tool) doesn't
+        # need an *explicit* commit_intent when this flag is on; G3 (floor
+        # closed, already checked above) and G10/G11 (settle, checked
+        # below) still gate it. A tool whose mutability *was* declared is
+        # unaffected either way -- this never weakens a real write.
+        undeclared_exempt = store.config.g4_exempt_undeclared_mutability and tool.mutability_source == "DEFAULTED"
+        if not undeclared_exempt:
+            intent_fact = store.facts.get(f"goal.{call.goal_id}.commit_intent")
+            if intent_fact is None or intent_fact.status == FactStatus.RETRACTED or intent_fact.value is not True:
+                return GateDecision(False, "commit_intent_false", "G4")
 
         # G5: no existing effect with the same fingerprint (non-FAILED)
         existing_fp = store.effect_ledger.by_fingerprint(call.fingerprint)
@@ -129,16 +200,23 @@ class CommitGate:
         # closed, AND no newer turn has opened since (a still-open floor
         # already fails G3 above, but a turn can open and close again
         # within the settle window itself, which G3 alone wouldn't catch).
-        if store.config.settle_barrier_enabled:
-            last_eot = store.facts.get("session.last_eot_ts")
-            last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else None
-            settle_us = store.config.settle_ms * 1000
-            if last_eot_ts is None or (now_us - last_eot_ts) < settle_us:
-                return GateDecision(False, "settle_not_elapsed", "G10")
-            if store.turn_log.open_turn_id() is not None:
-                return GateDecision(False, "new_turn_open", "G11")
+        settle = self._settle_block(store, now_us, call)
+        if settle is not None:
+            return settle
 
         return GateDecision(True, None, "G1-G8")
+
+    def _settle_block(self, store: SessionStore, now_us: int, call: CallRecord | None = None) -> GateDecision | None:
+        if not store.config.settle_barrier_enabled:
+            return None
+        last_eot = store.facts.get("session.last_eot_ts")
+        last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else None
+        settle_us = _effective_settle_us(store, call)
+        if last_eot_ts is None or (now_us - last_eot_ts) < settle_us:
+            return GateDecision(False, "settle_not_elapsed", "G10")
+        if store.turn_log.open_turn_id() is not None:
+            return GateDecision(False, "new_turn_open", "G11")
+        return None
 
     def scan_and_admit(
         self, store: SessionStore, now_us: int
@@ -215,5 +293,5 @@ class CommitGate:
         goes unread in production, which is all D1 was ever about."""
         last_eot = store.facts.get("session.last_eot_ts")
         last_eot_ts = last_eot.value if last_eot is not None and last_eot.status != FactStatus.RETRACTED else now_us
-        due_us = last_eot_ts + store.config.settle_ms * 1000
+        due_us = last_eot_ts + _effective_settle_us(store, call)
         store.timers.schedule(f"settle:{call.call_id}", due_us)

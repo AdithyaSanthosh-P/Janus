@@ -169,11 +169,21 @@ class GeminiProvider:
     type unions for nullable fields, into Gemini's OpenAPI-subset schema
     format — unnecessary complexity for what this needs to do)."""
 
-    def __init__(self, model: str = "gemini-3.6-flash", api_key: str | None = None) -> None:
+    def __init__(
+        self, model: str = "gemini-3.6-flash", api_key: str | None = None, *, thinking_budget: int | None = None
+    ) -> None:
         self._model = model
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self._api_key:
             raise RuntimeError("GeminiProvider requires GEMINI_API_KEY (env var or api_key=)")
+        # Day 1 (docs/fdb_v3_implementation_plan.md §4.1): "thinking" is on
+        # by default and measured at ~5.5s/INTERPRET call -- the main
+        # driver of end-to-end latency on FDB-v3 runs.
+        # `thinking_budget=0` turns it off (~2.2s). Left unset (None) by
+        # default so every existing caller/test is unaffected; some
+        # models (gemini-3.5-flash-lite, measured) reject the field with
+        # HTTP 400, so callers that need that model must leave this None.
+        self._thinking_budget = thinking_budget
 
     def complete_json(self, kind: str, prompt: str, schema: dict, *, media: list[MediaPart] | None = None) -> dict:
         instruction = (
@@ -193,6 +203,8 @@ class GeminiProvider:
             # a retry. Matches `AnthropicProvider`'s existing `temperature=0`.
             "generationConfig": {"responseMimeType": "application/json", "temperature": 0},
         }
+        if self._thinking_budget is not None:
+            body["generationConfig"]["thinkingConfig"] = {"thinkingBudget": self._thinking_budget}
 
         def _call() -> dict:
             req = urllib.request.Request(
@@ -215,3 +227,47 @@ class ModelGateway:
 
     def complete_json(self, kind: str, prompt: str, schema: dict, *, media: list[MediaPart] | None = None) -> dict:
         return self._provider.complete_json(kind, prompt, schema, media=media)
+
+
+class OpenAIProvider:
+    """OpenAI chat completions in JSON mode, same `complete_json` contract as
+    `GeminiProvider` (schema sent as prompt text, reply parsed as JSON).
+    Plain HTTPS via urllib, so no SDK dependency; reads OPENAI_API_KEY.
+    Images in `media` are sent as data URLs; other media types are skipped
+    (not supported by this endpoint), matching `AnthropicProvider`."""
+
+    def __init__(self, model: str = "gpt-4.1", *, api_key: str | None = None, timeout_s: float = 30.0) -> None:
+        self.model = model
+        self._api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        self._timeout_s = timeout_s
+        if not self._api_key:
+            raise ValueError("OPENAI_API_KEY is not set")
+
+    def complete_json(self, kind: str, prompt: str, schema: dict, *, media: list[MediaPart] | None = None) -> dict:
+        text = f"Respond with ONLY a single JSON object matching this schema: {json.dumps(schema)}\n\n{prompt}"
+        content: list[dict] | str = text
+        images = [m for m in (media or []) if m.mime_type.startswith("image/")]
+        if images:
+            content = [{"type": "text", "text": text}] + [
+                {"type": "image_url", "image_url": {"url": f"data:{m.mime_type};base64,{base64.b64encode(m.data).decode('ascii')}"}}
+                for m in images
+            ]
+        body = json.dumps({
+            "model": self.model,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+            "messages": [{"role": "user", "content": content}],
+        }).encode("utf-8")
+
+        def _call() -> dict:
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions",
+                data=body,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {self._api_key}"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+            return json.loads(result["choices"][0]["message"]["content"])
+
+        return _call_with_retry(_call)

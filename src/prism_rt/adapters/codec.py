@@ -132,6 +132,11 @@ class HarnessCodec:
         )
         return [envelope]
 
+    def timestamp_us(self, raw: dict) -> int | None:
+        """The event's timestamp in microseconds, or None -- what
+        `entry.py` advances the clock to before stepping."""
+        return self._extract_ts(raw)
+
     def _extract_ts(self, raw: dict) -> int | None:
         if "ts_us" in raw:
             try:

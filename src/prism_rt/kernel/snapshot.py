@@ -6,6 +6,7 @@ to an action, from whatever the FactStore holds right now.
 from __future__ import annotations
 
 from prism_rt.canonical import compute_digest
+from prism_rt.kernel.action_plans import ACTION_SLOT_NAME
 from prism_rt.model.types import FactStatus, Snapshot
 from prism_rt.store.catalog import value_matches_schema_type
 from prism_rt.store.session import SessionStore
@@ -38,13 +39,25 @@ class SnapshotProjector:
             for name, prop in ((tool.params_schema or {}).get("properties") or {}).items():
                 params.setdefault(name, prop if isinstance(prop, dict) else {})
         prefix = f"slot.{goal_id}."
-        slots = {
-            key[len(prefix):]: value
-            for key, value in store.facts.snapshot_committed().items()
-            if key.startswith(prefix)
-            and key[len(prefix):] in params
-            and value_matches_schema_type(params[key[len(prefix):]], value)
-        }
+        # S3: a compiled goal's slots are per action (slot.<gid>.a<i>.<name>,
+        # kernel/action_plans.py) -- folded back to <name> here; a name two
+        # actions hold with different values is ambiguous state and dropped.
+        slots: dict = {}
+        conflicted: set[str] = set()
+        for key, value in store.facts.snapshot_committed().items():
+            if not key.startswith(prefix):
+                continue
+            name = key[len(prefix):]
+            scoped = ACTION_SLOT_NAME.match(name)
+            if scoped:
+                name = scoped.group(2)
+            if name not in params or not value_matches_schema_type(params[name], value):
+                continue
+            if name in slots and slots[name] != value:
+                conflicted.add(name)
+            slots[name] = value
+        for name in conflicted:
+            slots.pop(name, None)
 
         digest = compute_digest({"intent": intent, "slots": slots})
         return Snapshot(intent=intent, slots=slots, revision=store.facts.revision(), digest=digest)

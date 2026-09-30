@@ -325,6 +325,19 @@ class TimerWheel:
     def due(self, now_us: int) -> list[str]:
         return [tid for tid, due_us in self._due.items() if due_us <= now_us]
 
+    def retire_due(self, now_us: int) -> None:
+        """Drop every timer due at or before `now_us`. Called by
+        `Kernel.step()` after the step that ran at `now_us`: that step has
+        already re-evaluated everything clock-driven, so each such timer's
+        liveness obligation is discharged. Without this a timer nobody
+        cancels (e.g. `deadline:<call_id>` for a call that completed) stays
+        due forever, and a driver honouring `next_wake_us` re-steps without
+        end (found while auditing `entry.py`: it busy-spun the event loop
+        until the watchdog)."""
+        self._guard.check()
+        for tid in self.due(now_us):
+            del self._due[tid]
+
 
 class EvidenceStore:
     """V3: observations (stored frames), questions (what perception is

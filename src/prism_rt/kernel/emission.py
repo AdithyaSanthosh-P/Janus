@@ -9,8 +9,10 @@ Emission order: CANCEL -> SPEAK -> TOOL_CALL -> CLARIFY -> FINAL
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
+from config.templates import ACK_DEFAULT
 from prism_rt.adapters.output_writer import OutputWriter
 from prism_rt.ids import IdGenerator
 from prism_rt.kernel.snapshot import SnapshotProjector
@@ -22,6 +24,7 @@ from prism_rt.model.actions import (
     SpeakBody,
     ToolCallBody,
 )
+from prism_rt.observability import speechlint
 from prism_rt.model.types import (
     TERMINAL_CALL_STATUSES,
     ActionType,
@@ -88,11 +91,12 @@ class EmissionGate:
 
             action_id = ids.next("action")
             snapshot = self._snapshot_projector.project(store) if ia.needs_snapshot else None
+            body = self._lint_body(ia.body, store) if store.config.speechlint_enabled else ia.body
             action = Action(
                 action_type=ia.action_type,
                 action_id=action_id,
                 ts_us=now_us,
-                body=ia.body,
+                body=body,
                 read_set=ia.read_set,
                 snapshot=snapshot,
                 trigger_event_id=ia.trigger_event_id,
@@ -108,6 +112,21 @@ class EmissionGate:
             emitted.append(EmittedRecord(action))
 
         return EmitReport(emitted=tuple(emitted), rejected=tuple(rejected))
+
+    def _lint_body(self, body, store: SessionStore):
+        """Q8 (win_plan §6.2): runs right before writing, after `_validate`
+        already confirmed the original text was real -- so a rejected ACK
+        (kind == "ack", a premature completion claim) falling back to
+        ACK_DEFAULT is still guaranteed non-empty, and every other kind
+        only ever gets humanized in place, never emptied."""
+        if not isinstance(body, (SpeakBody, FinalBody)):
+            return body
+        kind = body.kind if isinstance(body, SpeakBody) else "final"
+        result = speechlint.lint(body.text, kind)
+        text = result.text if result.text is not None else ACK_DEFAULT
+        if text == body.text:
+            return body
+        return dataclasses.replace(body, text=text)
 
     def _validate(self, ia: IntendedAction, store: SessionStore) -> str | None:
         # P1 / G9: every action's read set must still be valid right now.
@@ -185,6 +204,13 @@ class EmissionGate:
             store.goals.update(goal_id, task_state=TaskState.COMPLETED)
 
         store.facts.retract(f"compose.{goal_id}.text", rule="emission.final_consumed")
+        # Which task finished most recently (kernel/replies.py status answers,
+        # interpret_apply._redo_last_goal) -- created_step is creation order,
+        # wrong after a suspend/resume (found by review).
+        store.facts.set(
+            "session.last_finished_goal", goal_id, FactStatus.COMMITTED,
+            Provenance(source="system", step_no=0, ts_us=now_us), rule="emission.last_finished_goal",
+        )
 
         active_fact = store.facts.get("goal.active")
         if active_fact is not None and active_fact.status != FactStatus.RETRACTED and active_fact.value == goal_id:

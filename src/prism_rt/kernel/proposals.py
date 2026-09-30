@@ -10,7 +10,12 @@ set; accept, hold, or reject"), the prompt-building half is not.
 
 from __future__ import annotations
 
+import dataclasses
+import re
+
 from prism_rt.model.types import (
+    ActionRef,
+    ActionSpec,
     AsrSegment,
     Binding,
     BindingKind,
@@ -22,13 +27,58 @@ from prism_rt.model.types import (
     SlotDelta,
     SlotOp,
     StepKind,
+    ToolMutability,
     TurnInterpretation,
     VisualCandidate,
 )
 
 
+def _parse_actions(raw_actions) -> tuple[ActionSpec, ...]:
+    """S3: all-or-nothing -- one malformed entry empties the whole list, so
+    the kernel falls back to the ordinary PLAN path rather than silently
+    running a plan with one of the user's actions missing. Catches the
+    TypeError/AttributeError family itself: `_apply_worker_result` only
+    catches KeyError/ValueError, and a bad `actions` alone must never
+    drop the rest of an otherwise-good interpretation."""
+    if not raw_actions or not isinstance(raw_actions, (list, tuple)):
+        return ()
+    try:
+        parsed = []
+        for raw in raw_actions:
+            tool = raw["tool"]
+            args = raw.get("args") or {}
+            if not isinstance(tool, str) or not tool or not isinstance(args, dict):
+                return ()
+            refs = []
+            for raw_ref in raw.get("refs") or ():
+                source = raw_ref["from"]
+                if isinstance(source, bool):
+                    return ()
+                refs.append(
+                    ActionRef(
+                        param=str(raw_ref["param"]),
+                        source=int(source),
+                        field=raw_ref.get("field") or None,
+                        select=str(raw_ref.get("select") or ""),
+                    )
+                )
+            assumed = tuple(str(p) for p in (raw.get("assumed") or ()))
+            parsed.append(ActionSpec(tool=tool, args={str(k): v for k, v in args.items()}, refs=tuple(refs), assumed=assumed))
+        return tuple(parsed)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return ()
+
+
 def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnInterpretation:
-    act = InterpretAct(raw["act"])
+    try:
+        act = InterpretAct(raw["act"])
+    except ValueError:
+        # Found live: a model that filled `unsupported`/`status_question`
+        # sometimes also invents a matching act ("unsupported"). The fields
+        # carry the meaning; don't drop the whole interpretation over it.
+        if not (isinstance(raw.get("unsupported"), str) or raw.get("status_question") is True):
+            raise
+        act = InterpretAct.UNCLEAR
     slot_deltas = tuple(
         SlotDelta(
             name=delta["name"],
@@ -42,6 +92,7 @@ def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnI
         VisualCandidate(name=c["name"], description=c.get("description", ""))
         for c in raw.get("visual_candidates") or ()
     )
+    requested_actions = tuple(a for a in (raw.get("requested_actions") or ()) if isinstance(a, str))
     return TurnInterpretation(
         turn_id=turn_id,
         input_digest=input_digest,
@@ -53,7 +104,70 @@ def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnI
         ack_phrase=raw.get("ack_phrase"),
         visual_reference=raw.get("visual_reference") or "none",
         visual_candidates=visual_candidates,
+        requested_actions=requested_actions,
+        actions=_parse_actions(raw.get("actions")),
+        unsupported=raw["unsupported"].strip() or None if isinstance(raw.get("unsupported"), str) else None,
+        status_question=raw.get("status_question") is True,
     )
+
+
+def fix_step_kind(step, catalog):
+    """`step.kind` is copied from the catalog at plan acceptance
+    (`docs/prompt 2.txt` §4.3) — the model's own claim is provisional only,
+    never trusted for mutability (W5: unknown -> WRITE, the safe default).
+    Lives here (re-exported by kernel/reducers.py as `_fix_step_kind`) so
+    kernel/action_plans.py can apply the same rule to a compiled plan
+    without importing reducers."""
+    spec = catalog.get(step.tool)
+    kind = StepKind.READ if spec is not None and spec.mutability == ToolMutability.READ_ONLY else StepKind.WRITE
+    return dataclasses.replace(step, kind=kind, requires_commit_intent=(kind == StepKind.WRITE))
+
+
+# S3 per-action slot name "a<i>.<param>" -- the one definition; kernel/action_plans.py
+# re-exports it (it imports this module, so the reverse would be a cycle).
+ACTION_SLOT_NAME = re.compile(r"^(a\d+)\.(\w+)$")
+
+
+def is_action_slot_key(key: str, goal_id: str, name: str) -> bool:
+    """True for slot.<goal>.a<i>.<name>: a compiled action's own key for
+    the plain slot <name>."""
+    return re.fullmatch(rf"slot\.{re.escape(goal_id)}\.a\d+\.{re.escape(name)}", str(key)) is not None
+
+
+def plain_slot_name(name: str) -> str:
+    """"a0.led_name" -> "led_name": a compiled action's slot under the plain
+    name perception, conflicts and camera questions use."""
+    match = ACTION_SLOT_NAME.match(name)
+    return match.group(2) if match else name
+
+
+def _normalize_fact_key(raw_key: str | None) -> str | None:
+    """Day 1 (docs/fdb_v3_implementation_plan.md, found live: a real
+    PLAN response from gemini-3.6-flash with thinking off): the schema's
+    own instruction and example (`workers/planner.py.PLAN_SCHEMA`:
+    `{"type": "fact", "key": "slot.$G.destination"}`) is not always
+    enough -- a live model can return the bare slot name ("query")
+    instead of the fully-qualified key ("slot.$G.query"). `_bind` then
+    looks up a fact that will never exist, and the step blocks on a
+    clarify forever, even though the Interpreter correctly committed
+    the slot moments earlier (confirmed by direct reproduction: the
+    INTERPRET job set `slot.<gid>.query`; the PLAN job's own binding
+    was the bare string "query", not "slot.$G.query").
+
+    Every legitimate fact-key scheme this codebase uses (`slot.`,
+    `derived.`, `claim.`, `goal.`, `hyp.`, `stepout.`, `result.`) is
+    always dotted, so a bare name with no "." at all is unambiguous --
+    there is no other sensible reading of it than "this goal's own slot
+    of that name," the same convention `slot_deltas[].name` already
+    uses. A key that already has a "." (even if malformed some other
+    way) is left untouched rather than guessed at -- except S3's per-action
+    slot name ("a0.city", `kernel/action_plans.py`), which a fallback PLAN
+    job sees in its `facts` view and may bind by that bare name."""
+    if raw_key is None:
+        return raw_key
+    if "." in raw_key and not ACTION_SLOT_NAME.match(raw_key):
+        return raw_key
+    return f"slot.$G.{raw_key}"
 
 
 def parse_plan(raw: dict, *, goal_id: str, plan_rev: int) -> Plan:
@@ -70,7 +184,7 @@ def parse_plan(raw: dict, *, goal_id: str, plan_rev: int) -> Plan:
             binding_kind = BindingKind(raw_binding["type"])
             bindings[param] = Binding(
                 kind=binding_kind,
-                fact_key=raw_binding.get("key"),
+                fact_key=_normalize_fact_key(raw_binding.get("key")),
                 value=raw_binding.get("value"),
                 step_key=raw_binding.get("step_key"),
                 path=raw_binding.get("path"),

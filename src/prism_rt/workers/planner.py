@@ -61,12 +61,32 @@ def build_prompt(view: dict) -> str:
             'Bind a parameter needing one of these to {"type": "fact", '
             '"key": "slot.$G.<name>"}, exactly like a committed_facts slot.\n'
         )
+    # Day 2 WP2 (docs/fdb_v3_day2_plan.md): when the Interpreter names
+    # more than one requested action, tell the Planner explicitly to
+    # emit one step per action -- otherwise a live model, given only a
+    # single `goal_intent` string, reliably plans just one step even
+    # when `committed_facts` quietly holds slots for other actions too
+    # (found live: a real 3-action FDB recording).
+    requested_actions = view.get("requested_actions") or []
+    actions_block = ""
+    if len(requested_actions) > 1:
+        actions_block = (
+            f"\nThis goal asks for {len(requested_actions)} actions, in this "
+            f"order: {requested_actions}. Emit one step per action, in that "
+            "order (use `after` to sequence a step on an earlier one only "
+            "when it genuinely depends on that step's result). Bind each "
+            "step's parameters from committed_facts by name -- a second "
+            "occurrence of the same parameter name across different actions "
+            "may be suffixed \"_2\" (e.g. \"order_id_2\"), matching how the "
+            "value was named there.\n"
+        )
     return (
         f"goal_intent: {view.get('intent')}\n"
         f"committed_facts: {view.get('facts')}\n"
         f"catalog: {view.get('catalog')}\n"
         f"change_context: {view.get('change_context')}\n"
         f"{visual_block}"
+        f"{actions_block}"
         "Return JSON matching the schema: an ordered list of steps."
     )
 

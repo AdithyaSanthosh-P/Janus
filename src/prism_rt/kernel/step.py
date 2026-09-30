@@ -29,6 +29,7 @@ from prism_rt.kernel.executor import PlanExecutor
 from prism_rt.kernel.invalidation import InvalidationEngine, InvalidationReport
 from prism_rt.kernel.ordering import order_batch
 from prism_rt.kernel.audio import AsrScheduler
+from prism_rt.kernel.binder import BindScheduler
 from prism_rt.kernel.frames import FrameScheduler
 from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.kernel.reducers import apply as apply_reducer
@@ -79,6 +80,7 @@ class Kernel:
         self._invalidation_engine = InvalidationEngine()
         self._commit_gate = CommitGate()
         self._task_state_machine = TaskStateMachine()
+        self._bind_scheduler = BindScheduler()
         self._perception_scheduler = PerceptionScheduler()
         self._asr_scheduler = AsrScheduler()
         self._frame_scheduler = FrameScheduler()
@@ -141,7 +143,11 @@ class Kernel:
             # result is treated as dropped (D4) -- an ordinary CANCEL,
             # same channel as the line above, not a direct status write.
             intended.extend(self._plan_executor.expire_deadlines(self.store, now_us))
-            dispatch_requests = list(self._task_state_machine.decide(self.store, now_us, step_no))
+            # S3 (kernel/binder.py): before TaskStateMachine and
+            # PlanExecutor, so a chained value it writes (fast path) is
+            # bound by PlanExecutor this same step.
+            dispatch_requests = list(self._bind_scheduler.decide(self.store, now_us, step_no))
+            dispatch_requests.extend(self._task_state_machine.decide(self.store, now_us, step_no))
             dispatch_requests.extend(self._perception_scheduler.decide(self.store, now_us, step_no))
             dispatch_requests.extend(self._asr_scheduler.decide(self.store, now_us, step_no))
             dispatch_requests.extend(self._frame_scheduler.decide(self.store, now_us, step_no))
@@ -152,6 +158,11 @@ class Kernel:
 
             # Phase 5: EMIT
             emit_report = self._emission_gate.emit(intended, self.store, now_us, self.store.ids)
+
+            # Every liveness timer due by now_us has been honoured by this
+            # very step (TimerWheel.retire_due's docstring); only future
+            # ones may surface as next_wake_us.
+            self.store.timers.retire_due(now_us)
 
             # Phase 6: COMMIT
             change_set = txn.commit()

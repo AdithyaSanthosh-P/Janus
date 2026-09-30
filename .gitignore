@@ -9,3 +9,9 @@ dist/
 run_output/
 tests/scenarios/fixtures/*.png
 .env
+.fdb_cache/
+docs-personal/
+results/
+
+# Optional local wheel cache for slow networks (docker/fdb_v3/Dockerfile TORCH_LOCAL_WHEELS=1)
+docker/fdb_v3/wheels/*.whl

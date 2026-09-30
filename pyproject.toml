@@ -24,4 +24,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-pythonpath = ["src", "."]
+# "tests": tests/__init__.py makes pytest import tests/ as a package and
+# stop putting tests/ on sys.path by default -- every test's
+# `from conftest import ...` would fail to collect without this.
+pythonpath = ["src", ".", "tests"]

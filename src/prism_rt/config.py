@@ -23,6 +23,25 @@ class Config:
     # elapsed time.
     clock_model: str = "A"
     settle_ms: int = 300  # 0 = disabled
+    # Day 2 (docs/fdb_v3_day2_plan.md WP1): when the latest closed user
+    # turn's last word looks unfinished (config/lexicons.py's
+    # TRAILING_CONNECTIVES, or an inert token, or a HOLD_CUES phrase),
+    # G10 waits settle_ms_incomplete instead of settle_ms. Gated by
+    # incomplete_turn_settle_enabled (default off) so it never changes
+    # any existing test/behavior; only meaningful with
+    # settle_barrier_enabled=True.
+    incomplete_turn_settle_enabled: bool = False
+    settle_ms_incomplete: int = 2500
+    # A call with an argument the user never said (an assumed value, see
+    # fill_unstated_required_enabled) waits settle_ms_incomplete too: that
+    # value is the one most likely still to come in the rest of the sentence.
+    assumed_value_settle_enabled: bool = False
+    # Day 2 WP2 (docs/fdb_v3_day2_plan.md): the Interpreter/Planner see
+    # every action a turn asks for, not just the first (found live: 0 of
+    # 34 FDB-v3 multi-action recordings got their full tool set before
+    # this). See workers/interpreter.py's own docstring at the
+    # multi_action_block for exactly what changes.
+    multi_action_enabled: bool = False
     watchdog_timeout_ms: int = 105_000
     # P0.4 (call deadlines, docs/original_design_audit.md D4, blueprint
     # §5.9's own defaults): an IN_FLIGHT call past this many ms with no
@@ -35,6 +54,22 @@ class Config:
 
     # Policies
     max_read_retries: int = 2
+    # A real, pre-existing conflation found and fixed 2026-09-27 (S2
+    # validation, win_plan §6.2): `kernel/reducers.py._release_dropped_
+    # interpret` used to reuse `max_read_retries` to gate give-up on a
+    # failed/stale INTERPRET *job* -- a live LLM call, which can fail
+    # transiently, is not the same thing as a tool call against FDB's own
+    # deterministic mock APIs (which never fail transiently, the actual
+    # reason FDB's profile sets max_read_retries=0). With that shared
+    # field, FDB's profile meant a single transient INTERPRET failure
+    # permanently abandoned the turn with zero recovery -- confirmed live
+    # on housing_13 (reproduced twice; a standalone same-input API call
+    # succeeded cleanly, ruling out a persistent content/schema issue) --
+    # and neither of S2's own new safety nets (never_silent_unclear_
+    # enabled, turn_stall_salvage_ms) could catch it, since both need
+    # something INTERPRET itself never produced. Decoupled here; the FDB
+    # profile deliberately does NOT zero this one out.
+    max_interpret_retries: int = 2
     max_write_retries: int = 1
     max_clarification_attempts: int = 2
     max_consecutive_holds: int = 3
@@ -130,6 +165,180 @@ class Config:
     # in the same step as EOT — zero additional model latency — instead
     # of dispatching a non-speculative job and waiting for it.
     speculative_interpretation_enabled: bool = False
+
+    # Day 2 S2 (docs-personal/private-docs/win_plan_2026-09-27.md §6.2,
+    # "quick-win pack"). Each Q-item is its own flag, additive and off by
+    # default, matching every prior version's own rule.
+    #
+    # Q1: a slot value that's really a spelled-out identifier ("X-Y-Z-8-8")
+    # gets joined back into one token (XYZ88) before being written --
+    # `kernel/interpret_apply.py._canonicalize_spoken_id`. A value with any
+    # multi-character token (e.g. "FL-DEN-8AM") is left untouched -- that's
+    # a structured code, not a spelled-out one.
+    normalize_spoken_ids: bool = False
+    # Q2: extra Interpreter-prompt guidance (workers/interpreter.py) --
+    # copy values verbatim, never invent a year, only the final corrected
+    # value after a self-correction, no unstated optional params -- plus
+    # explicit guidance against misclassifying a disfluent-but-real first
+    # utterance as BACKCHANNEL/SMALLTALK/UNCLEAR (the confirmed root cause
+    # of the housing_11/housing_13 silent stalls, found by reading their
+    # saved decision logs: interpretation resolved to a no-op act with no
+    # active goal to attach to, and NOTHING spoke -- see
+    # never_silent_unclear_enabled below for the safety-net half of this
+    # same fix).
+    strict_value_rules_enabled: bool = False
+    # Q6a: the confirmed fix for the housing_11/housing_13 class of silent
+    # stall -- when interpretation resolves to a no-op act (BACKCHANNEL/
+    # SMALLTALK/UNCLEAR, or -- found in the same live validation pass --
+    # SLOT_UPDATE/ADDITION/ANSWER_CLARIFICATION/CONFIRM/DENY) and there is
+    # no active goal at all for it to attach to, that almost certainly
+    # means real content was thrown away, not that the user said nothing
+    # worth a response (a standalone repro of housing_13's own transcript
+    # returned `slot_update` on 2 of 4 identical live calls -- real
+    # response variance, not a one-off). `kernel/interpret_apply.py._flag_
+    # unclear_no_goal` (called from both code paths) flags the turn;
+    # `kernel/responder.py.FastResponder._unclear_no_goal` speaks an
+    # honest re-ask once, per turn. Kept flagged (not unconditional like
+    # the write-honesty fixes) since a genuine "hi"/pure smalltalk turn
+    # with no goal would also trigger it -- fine for a task-oriented
+    # benchmark, a judgment call for a general assistant.
+    never_silent_unclear_enabled: bool = False
+    # How long the Q6a re-ask waits after the unclear turn was interpreted,
+    # and it is dropped if the user has started another turn by then. Found
+    # live (2026-09-27): a hesitant opener ("Um so uh...") followed by a
+    # pause longer than the end-of-turn silence gets closed as its own
+    # turn, reads as UNCLEAR, and an immediate re-ask talks over the user
+    # who is about to state the real request. 0 = speak immediately.
+    unclear_reask_delay_ms: int = 0
+    # Q6b: an honest safety-net salvage independent of the whole-scenario
+    # ScenarioWatchdog (which is a single budget from scenario start, per
+    # `observability/watchdog.py` -- wrong shape for "this turn is taking
+    # too long", and never fires at all when no goal is active, exactly
+    # like Q6a's own gap). If this many ms have elapsed since the last EOT
+    # and the active goal still hasn't produced FINAL text,
+    # `kernel/task.py.TaskStateMachine` forces one through the same
+    # salvage path `reducers._apply_watchdog` uses (WATCHDOG_FALLBACK
+    # wording, task_completed=False) rather than let the scenario run out
+    # the full ScenarioWatchdog budget in silence. 0 = disabled.
+    turn_stall_salvage_ms: int = 0
+    # Q5: when a required slot is missing and CLARIFYING is about to speak
+    # a generic "what should X be" question, dispatch one narrow EXTRACT
+    # job first (one parameter, the transcript, that parameter's own
+    # schema) -- the user may already have said it in words the broader
+    # INTERPRET pass didn't bind to this exact parameter name. Only tried
+    # once per (goal, target); a null/no-value result falls through to
+    # the ordinary clarify.
+    clarify_reextract_enabled: bool = False
+    # Q8: a deterministic post-lint (`observability/speechlint.py`) over
+    # every SPEAK/CLARIFY/FINAL body right before it's written --
+    # humanizes a leaked raw schema/parameter identifier (M-09's own
+    # known bug class: "what should indicator_state be?") and flags an
+    # ACK that claims something is already done before any call has run.
+    # Reused, not duplicated, by `scripts/fdb_v3/run_text_replay.py`'s own
+    # report (Q11) to lint a whole run's transcripts after the fact too.
+    speechlint_enabled: bool = False
+    # Q7: the Interpreter names every requested action and its key values
+    # in one future-tense sentence (`TurnInterpretation.ack_phrase`,
+    # already parsed in `kernel/proposals.py` but never consumed before
+    # this); `kernel/responder.py.FastResponder._ack_plan_dispatch` speaks
+    # it in place of the generic ACK once a plan actually dispatches,
+    # falling back to the existing content-ack/generic chain when the
+    # model didn't provide one. Also gates the prompt guidance that tells
+    # the model `ack_phrase` exists at all (`workers/interpreter.py`).
+    echo_ack_enabled: bool = False
+
+    # S3 (docs-personal/private-docs/s3_plan_2026-09-28.md, win_plan §6.3):
+    # per-action interpretation compiled straight into a Plan. The
+    # Interpreter returns one `actions[]` entry per tool call (tool, its
+    # own args, chained refs), and `kernel/action_plans.py.compile_actions`
+    # builds the Plan itself -- slots at `slot.<gid>.a<i>.<param>`, one step
+    # per action in the order asked -- with no PLAN job. Found against real
+    # FDB-v3 recordings: arguments the Interpreter understood (its own echo
+    # ACK said "transit") were lost on the way through the Planner (the
+    # call went out with the schema default "driving"); the same tool asked
+    # for twice collided on one flat slot name; and the PLAN round trip
+    # delays the first tool call. Anything the compiler can't handle
+    # (unknown tool, chained refs before late binding exists, vision)
+    # falls back to the ordinary PLAN path.
+    action_plans_enabled: bool = False
+    # S3: a required number/yes-no parameter the user never stated is
+    # filled with the least-restrictive sensible value and named in the
+    # ACK ("..., assuming 1 bedroom") instead of being left for a
+    # clarifying question -- found on FDB-v3, whose recordings are single-
+    # turn: nobody ever answers, so the question just stalls the scenario
+    # (and FDB's mock tools raise without the parameter, so the call never
+    # counts). Free-text parameters (a place, a name, an ID) are never
+    # assumed: `kernel/action_plans.py` drops an assumed value for any
+    # non-numeric/boolean parameter, so it is still asked.
+    fill_unstated_required_enabled: bool = False
+
+    # Live-demo findings (28 Sep, voice agent over LiveKit): three honest-
+    # behaviour gaps a real user hits within a minute.
+    #
+    # Tools the deployment knows are read-only although their manifest never
+    # says so (FDB-v3 declares no mutability, so every tool defaulted to
+    # STATE_CHANGING): stamped `mutability: read_only` when the manifest is
+    # applied (kernel/reducers.py._apply_manifest). Without it, correcting a
+    # search after it ran ("no, make it the day after") hit the duplicate-
+    # write guard (G6) and failed honestly -- right for a booking, wrong for
+    # a search, which should simply re-run.
+    read_only_tools: tuple[str, ...] = ()
+    # Hold READ calls behind the same floor + settle barrier (G3/G10/G11)
+    # writes already wait on. FDB counts every extra call against a
+    # scenario, and a mid-sentence pause can close a turn early (found
+    # live): a read fired the instant a half-sentence closed would be an
+    # extra call once the rest arrives. Only meaningful with
+    # settle_barrier_enabled.
+    settle_reads_enabled: bool = False
+    # With no active goal, answer honestly instead of one generic re-ask:
+    # an out-of-scope request ("book me a hotel" with no hotel tool) says
+    # what can't be done and what can -- instead of being forced onto the
+    # nearest tool (found live: it became a flight search); a question
+    # about the last task ("has it been booked?") gets a status summary
+    # built from what actually ran; thanks/small talk gets a short polite
+    # reply. The turn-stall salvage also names what it is waiting for, and
+    # never fires while the agent is waiting on the user's answer to a
+    # question it asked.
+    conversational_replies_enabled: bool = False
+    # Under conversational_replies_enabled: answer a turn that arrives with
+    # no active task at once -- "Happy to help" to small talk, a status
+    # summary to an unclear turn after a finished task. Off, those turns take
+    # the older never_silent_unclear path (a delayed re-ask, dropped if the
+    # user keeps talking). Found in the 29-30 Sep full voice run: the
+    # immediate replies fired at mid-sentence pauses and at Whisper's
+    # silence hallucinations ("you"), talking over single-turn recordings.
+    idle_replies_enabled: bool = True
+    # A turn that closes while an earlier one is still waiting to be
+    # interpreted is merged with it: one INTERPRET over the combined text.
+    # Found live (28 Sep, housing_10 over LiveKit): a mid-sentence pause
+    # ("...to the university? ... And also update my filter") closed the
+    # turn twice; the halves were interpreted one after the other and the
+    # second, redundant model call added ~5 s before the agent spoke. No
+    # effect when turns don't overlap -- no added wait for a single-breath
+    # request (unlike raising the end-of-turn silence threshold).
+    merge_split_turns_enabled: bool = False
+
+    # Day 2 (docs/fdb_v3_implementation_plan.md §5.2): G4 (commit_intent)
+    # applies to every WRITE-kind call, including a tool whose mutability
+    # was never declared and therefore defaults to STATE_CHANGING (the
+    # catalog's own safe default, W5 -- see store/catalog.py). FDB-v3
+    # declares no mutability for any of its 12 tools, so every one of
+    # them -- including plain reads like search_flights -- needs an
+    # explicit Interpreter-set commit_intent=true or the call sits
+    # PROPOSED forever with no clarify, no retry, total silence (found
+    # live, reproduced directly: travel_21's search_flights call, 2026-
+    # 09-25 session, see currentStatus.md's FDB-v3 Day 1 section).
+    # Requiring commit_intent for "search for flights" would incorrectly
+    # block a read the user plainly asked for -- the plan's own stated
+    # decision: "an accepted interpretation of a completed, settled turn
+    # counts as commit intent for undeclared tools." When on, G4 is
+    # skipped for a call whose tool has `mutability_source == "DEFAULTED"`
+    # -- G3 (floor closed) and, if enabled, G10/G11 (settle) still gate
+    # it exactly as before; this flag only removes the *additional*
+    # explicit-commit_intent requirement for tools nobody ever declared
+    # mutability for. A tool that *does* declare mutability (DECLARED)
+    # is completely unaffected either way.
+    g4_exempt_undeclared_mutability: bool = False
 
     # Observability
     log_decisions: bool = True

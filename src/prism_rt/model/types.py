@@ -154,6 +154,8 @@ class JobKind(str, Enum):
     VISION = "vision"
     ASR = "asr"
     FRAME = "frame"  # Phase 5 (docs/post_v4_implementation_plan.md): C2 response frames
+    EXTRACT = "extract"  # Q5 (win_plan §6.2): one-parameter targeted re-extraction before a clarify
+    BIND = "bind"  # S3 (kernel/binder.py): pick a chained argument from an earlier step's real result
 
 
 class Confidence(str, Enum):
@@ -343,6 +345,33 @@ class VisualCandidate:
 
 
 @dataclass(frozen=True)
+class ActionRef:
+    """S3 (`kernel/action_plans.py`): a parameter whose value must come
+    from an earlier action's *result* ("the cheapest one", "from there").
+    `source` is that earlier action's index in `TurnInterpretation.actions`;
+    `field` names the result field when the model could tell, `select`
+    says which item in a few words."""
+
+    param: str
+    source: int
+    field: str | None = None
+    select: str = ""
+
+
+@dataclass(frozen=True)
+class ActionSpec:
+    """S3 (`kernel/action_plans.py`): one tool call the turn asked for, in
+    the order asked -- its own literal `args` (so the same tool twice
+    never collides on one slot name), chained `refs`, and the parameter
+    names whose value the model `assumed` rather than heard."""
+
+    tool: str
+    args: dict = field(default_factory=dict)
+    refs: tuple[ActionRef, ...] = ()
+    assumed: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class TurnInterpretation:
     """Interpreter worker output (`docs/prompt 2.txt` §4.6). `ambiguities`
     (multiple candidate interpretations) remains out of scope; V3 adds
@@ -358,12 +387,30 @@ class TurnInterpretation:
     ack_phrase: str | None = None
     visual_reference: str = "none"  # V3: "none" | "at_utterance" | "current_state"
     visual_candidates: tuple[VisualCandidate, ...] = ()
+    # Day 2 WP2 (docs/fdb_v3_day2_plan.md): ordered tool names for every
+    # action the turn asked for, `intent` included as the first entry
+    # when set. Gated by Config.multi_action_interpretation_enabled --
+    # only stored/used when that's on (kernel/interpret_apply.py).
+    requested_actions: tuple[str, ...] = ()
+    # S3: per-action interpretation, only requested/used when
+    # Config.action_plans_enabled is on. Empty means "compile nothing" --
+    # the ordinary PLAN path runs, exactly as before.
+    actions: tuple[ActionSpec, ...] = ()
+    # Config.conversational_replies_enabled: what the user asked for that no
+    # tool can do ("book a hotel"), and whether the turn only asks how an
+    # earlier request went ("was it booked?").
+    unsupported: str | None = None
+    status_question: bool = False
 
 
 class BindingKind(str, Enum):
     FACT = "fact"
     LITERAL = "literal"
     STEP_OUTPUT = "step_output"
+    # S3 (kernel/binder.py): chosen from the upstream step's real result only
+    # once it exists -- read from `bind.<gid>.<step>.<param>`, never guessed
+    # before the result is in.
+    LATE = "late"
 
 
 @dataclass(frozen=True)
@@ -371,8 +418,9 @@ class Binding:
     kind: BindingKind
     fact_key: str | None = None  # FACT
     value: Any = None  # LITERAL
-    step_key: str | None = None  # STEP_OUTPUT
-    path: str | None = None  # STEP_OUTPUT: dotted path into that step's result
+    step_key: str | None = None  # STEP_OUTPUT / LATE: the upstream step
+    path: str | None = None  # STEP_OUTPUT: dotted path into that step's result; LATE: the result field name, if known
+    hint: str | None = None  # LATE: which item, in the user's terms ("the cheapest one")
 
 
 @dataclass(frozen=True)
@@ -386,6 +434,9 @@ class PlanStep:
     requires_commit_intent: bool = False
     structure_depends_on: tuple[str, ...] = ()  # slot names whose change forces replan, not rebind
     absence_keys: tuple[str, ...] = ()  # V2: fact keys (with $G) the step's validity implicitly assumes are absent
+    # S3: "a<i>" for a step compiled from interpreted action i -- its own
+    # slots live at slot.<gid>.a<i>.<param>, not the flat slot.<gid>.<param>.
+    slot_prefix: str | None = None
 
 
 @dataclass(frozen=True)
@@ -393,6 +444,12 @@ class Plan:
     goal_id: str
     plan_rev: int
     steps: tuple[PlanStep, ...]
+    # S3: "compiled" when kernel/action_plans.py built it straight from the
+    # interpretation (no PLAN job); such a goal must never be sent back to
+    # PLANNING -- a Planner-written replacement gets new step keys, and
+    # CommitGate's G5/G6 would then block an already-confirmed write
+    # forever (see kernel/action_plans.py.is_compiled).
+    origin: str = "planner"
 
 
 @dataclass(frozen=True)
@@ -453,6 +510,10 @@ class JobRecord:
     read_set: ReadSet
     status: JobStatus = JobStatus.RUNNING
     dispatched_step: int = 0
+    # Q5 (win_plan §6.2): the fact key an EXTRACT job's result should be
+    # applied to, e.g. "slot.g1.destination" -- unused by every other job
+    # kind, default None so nothing else is affected.
+    target: str | None = None
 
 
 # ---------------------------------------------------------------------------

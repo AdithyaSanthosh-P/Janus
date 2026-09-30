@@ -125,6 +125,52 @@ Bounded, not exhaustive: latency knobs are per worker *kind*, event order is alw
 
 Current suite: **246/246 passing**, Docker-verified on Python 3.11.
 
+## FDB-v3: current results (30 Sep 2026)
+
+FDB-v3's own runner and evaluators at the pinned commit `3e799c45`, unmodified. "Judged" means FDB's `--use-llm` with `gpt-4o`, the organizers' evaluation setting.
+
+| Run | Strict Pass@1 | Tool sel. | Arg. acc. | Resp. quality | Self-correction (Pass@1) |
+|---|---|---|---|---|---|
+| Text replay, all 100, Gemini 3.6 Flash (thinking 0), judged | **0.770** | 0.959 | 0.807 | 0.840 | **0.824** |
+| Voice over LiveKit, all 100, cloud RTX 3090, native path, judged (29-30 Sep, before the fixes below) | 0.420 | 0.844 | 0.611 | 0.597 | 0.412 |
+| Voice, 32-recording rerun of that run's hardest recordings, after the GPU fix, exact match | 11/32 (was 8/32) | | | | |
+
+By domain (text replay): finance 1.00, travel 0.95, e-commerce 0.83, housing 0.35. By number of tool calls: 1 call 0.82, 2 calls 0.72, 3 calls 0.63.
+
+What the full voice run's decision logs showed, each fixed with a regression test (details in `currentStatus.md`):
+
+- **Speech-to-text fell back from GPU to CPU** in every job process started after ~75 recordings (decode 0.18 s → ~12 s per segment; the agent heard users ~29 s late). Pass rate 47 % before the switch, 24 % after. Now logged with GPU memory, and can be made fatal (`JANUS_REQUIRE_GPU=1`); `repro_inner.sh` records `gpu_mem.csv`.
+- **Two kernel liveness bugs**: a clarifying question set late in a step was never dispatched when no other event arrived; the stall salvage could fire while the user was still speaking. Both invisible to the fixed-tick simulator; now covered by event-driven tests (`tests/test_clarify_wake.py`).
+- **Whisper artefacts**: silence hallucinations ("you", "Hmm.") became turns; spoken codes ("F A S T nine nine") were not joined into identifiers.
+- **8 recordings lost to the benchmark client aborting (SIGABRT) after the stream**; the agent's decision logs show correct tool calls in 6 of them.
+
+Hosted transcription (`JANUS_STT=openai`, `gpt-4o-mini-transcribe-2025-12-15`) heard every name and code local Whisper got wrong on the checked recordings ("Chicago", "Milan", "BOB12", "123ABC", "P88990011"); a voice run with it has not been scored yet.
+
+## FDB-v3 published baselines (docs/fdb_v3_implementation_plan.md Day 1)
+
+From the FDB-v3 paper (arXiv 2604.04847, Lin/Chen/Chen/Lee, NTU + NVIDIA), Tables 2/4/5/6 — quoted exactly, not re-derived. All six baselines are voice-native systems run over real audio through LiveKit; Janus's own Day-1 numbers below are a **text replay** (no voice yet, see `currentStatus.md`'s FDB-v3 Day 1 section) and are not directly comparable on latency/turn-taking, only on tool-selection/Pass@1 as a rough sanity check of the reasoning core.
+
+| System | Tool Sel F1 | Arg Acc | Resp Qual | Pass@1 | Take-turn | Latency | Interrupt | Filler |
+|---|---|---|---|---|---|---|---|---|
+| GPT-Realtime | 0.876 | 0.680 | 0.792 | **0.600** | 96.0% | 6.89s | 13.5% | 16.9% |
+| Gemini Live 2.5 | 0.786 | 0.593 | 0.554 | 0.490 | 92.0% | 7.26s | 14.1% | 8.9% |
+| Gemini Live 3.1 | 0.817 | 0.588 | 0.718 | 0.540 | 78.0% | **4.25s** | 19.2% | 31.7% |
+| Grok | 0.797 | 0.542 | 0.617 | 0.430 | 94.0% | 6.65s | 25.5% | 44.3% |
+| Ultravox | 0.794 | 0.513 | 0.510 | 0.410 | 96.0% | 8.40s | 47.9% | 88.0% |
+| Cascaded (Whisper→GPT-4o→TTS) | 0.803 | 0.562 | 0.600 | 0.450 | **100.0%** | 10.12s | 33.0% | 26.9% |
+
+Pass@1 by difficulty (Table 4): GPT-Realtime Easy/Medium/Hard = 0.750/0.588/0.433; every system degrades with difficulty, Grok steepest (0.583→0.200).
+
+Pass@1 by domain (Table 5): Finance is easiest for every system (GPT-Realtime 0.960); Housing is hardest for every system (GPT-Realtime 0.308, Grok 0.115) — "multi-entity order handling and complex constraint reasoning" per the paper.
+
+Mean latency breakdown in seconds (Table 6, First Word / Tool Call / Task Completion): GPT-Realtime 6.36/3.89/6.89; Gemini Live 3.1 3.95/2.21/4.25 (fastest); Cascaded 8.78/3.15/10.12 (slowest, "sequential Whisper→LLM→TTS chain creates an irreducible bottleneck").
+
+Two qualitative findings worth carrying into Day 2's own design: (1) **Gemini Live 3.1 is "the silent worker"** — fastest when it responds, but 22% of scenarios get no speech at all despite 86% of those silent cases having actually executed the right tool calls; a disconnect between reasoning and speech generation the paper calls out as its own failure mode, distinct from Janus's own "no honest failure on a stalled call" gap found this session (see `currentStatus.md`) but a useful cross-check that "acts correctly but says nothing" is a known failure shape in this benchmark, not unique to Janus. (2) **self-correction is the hardest category for every system** (GPT-Realtime leads at only 0.588; Cascaded scores just 0.176, "the downstream LLM has no opportunity for state rollback") — this is exactly the class of correction/rollback Janus's own architecture (read-set invalidation, same-step cancellation) was built for, so it is the single highest-leverage place Janus's design should differentiate once voice is wired up.
+
+Pass@1 by disfluency (Table 3): self-correction is the hardest category for every system: GPT-Realtime 0.588, Gemini Live 2.5 0.471, Gemini Live 3.1 0.353, Ultravox 0.353, Grok 0.294, Cascaded 0.176.
+
+**Historical (25 Sep, superseded by the section above) — Janus's own Day-1 numbers, for rough sanity-check context (not apples-to-apples — see caveat above):** 20-scenario subset (gemini-3.5-flash-lite, post bare-fact-key fix, exact-match scoring): strict Pass@1 40.0% — inside the published baselines' range (0.410–0.600), comparable to Grok/Ultravox/Gemini-2.5. Full 100-scenario run: strict Pass@1 21.0% — below the published range, understood to be suppressed by the G4/commit-intent gap diagnosed the same session (`currentStatus.md`'s FDB-v3 Day 1 section) rather than a real reasoning-quality ceiling; re-measure after Day 2's commit-intent policy lands. All argument-accuracy numbers are exact-match (no `OPENAI_API_KEY` yet) where the paper's are presumably judge-scored, so Janus's true numbers are likely higher than quoted here.
+
 ## Known gaps in this data
 
 - No timing/latency comparison against the real evaluation kit exists — it isn't released yet, and `adapters/codec.py`'s wire format is a documented guess (see `currentStatus.md`).

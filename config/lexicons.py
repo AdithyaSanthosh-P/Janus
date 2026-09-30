@@ -72,6 +72,19 @@ INERT_TOKENS: tuple[str, ...] = (
 )
 NEGATION_TOKENS: tuple[str, ...] = ("no", "not", "don't", "dont", "never", "nope")
 
+# Day 2 (docs/fdb_v3_day2_plan.md WP1, docs/fdb_v3_implementation_plan.md
+# §5.3): a turn whose last word is one of these reads as unfinished
+# ("...add two apples and" / "...to the"), so CommitGate's G10 waits
+# longer than usual before treating it as settled. Fixed, generic-
+# English lists written before any scoring run -- never adjusted to make
+# a particular recording pass (the hard rule this project holds itself
+# to for any lexicon).
+TRAILING_CONNECTIVES: tuple[str, ...] = (
+    "and", "or", "but", "so", "then", "to", "for", "with",
+    "the", "a", "an", "of", "my", "your", "his", "her", "its", "our", "their",
+    "is", "are", "was", "were", "at", "in", "on", "by", "from",
+)
+
 VISUAL_CUES: tuple[str, ...] = (
     "this",
     "that one",
