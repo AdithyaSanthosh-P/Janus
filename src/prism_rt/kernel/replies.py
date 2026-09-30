@@ -121,3 +121,26 @@ def duplicate_write_text(call) -> str:
     values = ", ".join(str(v) for v in call.args.values())
     what = f"{_human(call.tool)} ({values})" if values else _human(call.tool)
     return f"I've already done that — {what} went through earlier, so I won't repeat it."
+
+
+def confirmed_writes(store, goal_id: str) -> list:
+    """The goal's state-changing calls that actually went through."""
+    from prism_rt.model.types import StepKind
+
+    return [
+        call for call in store.call_ledger.all()
+        if call.goal_id == goal_id and call.status == CallStatus.CONSUMED and call.kind == StepKind.WRITE
+    ]
+
+
+def no_second_write_text(calls) -> str:
+    """"Make it evening" after a booking already went through -- found live,
+    30 Sep: re-running the finished task made a second booking. Say what
+    stands instead; there is no tool that changes a confirmed booking."""
+    done = "; ".join(
+        f"{_human(c.tool)} ({', '.join(str(v) for v in c.args.values())})" if c.args else _human(c.tool) for c in calls
+    )
+    return (
+        f"That's already done — {done} went through. I can't change it from here, "
+        "and I won't make a second one."
+    )

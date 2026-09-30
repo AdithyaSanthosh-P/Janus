@@ -527,6 +527,13 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
     if interp.act in _SLOT_UPDATE_ACTS:
         gid = active_goal_id(txn.store)
         if gid is None:
+            last = replies.last_finished_goal(txn.store)
+            writes = replies.confirmed_writes(txn.store, last.goal_id) if last is not None and interp.slot_deltas else []
+            if writes and _live_followups(txn.store):
+                # A correction to a task whose write already went through is
+                # never re-run: that would be a second booking.
+                replies.set_honest_reply(txn, interp.turn_id, replies.no_second_write_text(writes), now_us, step_no, event_id=event_id)
+                return None
             redo = _redo_last_goal(txn, interp)
             if redo is not None:
                 return apply_interpretation(redo, txn, now_us, step_no, event_id=event_id)

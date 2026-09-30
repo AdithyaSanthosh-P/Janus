@@ -249,6 +249,9 @@ async def entrypoint(ctx: JobContext) -> None:
         # request is Whisper on silence, not a new turn. Kept in demo mode,
         # where a live person may say "thank you" and expect a reply.
         drop_filler_segments=MODE != "demo" and os.environ.get("JANUS_KEEP_FILLER_SEGMENTS") != "1",
+        # Speech-to-text writes English; mostly-foreign text is noise or the
+        # agent's own voice picked up by the microphone.
+        drop_foreign_segments=True,
     )
 
     # gemini-3.6-flash, thinking off (28 Sep): same judge-scored full-100 as

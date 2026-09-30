@@ -52,6 +52,20 @@ def is_filler_segment(text: str) -> bool:
     return all(_FILLER_ONLY.match(w) for w in words) or _FILLER_ONLY.match(" ".join(words)) is not None
 
 
+def is_foreign_segment(text: str) -> bool:
+    """True when a segment is mostly not English letters: 15 % or more of its
+    letters fall outside ASCII ("Nóimega déanaí.", "jár", Urdu script).
+    Found live, 30 Sep: with no headphones the agent's own voice came back
+    through the microphone and was transcribed as foreign words. Speech-to-
+    text is told to write English, so such text is noise; a name with one
+    accent ("book it for José") stays well under the threshold."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    foreign = sum(1 for c in letters if ord(c) > 127)
+    return foreign / len(letters) >= 0.15
+
+
 @dataclass
 class VoiceBridge:
     events: "asyncio.Queue[dict | None]"
@@ -60,6 +74,7 @@ class VoiceBridge:
     execute_tool: Callable[[str, dict], Awaitable[dict]]  # (tool_name, args) -> result dict
     t_eot_ms: int = 1000
     drop_filler_segments: bool = False  # see is_filler_segment
+    drop_foreign_segments: bool = False  # see is_foreign_segment
     clock: Callable[[], float] = field(default=time.monotonic)
     on_interruption_logged: Callable[[str], None] = field(default=lambda msg: None)
     # Day 2 WP5 (docs/fdb_v3_day2_plan.md): a caller driving a replay
@@ -138,7 +153,9 @@ class VoiceBridge:
         transcript, which a live model reads as UNCLEAR, which
         `never_silent_unclear_enabled` already turns into a spoken
         re-ask instead of silence."""
-        if self.drop_filler_segments and is_filler_segment(text):
+        if (self.drop_filler_segments and is_filler_segment(text)) or (
+            self.drop_foreign_segments and is_foreign_segment(text)
+        ):
             # Not speech: no chunk, and the running end-of-turn countdown
             # (if any) is left alone rather than restarted.
             return

@@ -205,3 +205,26 @@ def test_bye_is_a_filler_segment():
     from prism_rt.adapters.voice_bridge import is_filler_segment
 
     assert is_filler_segment("Bye.")
+
+
+@pytest.mark.parametrize("text", ["Nóimega déanaí.", "jár", "ہیلو", "بک می اے فلائٹ ٹو چنئی"])
+def test_mostly_foreign_segments_are_noise(text):
+    from prism_rt.adapters.voice_bridge import is_foreign_segment
+
+    assert is_foreign_segment(text)
+
+
+@pytest.mark.parametrize("text", ["Book it for José on Friday.", "find a café near me", "Dovekit", "", "123"])
+def test_english_segments_with_the_odd_accent_are_kept(text):
+    from prism_rt.adapters.voice_bridge import is_foreign_segment
+
+    assert not is_foreign_segment(text)
+
+
+async def test_foreign_segment_is_dropped_when_enabled():
+    bridge, events, _actions, _said = _make_bridge()
+    bridge.drop_foreign_segments = True
+    await bridge.on_segment_final("Nóimega déanaí.")
+    await bridge.on_segment_final("Make it evening.")
+    items = await _drain_nowait(events)
+    assert [i["payload"]["text"] for i in items] == ["Make it evening."]

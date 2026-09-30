@@ -192,6 +192,31 @@ def test_a_mid_sentence_change_of_mind_books_exactly_once_for_the_final_answer()
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
 
 
+def test_a_change_after_the_booking_went_through_never_books_twice():
+    """30 Sep live demo: "book Thursday morning" went through (BK-0001), then
+    "make it evening" re-ran the finished task and booked BK-0002. A
+    correction to a confirmed write is answered honestly, never re-run."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "make it evening", {
+        "act": "slot_update", "slot_deltas": [{"name": "time_slot", "scope": "goal", "op": "set", "value": "evening"}]})
+    provider.register("interpret", "Thursday", _booking("Thursday", "morning"))
+    provider.register("compose", "book_technician", {"text": "Booked for Thursday morning.", "claims": []})
+    tk = _diagnosed_toolset()
+    h = harness(provider, tk)
+    h.send(100_000, [chunk_event("book a technician for Thursday morning")])
+    h.send(150_000, [eot_event()])
+    assert [a for a in drain(h, 6_000_000) if a.action_type == ActionType.FINAL]
+    h.send(6_100_000, [chunk_event("make it evening")])
+    actions = [er.action for er in h.send(6_150_000, [eot_event()]).emit_report.emitted]
+    actions += drain(h, 12_000_000, stop_on_final=False)
+
+    assert len(tk.bookings) == 1 and tk.bookings[0]["time_slot"] == "morning"
+    assert calls(actions) == []
+    said = [a.body.text for a in actions if a.action_type in (ActionType.SPEAK, ActionType.FINAL)]
+    assert said and said[0].startswith("That's already done — book technician (Thursday, morning) went through.")
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
 def test_without_the_users_go_ahead_nothing_is_booked():
     """A declared write is never made on an answer that isn't a go-ahead (G4)."""
     h, tk, actions = _self_correcting_booking(commit=False)
