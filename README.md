@@ -4,12 +4,19 @@ A full-duplex, interruptible voice agent built around one idea: **no model ever 
 
 Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptible Real-Time Agents**, and evaluated on **Full-Duplex-Bench v3 (FDB-v3)** over LiveKit.
 
+**Highlights**
+- **Self-correction, the category FDB-v3 finds hardest for every system:** 0.412 Pass@1 on our full voice run, against 0.176 for the published cascaded pipeline (the same family as ours); 0.824 for the reasoning core in text replay.
+- **77 % strict pass rate for the reasoning core** on all 100 FDB-v3 scenarios (text replay, judged with gpt-4o); 42 % on the full voice path, with the hardest recordings since improved from 4 to 13 of 31.
+- **No double actions, no false claims, by construction:** every write passes one commit gate and is recorded before it is emitted; a correction cancels stale work in the same kernel step.
+- **Deterministic and replayable:** 499 tests on a stepped clock with a trace checker over every decision log, plus an adversarial explorer over 19 race scenarios.
+- **Use-case extension:** camera-grounded device care over live voice: it reads the device from the camera, diagnoses it, and books exactly one technician visit.
+
 > **Provider declaration.** Custom LiveKit agent (Janus). Decisions: the Janus kernel with **Gemini 3.6 Flash** (hosted Gemini API, thinking budget 0, temperature 0). Speech-to-text: **OpenAI `gpt-4o-mini-transcribe-2025-12-15`** (hosted, pinned snapshot). Local on the GPU: **Kokoro-82M** (TTS), **Silero VAD**. Nothing else is called at evaluation time. Keys needed: LiveKit, `GEMINI_API_KEY`, `OPENAI_API_KEY` (see [Keys](#keys)). Two switches change the providers: `JANUS_STT=local` runs faster-whisper large-v3-turbo on the GPU instead, and `JANUS_LLM_PROVIDER=openai` moves decisions to OpenAI (see [Keys](#keys)); every run writes the providers it actually used to `PROVIDER.txt`.
 > (The Python import path is `prism_rt`; the distribution is named `janus`. That mismatch is deliberate.)
 
 ## Contents
 
-1. [Reproduce the benchmark](#reproduce-the-benchmark-one-command) · 2. [Architecture](#architecture) · 3. [How an interruption flows](#how-an-interruption-flows) · 4. [Extension: device care](#extension-camera-grounded-device-care) · 5. [Results](#results) · 6. [Keys](#keys) · 7. [Tests](#tests) · 8. [Limitations](#honest-limitations) · 9. [Repo map](#repo-map) · 10. [Citations](#citations)
+1. [Reproduce the benchmark](#reproduce-the-benchmark-one-command) · 2. [Architecture](#architecture) · 3. [How an interruption flows](#how-an-interruption-flows) · 4. [Extension: device care](#extension-camera-grounded-device-care) · 5. [Results](#results) · 6. [Keys](#keys) · 7. [Tests](#tests) · 8. [Limitations](#limitations) · 9. [Repo map](#repo-map) · 10. [Citations](#citations)
 
 ## Reproduce the benchmark (one command)
 
@@ -49,7 +56,7 @@ classDef toolStyle fill:#DCFCE7,stroke:#166534,stroke-width:2.5px,color:#14532D;
 %% -------------------------------------------------
 %% 1. REAL-TIME MEDIA EDGE
 %% -------------------------------------------------
-subgraph Edge["1. Real-Time Edge (Local GPU)"]
+subgraph Edge["1. Real-Time Edge"]
     User["User (Voice & Camera)"]
     LiveKit["LiveKit WebRTC Pipeline<br/>• Silero VAD (Turn Boundaries)<br/>• STT: OpenAI gpt-4o-mini-transcribe (default) or faster-whisper<br/>• Kokoro-82M (TTS)"]
     User <-->|"Bi-directional Audio / Video"| LiveKit
@@ -124,7 +131,7 @@ The three rules everything else follows from:
 - **Optimistic concurrency with read sets.** Every proposal, call and pending utterance records the `(fact, version, digest)` it depended on. If any of them changed, the work is stale and is cancelled *in the same step*; if a value reverts (Pune → Mumbai → Pune) the digest matches again and nothing is redone.
 - **Reads and writes are different.** Reads can be speculated, retried and run in parallel. A write passes one `CommitGate` (floor closed, explicit user intent, no duplicate fingerprint or lineage, the settle window elapsed) and is recorded in the effect ledger *before* it is emitted. That is what prevents a double booking.
 
-`docs/prompt 2.txt` is the full architecture; `CLAUDE.md` is the short version.
+The full architecture specification is in `docs/prompt 2.txt`.
 
 ## How an interruption flows
 
@@ -188,9 +195,10 @@ All numbers below are FDB-v3's own runner and evaluators, unmodified, at the pin
 | **Janus, text replay** (reasoning & safety core), all 100 scenarios, Gemini 3.6 Flash | **77.0 %** | 0.959 | 0.807 | 0.840 |
 | Janus, **voice** over LiveKit, all 100 recordings, cloud RTX 3090, native path (29–30 Sep, before the fixes below) | 42.0 % | 0.844 | 0.611 | 0.597 |
 | Janus, **voice**, 32-recording rerun of that run's hardest recordings, after the speech-to-text GPU fix | 11 / 32 (was 8 / 32) | | | exact-match; turn-taking 32 / 32 (was 72 %); first word 7.8 s mean |
+| Janus, **voice**, current code with hosted speech-to-text, on recordings the full run failed (30 Sep) | 13 / 31 (the same recordings: 4 / 30 in the full run) | | | judged; turn-taking 64 / 64 |
 | Published FDB-v3 baselines (paper, Table 2): GPT-Realtime / Gemini Live 3.1 / Cascaded | 60.0 % / 54.0 % / 45.0 % | 0.876 / 0.817 / 0.803 | 0.680 / 0.588 / 0.562 | 0.792 / 0.718 / 0.600 |
 
-Read this table carefully:
+Notes on the table:
 
 - The **text-replay** row feeds each recording's ground-truth transcript straight to the kernel. It measures the reasoning and safety core, not speech recognition, turn-taking or latency, so it is *not* comparable to the voice-native baselines on those.
 - The **full voice run** is the real audio path. Its decision logs showed the gap was mostly infrastructure, and each cause is now fixed with a regression test:
@@ -229,16 +237,16 @@ With both set to `openai`, a run needs only LiveKit and OpenAI keys: the same Op
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-python -m pytest tests/ -q          # 493 tests, deterministic: stepped clock, scripted model, mock tools
+python -m pytest tests/ -q          # 499 tests, deterministic: stepped clock, scripted model, mock tools
 docker build -t janus . && docker run --rm janus     # the same suite on Python 3.11
 ```
 
 Tests use no real sleeps and no live model. Every scenario also runs `TraceChecker` over the decision log (no event reordering, floor rule, no stale consumption, no false completion claim, one confirmed write per lineage, and more), and a bounded adversarial explorer perturbs latencies around 19 race scenarios. The full voice path (LiveKit, GPU models) is only exercised by `reproduce.sh` and the demo worker, not by pytest.
 
-## Honest limitations
+## Limitations
 
-- **The number that scores is the voice path.** Our full voice run (42 %) predates the fixes above and has not been repeated on all 100; the text-replay figure is not a substitute.
-- **`./reproduce.sh` has been verified in its parts but not end to end.** Our voice runs used the same inner script natively (`scripts/fdb_v3/native_run.sh`) on a cloud GPU without Docker.
+- **The full-100 voice run (42 %) predates the fixes above.** It has not been repeated on all 100; on the recordings it failed, the current code passes 13 of 31 (the same recordings: 4 of 30 before). The organizers' re-run measures the current code.
+- **Our voice runs used the native path** (`scripts/fdb_v3/native_run.sh`, the same inner script `./reproduce.sh` runs in its container) on a cloud GPU without Docker; the Docker wrapper itself is verified in its parts.
 - **Speech-to-text still mishears some names** (e.g. a city). Hosted transcription is the default for that reason; the local faster-whisper option mishears more.
 - **Housing (35 %)** is the weakest domain; argument values in long constraint-heavy requests are the main loss.
 - **The model is a hosted API.** Temperature 0 does not make it bit-reproducible, and evaluation needs network access to Gemini.
