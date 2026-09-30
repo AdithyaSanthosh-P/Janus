@@ -14,7 +14,13 @@
         {"led": "internet", "color": "red", "state": "solid", "issue": "router_wan_fault",
          "meaning": "The internet cable or the provider line has a hard fault."},
         {"led": "wifi", "color": "off", "state": "off", "issue": "router_wifi_off",
-         "meaning": "The Wi-Fi radio is switched off."}
+         "meaning": "The Wi-Fi radio is switched off."},
+        {"led": "internet", "color": "green", "state": "solid", "issue": "ok_normal",
+         "meaning": "The router is connected to the internet and working normally."},
+        {"led": "wifi", "color": "green", "state": "solid", "issue": "ok_normal",
+         "meaning": "Wi-Fi is switched on and working normally."},
+        {"led": "wifi", "color": "green", "state": "blinking", "issue": "ok_normal",
+         "meaning": "Wi-Fi is on and data is moving over it. This is normal."}
       ]
     },
     "washer": {
@@ -28,6 +34,8 @@
     }
   },
   "issues": {
+    "ok_normal": {"title": "Normal operation", "technician_needed": false,
+                  "fix_steps": ["Nothing to fix. This light is behaving normally."]},
     "ok_power": {"title": "Normal operation", "technician_needed": false,
       "fix_steps": ["Nothing to fix. The power light is behaving normally."]},
     "router_booting": {"title": "Router is starting up", "technician_needed": false,

@@ -169,6 +169,20 @@ def _consumed_writes(store, keep) -> list:
     ]
 
 
+def nothing_to_cancel_text(store) -> str:
+    """"Cancel that" with nothing in progress -- found live, 30 Sep: the
+    request came right after a booking went through and got no reply at
+    all. Say what stands; no tool here undoes a confirmed write."""
+    writes = _consumed_writes(store, lambda call: True)
+    if writes:
+        done = write_summary(writes[-1:])
+        return (
+            f"There's nothing in progress to cancel. {done[0].upper()}{done[1:]} already went through, "
+            "and I can't cancel it from here."
+        )
+    return "There's nothing in progress to cancel. What would you like me to do?"
+
+
 def confirmed_writes(store, goal_id: str) -> list:
     """The goal's state-changing calls that actually went through."""
     return _consumed_writes(store, lambda call: call.goal_id == goal_id)

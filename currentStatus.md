@@ -634,6 +634,18 @@ First full voice-path measurement since S3. Ran with `scripts/fdb_v3/native_run.
   - The README results now include self-correction Pass@1 against the paper's Table 3 (text replay 0.824, voice 0.412; GPT-Realtime 0.588, cascaded 0.176), plus rerun turn-taking (32/32) and first-word latency (7.8 s mean; paper Table 6 first-word means 6.36 / 3.95 / 8.78 s).
   - `measurements.md` has a current-results section, and the stale "doesn't ask shall I go ahead" limitation is removed.
 
+### Live demo round 5 (2026-09-30 night, teammate's camera sessions) — 499/499, uncommitted
+Found in the decision logs under `run_output/video/decisions/`. All changes are gated on `vision_enabled` or `idle_replies_enabled`, both off in the FDB profile.
+- **The agent asked for the LED colour while the camera was pointed at it.** Perception ran only when the interpreter flagged a visual reference, and "I'm going to show it to you" came back without one. `PlanExecutor._look_before_asking` now looks at the latest frame once before asking. It applies only to a read-only tool's missing values, and only while frames are arriving (newer than 5 s). If the camera does not answer, the question goes to the user.
+- **A misheard two-word fragment ("ChatGPT. Please.") retargeted the camera question** and discarded a correct reading (internet, orange). A turn under three words no longer retargets an existing question.
+- **A blurry frame came back with null values**, which were written as slots and asked about again. An empty camera value is now ignored.
+- **"Cancel …" right after a booking went through got no reply**: an abort with no active goal returned silently. It now says the booking already went through and cannot be cancelled here (`replies.nothing_to_cancel_text`).
+- **Indicator lookup:**
+  - A green Wi-Fi light was answered with the power light's meaning. The guide now has the normal green internet/Wi-Fi states.
+  - A named light is answered only from its own entries, and a given colour must match.
+  - Spoken variants are normalised: "Wi-Fi", "solid orange", "amber", "steady".
+- Each fix has a regression test (`tests/test_devicecare.py`); every new behaviour test was confirmed to fail without its fix.
+
 ### Failing / Broken
 **As of 2026-09-28:** Janus's own suite — nothing failing (**359/359**, re-run 2026-09-28). Against FDB-v3, nothing known-broken, but three things are unverified:
 1. **The voice-path silent-scenario count hasn't been re-measured since the Whisper OOM fix.** The last full 26-recording measurement (27 Sep, before that fix) had 4/26 silent. Text replay has zero silent scenarios across all 100.

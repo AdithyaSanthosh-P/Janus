@@ -280,6 +280,12 @@ class PerceptionScheduler:
         for claim in claims:
             if claim.name not in target_names or claim.confidence == Confidence.LOW:
                 continue  # non-target claims dropped; LOW never accepted as a fact
+            if claim.value is None or (isinstance(claim.value, str) and not claim.value.strip()):
+                # An empty value is "couldn't see it", whatever confidence the
+                # model attached. Found live, 30 Sep: a blurry frame came back
+                # null for the LED's name and colour, the empty values were
+                # written as slots, and the agent asked for both again.
+                continue
             accepted_names.add(claim.name)
             txn.facts.set(
                 f"claim.{question.question_id}.{claim.name}",

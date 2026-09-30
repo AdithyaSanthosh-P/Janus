@@ -144,6 +144,12 @@ def _apply_visual_reference(
     carrying the visual reference" (not tracked per-chunk)."""
     if not txn.store.config.vision_enabled or interp.visual_reference == "none":
         return
+    if txn.evidence.latest_active_question(goal_id) is not None and _turn_word_count(txn.store, interp.turn_id) < 3:
+        # A retarget throws away what the camera already answered. Found
+        # live, 30 Sep: a misheard two-word fragment ("ChatGPT. Please.")
+        # came back with a visual reference and discarded a correct reading
+        # of the LED. A real redirect ("actually, the other one") is longer.
+        return
     turn = txn.store.turn_log.get(interp.turn_id)
     anchor_ts_us = turn.closed_ts_us if turn is not None and turn.closed_ts_us is not None else now_us
     _PERCEPTION.create_or_retarget_question(
@@ -375,6 +381,8 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         gid = active_goal_id(txn.store)
         if gid is not None:
             _abandon_goal(txn, gid, now_us, step_no, event_id=event_id)
+        elif txn.store.config.conversational_replies_enabled and txn.store.config.idle_replies_enabled:
+            replies.set_honest_reply(txn, interp.turn_id, replies.nothing_to_cancel_text(txn.store), now_us, step_no, event_id=event_id)
         return gid
 
     if txn.store.config.conversational_replies_enabled and not interp.actions:

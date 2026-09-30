@@ -32,13 +32,19 @@ from prism_rt.model.types import (
     FactStatus,
     GoalStatus,
     Provenance,
+    Question,
     QuestionMode,
     QuestionStatus,
+    QuestionTarget,
     ReadSet,
     StepKind,
     TaskState,
+    ToolMutability,
     fingerprint_for,
 )
+
+# A camera frame newer than this counts as a live camera (`_look_before_asking`).
+_LIVE_CAMERA_US = 5_000_000
 
 # V4 / C10 (docs/theme05_implementation_blueprint.md §5.5): a WRITE
 # parameter is identifier-like if the schema marks it (enum, format=uuid)
@@ -361,6 +367,7 @@ class PlanExecutor:
                     missing_key.startswith("claim.")
                     or missing_key.startswith("bind.")  # S3: kernel/binder.py will decide it -- never ask the user
                     or self._perception_will_answer(store, gid, missing_key)
+                    or self._look_before_asking(store, gid, step, missing_key, now_us)
                 ):
                     continue
                 self._ask_for(store, gid, missing_key, now_us, step_no)
@@ -752,6 +759,54 @@ class PlanExecutor:
         if name not in {t.name for t in question.targets}:
             return False
         return question.pending_job_id is not None or question.analyzed_obs_id is None
+
+    def _look_before_asking(self, store, goal_id: str, step, key: str, now_us: int) -> bool:
+        """With the camera on, a lookup's missing value is looked for in the
+        latest frame once before the user is asked. Perception otherwise ran
+        only when the interpreter flagged a visual reference, and it missed
+        "I'm going to show it to you": found live, 30 Sep, the agent asked
+        for the LED colour three times while the camera was pointed at it.
+        Read-only tools only (a booking's date is never on camera), only
+        while frames are arriving, and only once per goal: if the look
+        comes back without the value, `_perception_will_answer` lets the
+        question through to the user."""
+        if not store.config.vision_enabled or not key.startswith(f"slot.{goal_id}."):
+            return False
+        spec = store.catalog.get(step.tool)
+        if spec is None or spec.mutability != ToolMutability.READ_ONLY:
+            return False
+        frames = store.evidence.observations_by_modality("frame")
+        if not frames or now_us - frames[-1].capture_ts_us > _LIVE_CAMERA_US:
+            return False
+        if store.evidence.latest_active_question(goal_id) is not None:
+            return False
+        names = []
+        for param, binding in step.bindings.items():
+            if binding.kind != BindingKind.FACT or not (binding.fact_key or "").startswith("slot.$G."):
+                continue
+            slot_key = binding.fact_key.replace("$G", goal_id)
+            fact = store.facts.get(slot_key)
+            if fact is None or fact.status in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS):
+                names.append(param)
+        if plain_slot_name(key[len(f"slot.{goal_id}."):]) not in names:
+            return False
+        store.evidence.create_question(
+            Question(
+                question_id=store.ids.next("question"),
+                goal_id=goal_id,
+                targets=tuple(
+                    QuestionTarget(name=n, description=self._param_schema(store, step.tool, n).get("description", ""))
+                    for n in names
+                ),
+                mode=QuestionMode.AT_UTTERANCE,
+                anchor_ts_us=now_us,
+                created_by="demand",
+            )
+        )
+        # PerceptionScheduler ran earlier in this DECIDE phase; wake the
+        # kernel so it dispatches the look without waiting for the next frame.
+        store.timers.schedule(f"look_wake:{goal_id}", now_us + 1)
+        return True
 
     def _invalid_slot_input(self, step, goal_id: str, errors) -> str | None:
         """The `slot.<goal>.<name>` key behind the first invalid argument,

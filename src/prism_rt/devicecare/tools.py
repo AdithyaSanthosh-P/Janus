@@ -24,6 +24,24 @@ def _norm(value) -> str:
     return " ".join(str(value or "").strip().lower().replace("-", " ").replace("_", " ").split())
 
 
+def _led_color(raw) -> str:
+    text = _norm(raw)
+    for word, colour in (("amber", "orange"), ("orange", "orange"), ("yellow", "orange"), ("green", "green"), ("red", "red")):
+        if word in text:
+            return colour
+    return text
+
+
+def _led_state(raw) -> str:
+    """"solid orange", "flashing", "steady" -> the guide's solid/blinking/off."""
+    text = _norm(raw)
+    if "blink" in text or "flash" in text:
+        return "blinking"
+    if "solid" in text or "steady" in text or text == "on":
+        return "solid"
+    return text
+
+
 def _device_key(kb: dict, raw) -> str | None:
     text = _norm(raw)
     for key, dev in kb["devices"].items():
@@ -138,12 +156,20 @@ class DeviceCareToolset:
         dev = _device_key(self.kb, a.get("device_type"))
         if dev is None or "indicators" not in self.kb["devices"][dev]:
             return {"found": False, "message": f"No indicator guide for {a.get('device_type')!r}."}
-        colour, state = _norm(a.get("led_color")), _norm(a.get("led_state"))
-        name = _norm(a.get("led_name"))
+        colour, state = _led_color(a.get("led_color")), _led_state(a.get("led_state"))
+        name = _norm(a.get("led_name")).replace(" ", "")  # "Wi-Fi" -> "wifi"
+        indicators = self.kb["devices"][dev]["indicators"]
+        if any(ind["led"] == name for ind in indicators):
+            # A named light is answered from its own entries only -- found
+            # live, 30 Sep: a green Wi-Fi light (no entry then) was answered
+            # with the green power light's meaning.
+            indicators = [ind for ind in indicators if ind["led"] == name]
         scored = []
-        for ind in self.kb["devices"][dev]["indicators"]:
+        for ind in indicators:
             score = (ind["color"] == colour) * 2 + (ind["state"] == state) * 2 + (bool(name) and ind["led"] == name) * 3
-            if ind["color"] == colour or ind["state"] == state:
+            # A different colour is a different pattern: an orange Wi-Fi
+            # light must never read as the green one's "working normally".
+            if (ind["color"] == colour) if colour else (ind["state"] == state):
                 scored.append((score, ind))
         if not scored:
             return {"found": False, "message": "That light pattern is not in the guide."}

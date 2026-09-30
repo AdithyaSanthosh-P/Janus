@@ -13,7 +13,7 @@ import asyncio
 from conftest import chunk_event, drain, eot_event, frame_event, manifest_event
 
 from prism_rt.devicecare import DeviceCareToolset
-from prism_rt.model.types import ActionType, JobKind
+from prism_rt.model.types import ActionType, FactStatus, JobKind
 from prism_rt.profiles import demo_config, fdb_v3_config
 from prism_rt.sim.checker import TraceChecker
 from prism_rt.sim.harness import SimHarness
@@ -139,7 +139,8 @@ def test_camera_answers_a_question_the_compiled_plan_asked():
     provider.register("compose", "a0", {"text": "The solid orange internet light means no internet.", "claims": []})
 
     h = harness(provider, DeviceCareToolset())
-    h.send(50_000, [frame_event("cam-1")])
+    # No frame yet: with a live camera the agent looks before asking
+    # (test_live_camera_is_looked_at_before_asking).
     h.send(100_000, [chunk_event("my router is showing an orange light")])
     h.send(150_000, [eot_event()])
     actions = drain(h, 2_000_000, stop_on_final=False)
@@ -153,6 +154,117 @@ def test_camera_answers_a_question_the_compiled_plan_asked():
     identify = [args for name, args in calls(actions) if name == "identify_indicator"]
     assert identify and identify[0]["led_state"] == "solid" and identify[0]["led_color"] == "orange"
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_a_named_light_is_answered_from_its_own_entries():
+    """30 Sep live demo: the camera read a green, solid Wi-Fi light (not in
+    the guide then), and the lookup answered with the green power light's
+    meaning. Spoken variants ("Wi-Fi", "solid orange") match too."""
+    tk = DeviceCareToolset()
+    ex = tk.make_executor()
+    wifi = run(ex, "identify_indicator", device_type="router", led_color="green", led_state="solid", led_name="WIFI")
+    assert wifi["found"] and wifi["led"] == "wifi" and "Wi-Fi is switched on" in wifi["meaning"]
+    internet = run(ex, "identify_indicator", device_type="router", led_color="Orange", led_state="solid orange", led_name="Wi-Fi")
+    assert not internet["found"]  # no orange Wi-Fi light in the guide: never another light's meaning
+    internet = run(ex, "identify_indicator", device_type="router", led_color="amber", led_state="steady", led_name="internet")
+    assert internet["found"] and internet["led"] == "internet" and "cannot reach the internet" in internet["meaning"]
+
+
+def _router_goal_without_visual_reference(provider: ScriptedProvider) -> None:
+    provider.register("interpret", "show it to you", {
+        "act": "new_goal", "intent": "identify_indicator", "slot_deltas": [], "visual_reference": "none",
+        "actions": [{"tool": "identify_indicator", "args": {"device_type": "router"}}],
+    })
+    provider.register("extract", "show it to you", {"value": None})
+    provider.register("compose", "a0", {"text": "The solid orange internet light means no internet.", "claims": []})
+
+
+def test_live_camera_is_looked_at_before_asking():
+    """30 Sep live demo: "I'm going to show it to you, what is wrong with
+    it?" came back with no visual reference, so the camera was never
+    consulted and the agent asked for the LED colour three times while it
+    was pointed at the router. A lookup's missing values are now looked for
+    in the live frame first."""
+    provider = ScriptedProvider()
+    _router_goal_without_visual_reference(provider)
+    provider.register("vision", "led_color", {"claims": [
+        {"name": "led_color", "value": "orange", "confidence": "high"},
+        {"name": "led_state", "value": "solid", "confidence": "high"},
+        {"name": "led_name", "value": "internet", "confidence": "high"}]})
+
+    h = harness(provider, DeviceCareToolset())
+    h.send(50_000, [frame_event("cam-1")])
+    h.send(100_000, [chunk_event("my router, I'm going to show it to you, what is wrong with it")])
+    h.send(150_000, [eot_event()])
+    actions = drain(h, 6_000_000)
+
+    assert not [a for a in actions if a.action_type == ActionType.CLARIFY]
+    assert calls(actions) == [("identify_indicator", {"device_type": "router", "led_color": "orange", "led_state": "solid", "led_name": "internet"})]
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_camera_without_the_value_falls_through_to_asking():
+    """The look happens once: an empty answer (null values -- a blurry
+    frame, found live) is not a value, and the user is asked."""
+    provider = ScriptedProvider()
+    _router_goal_without_visual_reference(provider)
+    provider.register("vision", "led_color", {"claims": [
+        {"name": "led_color", "value": None, "confidence": "high"},
+        {"name": "led_name", "value": None, "confidence": "high"}]})
+
+    h = harness(provider, DeviceCareToolset())
+    h.send(50_000, [frame_event("cam-1")])
+    h.send(100_000, [chunk_event("my router, I'm going to show it to you, what is wrong with it")])
+    h.send(150_000, [eot_event()])
+    actions = drain(h, 4_000_000, stop_on_final=False)
+
+    assert not calls(actions)
+    assert [a for a in actions if a.action_type == ActionType.CLARIFY]
+    assert h.store.facts.get("slot.g-0001.led_color") is None
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_camera_is_not_consulted_without_a_live_frame_or_for_a_write():
+    provider = ScriptedProvider()
+    _router_goal_without_visual_reference(provider)
+    h = harness(provider, DeviceCareToolset())
+    h.send(100_000, [chunk_event("my router, I'm going to show it to you, what is wrong with it")])
+    h.send(150_000, [eot_event()])
+    actions = drain(h, 3_000_000, stop_on_final=False)
+    assert [a for a in actions if a.action_type == ActionType.CLARIFY]
+    assert h.store.evidence.latest_active_question("g-0001") is None
+
+
+def test_a_two_word_fragment_does_not_discard_what_the_camera_saw():
+    """30 Sep live demo: a misheard fragment ("ChatGPT. Please.") came back
+    with a visual reference, retargeted the camera question and threw away
+    a correct reading of the LED."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "ChatGPT", {
+        "act": "answer_clarification", "slot_deltas": [], "visual_reference": "at_utterance",
+        "visual_candidates": [{"name": "led_name", "description": "which light it is"}],
+    })
+    provider.register("interpret", "orange light", {
+        "act": "new_goal", "intent": "identify_indicator", "slot_deltas": [],
+        "visual_reference": "at_utterance",
+        "visual_candidates": [{"name": "led_name", "description": "which light it is"}],
+        "actions": [{"tool": "identify_indicator", "args": {"device_type": "router", "led_color": "orange"}}],
+    })
+    provider.register("extract", "", {"value": None})
+    provider.register("vision", "led_name", {"claims": [{"name": "led_name", "value": "internet", "confidence": "high"}]})
+
+    h = harness(provider, DeviceCareToolset())
+    h.send(50_000, [frame_event("cam-1")])
+    h.send(100_000, [chunk_event("my router is showing an orange light")])
+    h.send(150_000, [eot_event()])
+    drain(h, 2_000_000, stop_on_final=False)
+    before = h.store.facts.get("slot.g-0001.led_name")
+    assert before.value == "internet"
+    h.send(2_100_000, [chunk_event("ChatGPT. Please.")])
+    h.send(2_150_000, [eot_event()])
+    drain(h, 3_000_000, stop_on_final=False)
+    after = h.store.facts.get("slot.g-0001.led_name")
+    assert after.status != FactStatus.RETRACTED and after.ver == before.ver  # never retracted, not even briefly
 
 
 def _booking(day: str, slot: str, commit: bool = True) -> dict:
@@ -214,6 +326,29 @@ def test_a_change_after_the_booking_went_through_never_books_twice():
     assert calls(actions) == []
     said = [a.body.text for a in actions if a.action_type in (ActionType.SPEAK, ActionType.FINAL)]
     assert said and said[0].startswith("That's already done — book technician (Thursday, morning) went through.")
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_cancel_after_the_booking_went_through_gets_an_honest_reply():
+    """30 Sep live demo: "cancel ..." right after a booking went through was
+    read as an abort with no request in progress, and got no reply at all."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "make it daily", {"act": "abort", "slot_deltas": []})
+    provider.register("interpret", "Thursday", _booking("Thursday", "morning"))
+    provider.register("compose", "book_technician", {"text": "Booked for Thursday morning.", "claims": []})
+    tk = _diagnosed_toolset()
+    h = harness(provider, tk)
+    h.send(100_000, [chunk_event("book a technician for Thursday morning")])
+    h.send(150_000, [eot_event()])
+    assert [a for a in drain(h, 6_000_000) if a.action_type == ActionType.FINAL]
+    h.send(6_100_000, [chunk_event("I'll cancel make it daily")])
+    actions = [er.action for er in h.send(6_150_000, [eot_event()]).emit_report.emitted]
+    actions += drain(h, 12_000_000, stop_on_final=False)
+
+    assert len(tk.bookings) == 1 and calls(actions) == []
+    said = [a.body.text for a in actions if a.action_type in (ActionType.SPEAK, ActionType.FINAL)]
+    assert said == ["There's nothing in progress to cancel. Book technician (Thursday, morning) already went through, "
+                    "and I can't cancel it from here."]
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
 
 
