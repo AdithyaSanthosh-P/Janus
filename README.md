@@ -4,7 +4,7 @@ A full-duplex, interruptible voice agent built around one idea: **no model ever 
 
 Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptible Real-Time Agents**, and evaluated on **Full-Duplex-Bench v3 (FDB-v3)** over LiveKit.
 
-> **Provider declaration.** Custom LiveKit agent (Janus). Decisions: the Janus kernel with **Gemini 3.6 Flash** (hosted Gemini API, thinking budget 0, temperature 0). Speech, all local on the GPU: **faster-whisper large-v3-turbo** (STT), **Kokoro-82M** (TTS), **Silero VAD**. Nothing else is called at evaluation time. Two switches can move decisions and/or speech-to-text to OpenAI instead (see [Keys](#keys)); every run writes the providers it actually used to `PROVIDER.txt`.
+> **Provider declaration.** Custom LiveKit agent (Janus). Decisions: the Janus kernel with **Gemini 3.6 Flash** (hosted Gemini API, thinking budget 0, temperature 0). Speech-to-text: **OpenAI `gpt-4o-mini-transcribe-2025-12-15`** (hosted, pinned snapshot). Local on the GPU: **Kokoro-82M** (TTS), **Silero VAD**. Nothing else is called at evaluation time. Keys needed: LiveKit, `GEMINI_API_KEY`, `OPENAI_API_KEY` (see [Keys](#keys)). Two switches change the providers: `JANUS_STT=local` runs faster-whisper large-v3-turbo on the GPU instead, and `JANUS_LLM_PROVIDER=openai` moves decisions to OpenAI (see [Keys](#keys)); every run writes the providers it actually used to `PROVIDER.txt`.
 > (The Python import path is `prism_rt`; the distribution is named `janus`. That mismatch is deliberate.)
 
 ## Contents
@@ -214,14 +214,14 @@ Copy `.env.example` to `.env`. It is git-ignored; keys are never in the repo.
 |---|---|
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Any LiveKit Cloud project; FDB's client and the Janus worker meet in a room there. |
 | `GEMINI_API_KEY` | The hosted model behind Interpret / Plan / Compose / Vision (Google AI Studio). About 500 calls per full run. |
-| `OPENAI_API_KEY` | FDB's LLM judge (semantic argument matching, response quality). Optional with `--no-judge`. Also used by the two OpenAI options below. |
+| `OPENAI_API_KEY` | Speech-to-text (`gpt-4o-mini-transcribe-2025-12-15`, the default) and FDB's LLM judge (semantic argument matching, response quality). Also used by `JANUS_LLM_PROVIDER=openai`. |
 
 Two optional switches choose the hosted services (set them in `.env` or the shell):
 
 | Variable | Values | Effect |
 |---|---|---|
 | `JANUS_LLM_PROVIDER` | `gemini` (default) · `openai` | The model behind the kernel's decisions (`openai` = gpt-4.1, equal to Gemini 3.6 Flash on our judged 15-recording comparison). |
-| `JANUS_STT` | `local` (default) · `openai` | Speech-to-text: faster-whisper on the GPU, or OpenAI's `gpt-4o-mini-transcribe-2025-12-15` (pinned snapshot). |
+| `JANUS_STT` | `openai` (default) · `local` | Speech-to-text: OpenAI's `gpt-4o-mini-transcribe-2025-12-15` (pinned snapshot), or faster-whisper large-v3-turbo on the GPU (no OpenAI key needed for it; pass `--no-judge` too). |
 
 With both set to `openai`, a run needs only LiveKit and OpenAI keys: the same OpenAI key the judge already uses. To keep an OpenAI key off a GPU machine you don't control, run `scripts/fdb_v3/openai_stt_relay.py` on your own machine and open a reverse SSH tunnel. The relay adds the key itself and forwards only transcription requests; the script's docstring has the commands.
 
@@ -239,7 +239,7 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 
 - **The number that scores is the voice path.** Our full voice run (42 %) predates the fixes above and has not been repeated on all 100; the text-replay figure is not a substitute.
 - **`./reproduce.sh` has been verified in its parts but not end to end.** Our voice runs used the same inner script natively (`scripts/fdb_v3/native_run.sh`) on a cloud GPU without Docker.
-- **Speech-to-text still mishears some names** (e.g. a city); replacing faster-whisper with Parakeet ASR is the next step.
+- **Speech-to-text still mishears some names** (e.g. a city). Hosted transcription is the default for that reason; the local faster-whisper option mishears more.
 - **Housing (35 %)** is the weakest domain; argument values in long constraint-heavy requests are the main loss.
 - **The model is a hosted API.** Temperature 0 does not make it bit-reproducible, and evaluation needs network access to Gemini.
 - **No cancel or modify tool.** A booking that went through cannot be changed; the agent says so and will not make a second one without an explicit yes, but it cannot undo the first.

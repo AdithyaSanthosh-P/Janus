@@ -69,7 +69,7 @@ def main() -> None:
     llm_provider = os.environ.get("JANUS_LLM_PROVIDER", "gemini")
     model = os.environ.get("JANUS_LLM_MODEL", "gpt-4.1" if llm_provider == "openai" else "gemini-3.6-flash")
     thinking = os.environ.get("JANUS_THINKING_BUDGET", "0") if llm_provider == "gemini" else "n/a"
-    stt_backend = os.environ.get("JANUS_STT", "local")
+    stt_backend = os.environ.get("JANUS_STT", "openai")
     if stt_backend == "openai":
         stt_model = os.environ.get("JANUS_STT_MODEL") or "gpt-4o-mini-transcribe-2025-12-15"
         stt_desc = f"{stt_model} (hosted OpenAI API)"

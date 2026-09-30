@@ -2,7 +2,7 @@
 # Native (no-Docker) counterpart of ./reproduce.sh: the same run, the same
 # scripts/fdb_v3/repro_inner.sh, in the venv made by native_setup.sh.
 #
-#   cp .env.example .env     # LIVEKIT_URL/KEY/SECRET and GEMINI_API_KEY (no OpenAI key needed)
+#   cp .env.example .env     # LIVEKIT_URL/KEY/SECRET, GEMINI_API_KEY and OPENAI_API_KEY (speech-to-text)
 #   scripts/fdb_v3/native_run.sh --ids "travel_01 finance_19 housing_10 ecommerce_01 travel_02"   # smoke
 #   scripts/fdb_v3/native_run.sh                                                                  # all 100
 #
@@ -26,7 +26,7 @@ if [[ -f "$REPO/.env" ]]; then set -a; source "$REPO/.env"; set +a; fi
 # Same key rules as ./reproduce.sh: JANUS_LLM_PROVIDER=gemini|openai, JANUS_STT=local|openai.
 # JANUS_STT=openai with OPENAI_BASE_URL pointing at scripts/fdb_v3/openai_stt_relay.py keeps
 # the real OpenAI key on another machine (OPENAI_API_KEY is then only a placeholder).
-LLM_PROVIDER="${JANUS_LLM_PROVIDER:-gemini}"; STT_BACKEND="${JANUS_STT:-local}"
+LLM_PROVIDER="${JANUS_LLM_PROVIDER:-gemini}"; STT_BACKEND="${JANUS_STT:-openai}"
 missing=()
 for v in LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET; do [[ -n "${!v:-}" ]] || missing+=("$v"); done
 case "$LLM_PROVIDER" in

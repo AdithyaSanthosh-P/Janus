@@ -6,11 +6,13 @@
 #
 # Options:
 #   --ids "travel_01 finance_19"   run only these examples (a quick smoke test)
-#   --no-judge                     exact-match scoring only (no OPENAI_API_KEY needed)
+#   --no-judge                     exact-match scoring only (the judge is then off; speech-to-text still uses OPENAI_API_KEY)
 #   --skip-build                   reuse an already built image
 #   --low-vram                     for GPUs < 16 GB shared with FDB's scorer
 #
-# Environment (optional): JANUS_LLM_PROVIDER=gemini|openai, JANUS_STT=local|openai.
+# Keys (.env): LIVEKIT_URL/KEY/SECRET, GEMINI_API_KEY (decisions), OPENAI_API_KEY
+# (speech-to-text and the judge).
+# Environment (optional): JANUS_LLM_PROVIDER=gemini|openai, JANUS_STT=openai|local.
 # With both set to openai the run needs only LiveKit and OpenAI keys.
 #
 # What it does: checks the environment (never printing key values) ->
@@ -46,8 +48,8 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 if [[ -f "$REPO/.env" ]]; then set -a; source "$REPO/.env"; set +a; fi
 # Which hosted services this run uses decides which keys it needs.
 #   JANUS_LLM_PROVIDER  gemini (default) | openai   -- the model behind the kernel's decisions
-#   JANUS_STT           local (default)  | openai   -- speech-to-text (local = faster-whisper on the GPU)
-LLM_PROVIDER="${JANUS_LLM_PROVIDER:-gemini}"; STT_BACKEND="${JANUS_STT:-local}"
+#   JANUS_STT           openai (default) | local    -- speech-to-text (openai = gpt-4o-mini-transcribe; local = faster-whisper on the GPU)
+LLM_PROVIDER="${JANUS_LLM_PROVIDER:-gemini}"; STT_BACKEND="${JANUS_STT:-openai}"
 missing=()
 for v in LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET; do [[ -n "${!v:-}" ]] || missing+=("$v"); done
 case "$LLM_PROVIDER" in
@@ -57,7 +59,7 @@ case "$LLM_PROVIDER" in
 esac
 case "$STT_BACKEND" in
   local) ;;
-  openai) [[ -n "${OPENAI_API_KEY:-}" ]] || missing+=("OPENAI_API_KEY (JANUS_STT=openai)") ;;
+  openai) [[ -n "${OPENAI_API_KEY:-}" ]] || missing+=("OPENAI_API_KEY (speech-to-text; or JANUS_STT=local for on-GPU Whisper)") ;;
   *) die "JANUS_STT must be local or openai" ;;
 esac
 if [[ $JUDGE == 1 && -z "${OPENAI_API_KEY:-}" ]]; then missing+=("OPENAI_API_KEY (or pass --no-judge)"); fi
