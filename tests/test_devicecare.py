@@ -217,6 +217,37 @@ def test_a_change_after_the_booking_went_through_never_books_twice():
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
 
 
+def test_a_new_booking_request_after_one_went_through_is_confirmed_first():
+    """30 Sep live demo: after BK-0001 (Monday evening) went through, "No,
+    cancel it. Make it Friday" was read as a new request and booked BK-0002.
+    A repeat of a confirmed write now asks first, naming what stands; an
+    explicit yes still books it."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "yes please", {"act": "confirm", "slot_deltas": []})
+    provider.register("interpret", "cancel it", _booking("Friday", "evening"))
+    provider.register("interpret", "Monday", _booking("Monday", "evening"))
+    provider.register("compose", "book_technician", {"text": "Booked.", "claims": []})
+    tk = _diagnosed_toolset()
+    h = harness(provider, tk)
+    h.send(100_000, [chunk_event("book a technician for Monday evening")])
+    h.send(150_000, [eot_event()])
+    assert [a for a in drain(h, 6_000_000) if a.action_type == ActionType.FINAL]
+
+    h.send(6_100_000, [chunk_event("no, cancel it, make it Friday")])
+    actions = [er.action for er in h.send(6_150_000, [eot_event()]).emit_report.emitted]
+    actions += drain(h, 12_000_000, stop_on_final=False)
+    assert len(tk.bookings) == 1
+    asked = [a.body.text for a in actions if a.action_type == ActionType.SPEAK and "already have" in a.body.text]
+    assert asked == ["You already have book technician (Monday, evening) confirmed, and I can't cancel or change it "
+                     "from here. Do you want a second one: book technician (Friday, evening)?"]
+
+    h.send(12_100_000, [chunk_event("yes please")])
+    h.send(12_150_000, [eot_event()])
+    drain(h, 18_000_000)
+    assert [(b["date"], b["time_slot"]) for b in tk.bookings] == [("Monday", "evening"), ("Friday", "evening")]
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
 def test_without_the_users_go_ahead_nothing_is_booked():
     """A declared write is never made on an answer that isn't a go-ahead (G4)."""
     h, tk, actions = _self_correcting_booking(commit=False)

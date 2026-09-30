@@ -467,7 +467,23 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 # is filled; the fallback PLAN path still needs flat slots.
                 deltas = action_plans.flat_deltas_from_actions(interp.actions)
             _apply_slot_deltas(txn, gid, deltas, now_us, step_no, event_id=event_id)
-        if interp.commit_intent:
+        tools = [step.tool for step in compiled.steps] if compiled is not None else list(interp.requested_actions or [interp.intent])
+        earlier = replies.earlier_confirmed_writes(txn.store, gid, tools) if _live_followups(txn.store) else []
+        if earlier:
+            # Found live, 30 Sep: "No, cancel it. Make it Friday" after a
+            # confirmed booking was read as a new request and booked a second
+            # technician. A repeat of a write that already went through this
+            # session never runs on the interpretation alone: the go-ahead is
+            # withheld (CommitGate G4 holds it) and the confirmation question
+            # names what already stands (responder._confirm_unconfirmed_write).
+            txn.facts.set(
+                f"goal.{gid}.repeat_of",
+                replies.write_summary(earlier),
+                FactStatus.COMMITTED,
+                Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
+                rule="interpret_apply.repeat_write",
+            )
+        elif interp.commit_intent:
             txn.facts.set(
                 f"goal.{gid}.commit_intent",
                 True,

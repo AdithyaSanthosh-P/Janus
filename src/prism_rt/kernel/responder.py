@@ -568,6 +568,12 @@ class FastResponder:
             store.facts.set(f"goal.{goal_id}.awaiting_confirmation", call.call_id, FactStatus.COMMITTED, prov, rule="responder.confirm_write")
             values = ", ".join(str(v) for v in call.args.values())
             text = f"Shall I go ahead and {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
+            repeat = store.facts.get(f"goal.{goal_id}.repeat_of")
+            if repeat is not None and repeat.status != FactStatus.RETRACTED:
+                text = (
+                    f"You already have {repeat.value} confirmed, and I can't cancel or change it from here. "
+                    f"Do you want a second one: {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
+                )
             return [
                 IntendedAction(
                     action_type=ActionType.SPEAK,

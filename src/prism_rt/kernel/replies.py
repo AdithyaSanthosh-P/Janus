@@ -144,3 +144,21 @@ def no_second_write_text(calls) -> str:
         f"That's already done — {done} went through. I can't change it from here, "
         "and I won't make a second one."
     )
+
+
+def earlier_confirmed_writes(store, goal_id: str, tools) -> list:
+    """Writes with one of `tools` that went through for an earlier goal."""
+    from prism_rt.model.types import StepKind
+
+    wanted = set(tools)
+    return [
+        call for call in store.call_ledger.all()
+        if call.goal_id != goal_id and call.status == CallStatus.CONSUMED
+        and call.kind == StepKind.WRITE and call.tool in wanted
+    ]
+
+
+def write_summary(calls) -> str:
+    return "; ".join(
+        f"{_human(c.tool)} ({', '.join(str(v) for v in c.args.values())})" if c.args else _human(c.tool) for c in calls
+    )
