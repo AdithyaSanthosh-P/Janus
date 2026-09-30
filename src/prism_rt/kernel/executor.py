@@ -513,6 +513,23 @@ class PlanExecutor:
                     if store.evidence.conflict_open(goal_id, name):
                         return None, key
                 fact = store.facts.get(key)
+                if (fact is None or fact.status in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS)) and step.slot_prefix:
+                    # A compiled step binds its own per-action key
+                    # (slot.<g>.a0.led_state), but perception writes the plain
+                    # slot (slot.<g>.led_state). Found live, 30 Sep: the camera
+                    # answered and the goal kept asking. Use a perception-sourced
+                    # plain slot when the action has no value of its own -- a
+                    # value the user stated for the action always wins.
+                    flat_key = f"slot.{goal_id}.{param}"
+                    flat = store.facts.get(flat_key)
+                    if (
+                        store.config.vision_enabled
+                        and flat is not None
+                        and flat.status not in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS)
+                        and flat.provenance.source == "perception"
+                        and not store.evidence.conflict_open(goal_id, param)
+                    ):
+                        key, fact = flat_key, flat
                 if fact is None or fact.status in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS):
                     return None, key
                 if store.config.reference_bound_identifiers and step.kind == StepKind.WRITE:

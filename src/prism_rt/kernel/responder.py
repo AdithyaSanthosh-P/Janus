@@ -24,6 +24,8 @@ as everything else for free.
 
 from __future__ import annotations
 
+import re
+
 from config.templates import (
     ACK_DEFAULT,
     CLARIFY_RETRY_WRITE,
@@ -292,8 +294,15 @@ class FastResponder:
             )
         friendly = target.rsplit(".", 1)[-1]
         text = CLARIFY_TEMPLATE.format(target=friendly)
+        options = _option_list(store, goal_id, target) if store.config.conversational_replies_enabled else None
+        if options:
+            # "What's the led state: solid, blinking or off?" -- the parameter's
+            # own description, when it is just the list of allowed values.
+            text = f"What's the {friendly.replace('_', ' ')}: {options}?"
         if repeat and not target.startswith("retry:"):
             text = CLARIFY_REPEAT_TEMPLATE.format(target=friendly.replace("_", " "))
+            if options:
+                text = f"Sorry, I still need the {friendly.replace('_', ' ')}: {options}?"
         # P0.4 (S-02, docs/original_design_audit.md D4): a write-timeout
         # retry confirmation (kernel/executor.py.PlanExecutor.
         # expire_deadlines) is a yes/no question, not a missing-slot one --
@@ -635,4 +644,25 @@ def _latest_closed_turn_id(store) -> str | None:
     for turn in reversed(store.turn_log.all()):
         if turn.closed_ts_us is not None:
             return turn.turn_id
+    return None
+
+
+_OPTIONS = re.compile(r"^[A-Za-z][\w -]*(?:, [A-Za-z][\w -]*)* or [A-Za-z][\w -]*\.?$")
+
+
+def _option_list(store, goal_id: str, target: str) -> str | None:
+    """The allowed values of the tool parameter a clarify target binds, when
+    its description is nothing but that list ("solid, blinking or off.")."""
+    plan = store.plans.current(goal_id)
+    if plan is None or not target.startswith(f"slot.{goal_id}."):
+        return None
+    template = target.replace(f"slot.{goal_id}.", "slot.$G.", 1)
+    for step in plan.steps:
+        for param, binding in step.bindings.items():
+            if binding.fact_key == template:
+                spec = store.catalog.get(step.tool)
+                prop = ((spec.params_schema or {}).get("properties") or {}).get(param) if spec else None
+                desc = (prop or {}).get("description", "") if isinstance(prop, dict) else ""
+                desc = desc.strip()
+                return desc.rstrip(".") if desc and len(desc) <= 60 and _OPTIONS.match(desc) else None
     return None

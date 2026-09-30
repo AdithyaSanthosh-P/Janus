@@ -212,6 +212,12 @@ class FasterWhisperSTT(stt.STT):
 # name and code correctly ("Chicago", "Milan", "BOB12") and writes spoken codes
 # compactly ("123ABC", "P88990011").
 OPENAI_STT_MODEL = "gpt-4o-mini-transcribe-2025-12-15"
+# language="en" alone is not enough: found live (30 Sep), short segments of
+# Indian-accented English came back in Urdu script ("ہیلو" for "hello").
+OPENAI_STT_PROMPT = (
+    "The speaker is talking in English (possibly with an accent) to a voice assistant. "
+    "Transcribe exactly what they say, in English, using the Latin alphabet."
+)
 
 
 def _wav_bytes(audio: np.ndarray) -> bytes:
@@ -260,7 +266,10 @@ class OpenAITranscribeSTT(stt.STT):
         for attempt in (1, 2):
             try:
                 result = await self._client.audio.transcriptions.create(
-                    model=self._model, file=("segment.wav", data, "audio/wav"), language=self._language
+                    model=self._model,
+                    file=("segment.wav", data, "audio/wav"),
+                    language=self._language,
+                    prompt=OPENAI_STT_PROMPT,
                 )
                 text = clean_transcript(getattr(result, "text", "") or "")
                 break

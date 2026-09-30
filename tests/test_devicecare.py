@@ -115,6 +115,46 @@ def test_camera_frame_supplies_the_light_the_user_did_not_name():
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
 
 
+def test_camera_answers_a_question_the_compiled_plan_asked():
+    """30 Sep live demo: the first turn named the colour but not whether the
+    light blinks, so the compiled plan asked about `a0.led_state`; the user
+    then pointed the camera at the router. Vision answered into the plain
+    `slot.<g>.led_state` and the goal kept asking "I still need the led
+    state". The camera's answer now fills the action's missing value."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "through my camera", {
+        "act": "answer_clarification", "slot_deltas": [],
+        "visual_reference": "at_utterance",
+        "visual_candidates": [{"name": "led_state", "description": "is the light blinking or solid"},
+                              {"name": "led_name", "description": "which light it is"}],
+    })
+    provider.register("interpret", "orange light", {
+        "act": "new_goal", "intent": "identify_indicator", "slot_deltas": [],
+        "actions": [{"tool": "identify_indicator", "args": {"device_type": "router", "led_color": "orange"}}],
+    })
+    provider.register("extract", "orange light", {"value": None})
+    provider.register("vision", "led_state", {"claims": [
+        {"name": "led_state", "value": "solid", "confidence": "high"},
+        {"name": "led_name", "value": "internet", "confidence": "high"}]})
+    provider.register("compose", "a0", {"text": "The solid orange internet light means no internet.", "claims": []})
+
+    h = harness(provider, DeviceCareToolset())
+    h.send(50_000, [frame_event("cam-1")])
+    h.send(100_000, [chunk_event("my router is showing an orange light")])
+    h.send(150_000, [eot_event()])
+    actions = drain(h, 2_000_000, stop_on_final=False)
+    asked = [a.body.text for a in actions if a.action_type == ActionType.CLARIFY]
+    assert asked == ["What's the led state: solid, blinking or off?"]  # the option list, not a bare name
+    h.send(2_100_000, [frame_event("cam-2")])
+    h.send(2_200_000, [chunk_event("can you see it through my camera")])
+    h.send(2_250_000, [eot_event()])
+    actions = drain(h, 8_000_000)
+
+    identify = [args for name, args in calls(actions) if name == "identify_indicator"]
+    assert identify and identify[0]["led_state"] == "solid" and identify[0]["led_color"] == "orange"
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
 def _booking(day: str, slot: str, commit: bool = True) -> dict:
     return {"act": "new_goal", "intent": "book_technician", "commit_intent": commit,
             "slot_deltas": [{"name": "date", "scope": "goal", "op": "set", "value": day},

@@ -18,6 +18,7 @@ existing.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from prism_rt.model.types import (
@@ -315,7 +316,11 @@ class PerceptionScheduler:
             # (`interpret_apply`'s clarify_resolved retraction).
             clarify = txn.facts.get(f"goal.{question.goal_id}.clarify_target")
             answered_keys = (slot_key, f"claim.{question.question_id}.{claim.name}")
-            if clarify is not None and clarify.status != FactStatus.RETRACTED and clarify.value in answered_keys:
+            # A compiled goal asks on the per-action key (slot.<g>.a0.<name>);
+            # the executor binds this plain slot when the action has no value
+            # of its own, so the camera answers that question too.
+            per_action = re.fullmatch(rf"slot\.{re.escape(question.goal_id)}\.a\d+\.{re.escape(claim.name)}", str(clarify.value)) if clarify is not None else None
+            if clarify is not None and clarify.status != FactStatus.RETRACTED and (clarify.value in answered_keys or per_action):
                 txn.facts.retract(f"goal.{question.goal_id}.clarify_target", rule="perception.clarify_resolved")
             fresh = txn.facts.get(f"perception.{question.goal_id}.fresh_view_for")
             if fresh is not None and fresh.status != FactStatus.RETRACTED and fresh.value in answered_keys:
