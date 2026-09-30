@@ -99,7 +99,7 @@ def test_camera_frame_supplies_the_light_the_user_did_not_name():
     provider.register("vision", "led_color", {"claims": [
         {"name": "led_color", "value": "orange", "confidence": "high"},
         {"name": "led_name", "value": "internet", "confidence": "high"}]})
-    provider.register("compose", "s1", {"text": "The orange internet light means the router cannot reach the internet.", "claims": ["result:s1"]})
+    provider.register("compose", "identify_indicator", {"text": "The orange internet light means the router cannot reach the internet.", "claims": []})
 
     tk = DeviceCareToolset()
     h = harness(provider, tk)
@@ -339,3 +339,67 @@ def test_a_question_about_an_earlier_result_is_answered_from_it():
     actions += drain(h, 8_000_000, stop_on_final=False)
     said = " ".join(a.body.text for a in actions if a.action_type == ActionType.SPEAK)
     assert "Aria R500" in said
+
+
+def test_a_follow_up_during_the_camera_diagnosis_waits_for_it():
+    """30 Sep live demo: "How do I fix it?" said while the camera was still
+    being read replaced the diagnosis, and the fix-steps lookup ran with
+    nothing diagnosed. Camera requests now compile like any other, so the
+    follow-up is appended after the diagnosis instead."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "how do I fix it", {
+        "act": "new_goal", "intent": "get_fix_steps", "slot_deltas": [],
+        "actions": [{"tool": "get_fix_steps", "args": {}}]})
+    provider.register("interpret", "look at my router", {
+        "act": "new_goal", "intent": "identify_indicator", "slot_deltas": [],
+        "visual_reference": "at_utterance",
+        "visual_candidates": [{"name": "led_color", "description": "colour"}, {"name": "led_state", "description": "state"},
+                              {"name": "led_name", "description": "which light"}],
+        "actions": [{"tool": "identify_indicator", "args": {"device_type": "router"}}]})
+    provider.register("vision", "led_color", {"claims": [
+        {"name": "led_color", "value": "orange", "confidence": "high"},
+        {"name": "led_state", "value": "solid", "confidence": "high"},
+        {"name": "led_name", "value": "internet", "confidence": "high"}]})
+    provider.register("compose", "get_fix_steps", {"text": "Restart the modem, then check the cable.", "claims": []})
+
+    tk = DeviceCareToolset()
+    ex = tk.make_executor()
+    tools = {t["name"]: {"latency_ms": 100, "handler": (lambda args, n=t["name"]: run(ex, n, **args))} for t in tk.manifest}
+    slow_vision = {**LATENCY, JobKind.VISION: 2_000_000}
+    h = SimHarness(demo_config(), seed=3, provider=provider, tools=tools, worker_latency_us=slow_vision)
+    h.send(0, [manifest_event(tk.manifest)])
+    h.send(50_000, [frame_event("cam-1")])
+    h.send(100_000, [chunk_event("can you look at my router and tell me what's wrong")])
+    h.send(150_000, [eot_event()])
+    actions = drain(h, 1_000_000, stop_on_final=False)  # the camera is still being read
+    h.send(1_100_000, [chunk_event("how do I fix it")])
+    h.send(1_150_000, [eot_event()])
+    actions += drain(h, 10_000_000)
+
+    assert [name for name, _ in calls(actions)] == ["identify_indicator", "get_fix_steps"]
+    assert tk.current_issue == "router_no_internet"
+    finals = [a for a in actions if a.action_type == ActionType.FINAL]
+    assert len(finals) == 1 and finals[0].body.task_completed is True
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_camera_disagreeing_with_the_user_asks_instead_of_overriding():
+    """The user's stated value outranks the camera (§9.1), including a value
+    held under a compiled action's own key: a disagreement is asked about."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "light is green", {
+        "act": "new_goal", "intent": "identify_indicator", "slot_deltas": [],
+        "visual_reference": "at_utterance",
+        "visual_candidates": [{"name": "led_color", "description": "colour"}, {"name": "led_name", "description": "which light"}],
+        "actions": [{"tool": "identify_indicator", "args": {"device_type": "router", "led_color": "green", "led_state": "solid"}}]})
+    provider.register("vision", "led_color", {"claims": [
+        {"name": "led_color", "value": "orange", "confidence": "high"},
+        {"name": "led_name", "value": "internet", "confidence": "high"}]})
+    h = harness(provider, DeviceCareToolset())
+    h.send(50_000, [frame_event("cam-1")])
+    h.send(100_000, [chunk_event("the internet light is green, can you look")])
+    h.send(150_000, [eot_event()])
+    actions = drain(h, 3_000_000, stop_on_final=False)
+    asked = [a.body.text for a in actions if a.action_type == ActionType.CLARIFY]
+    assert asked == ["The camera shows orange. Did you mean green, or orange?"]
+    assert calls(actions) == []

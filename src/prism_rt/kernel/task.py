@@ -115,6 +115,7 @@ class TaskStateMachine:
                         store.config.clarify_reextract_enabled
                         and isinstance(target.value, str)
                         and target.value.startswith(f"slot.{gid}.")
+                        and not _camera_conflict(store, gid, target.value)
                     ):
                         # Q5 (win_plan §6.2): a plain missing-slot target
                         # (not a "retry:<lineage>" write-confirmation
@@ -608,3 +609,13 @@ class TaskStateMachine:
             return []
         param_name = target.rsplit(".", 1)[-1]
         return [self._build_extract_request(store, goal_id, target, param_name)]
+
+
+def _camera_conflict(store, goal_id: str, target: str) -> bool:
+    """The question is about the user's value disagreeing with the camera,
+    not a missing value -- re-extraction has nothing to find."""
+    from prism_rt.kernel.proposals import plain_slot_name
+
+    return store.config.vision_enabled and store.evidence.conflict_open(
+        goal_id, plain_slot_name(target[len(f"slot.{goal_id}."):])
+    )

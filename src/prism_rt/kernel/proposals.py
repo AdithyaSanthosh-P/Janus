@@ -128,6 +128,13 @@ def fix_step_kind(step, catalog):
 ACTION_SLOT_NAME = re.compile(r"^(a\d+)\.(\w+)$")
 
 
+def plain_slot_name(name: str) -> str:
+    """"a0.led_name" -> "led_name": a compiled action's slot under the plain
+    name perception, conflicts and camera questions use."""
+    match = ACTION_SLOT_NAME.match(name)
+    return match.group(2) if match else name
+
+
 def _normalize_fact_key(raw_key: str | None) -> str | None:
     """Day 1 (docs/fdb_v3_implementation_plan.md, found live: a real
     PLAN response from gemini-3.6-flash with thinking off): the schema's

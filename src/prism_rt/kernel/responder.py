@@ -38,6 +38,7 @@ from config.templates import (
     UNCLEAR_NO_GOAL,
 )
 from prism_rt.kernel.commit import CommitGate
+from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.replies import HONEST_REPLY_KEY, duplicate_write_text
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, user_content_pending
 from prism_rt.model.actions import FinalBody, IntendedAction, SpeakBody
@@ -262,6 +263,10 @@ class FastResponder:
             store.config.clarify_reextract_enabled
             and isinstance(target, str)
             and target.startswith(f"slot.{goal_id}.")
+            and not (
+                store.config.vision_enabled
+                and store.evidence.conflict_open(goal_id, plain_slot_name(target[len(f"slot.{goal_id}."):]))
+            )
         ):
             tried = store.facts.get(f"reextract.{goal_id}.{target}")
             if tried is None or tried.status == FactStatus.RETRACTED:

@@ -298,6 +298,18 @@ class PerceptionScheduler:
                 and existing_slot.status not in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS)
                 and existing_slot.provenance.source == "user"
             )
+            if not user_has_value:
+                # A compiled plan keeps the user's value under the action's own
+                # key (slot.<g>.a0.<name>); it outranks the camera just the same.
+                action_value = re.compile(rf"^slot\.{re.escape(question.goal_id)}\.a\d+\.{re.escape(claim.name)}$")
+                for key, fact in txn.store.facts.by_prefix(f"slot.{question.goal_id}.a").items():
+                    if (
+                        action_value.match(key)
+                        and fact.status not in (FactStatus.RETRACTED, FactStatus.HYPOTHESIS)
+                        and fact.provenance.source == "user"
+                    ):
+                        existing_slot, user_has_value = fact, True
+                        break
             if user_has_value and existing_slot.value != claim.value:
                 self._open_conflict(
                     txn, question.goal_id, claim.name, existing_slot.value, claim.value, obs_id=obs_id, now_us=now_us

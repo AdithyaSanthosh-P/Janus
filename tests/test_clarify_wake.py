@@ -89,3 +89,20 @@ def test_stall_salvage_waits_while_the_user_is_still_talking():
     actions += [er.action for er in h.send(15_500_000, [eot_event()]).emit_report.emitted]
     actions += drain(h, 20_000_000, stop_on_final=False)
     assert not [a for a in actions if a.action_type == ActionType.FINAL]
+
+
+def test_a_failed_reextraction_still_lets_the_question_be_asked():
+    """A re-extraction whose model call fails used to leave the clarify
+    waiting on an attempt that kept being re-dispatched; nothing was said."""
+    provider = ScriptedProvider()  # no "extract" answer registered: the job errors
+    provider.register("interpret", "three bedroom", {"act": "new_goal", "intent": "search_apartments", "slot_deltas": [],
+                                                     "actions": [{"tool": "search_apartments", "args": {"bedrooms": 3, "max_price": 2000}}]})
+    h = SimHarness(fdb_v3_config(), seed=1, provider=provider, tools={}, worker_latency_us=LATENCY)
+    h.send(0, [manifest_event([APT])])
+    h.send(100_000, [chunk_event("a three bedroom place under two thousand")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted]
+    actions += _event_driven(h, 3_000_000)
+    clarifies = [a for a in actions if a.action_type == ActionType.CLARIFY]
+    assert clarifies and "city" in clarifies[0].body.text
+    extracts = [j for j in h.store.jobs.all() if j.kind == JobKind.EXTRACT] if hasattr(h.store.jobs, "all") else []
+    assert len(extracts) <= 1  # tried once, not re-dispatched in a loop

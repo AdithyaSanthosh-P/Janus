@@ -21,6 +21,7 @@ import dataclasses
 
 from prism_rt.canonical import canonicalize_spoken_id  # re-exported: tests and reducers import it from here
 from prism_rt.kernel import action_plans, replies
+from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.model.types import (
     BindingKind,
@@ -128,7 +129,7 @@ def _apply_slot_deltas(txn: StoreTxn, goal_id: str, slot_deltas, now_us: int, st
         # perception conflict was open on it (§9.1's "answer binding" —
         # "any delta on the target sets status answered").
         if delta.scope != "session" and txn.store.config.vision_enabled:
-            txn.evidence.void_conflict(goal_id, delta.name)
+            txn.evidence.void_conflict(goal_id, plain_slot_name(delta.name))
     return changed
 
 

@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass
 
 from prism_rt.kernel.action_plans import bind_key, valid_bind_fact
+from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.interpret_apply import active_goal_id
 from prism_rt.model.actions import CancelBody, IntendedAction
 from prism_rt.model.types import (
@@ -509,7 +510,7 @@ class PlanExecutor:
                     # blocks the step even though the user's own value is
                     # still on record (§9.1: rank 1/2 vs rank 3, different
                     # -> "Open conflict; blocks steps using the slot").
-                    name = key[len(f"slot.{goal_id}."):]
+                    name = plain_slot_name(key[len(f"slot.{goal_id}."):])
                     if store.evidence.conflict_open(goal_id, name):
                         return None, key
                 fact = store.facts.get(key)
@@ -738,7 +739,7 @@ class PlanExecutor:
         M-09), or with an open conflict (M-06), fall through and ask."""
         if not store.config.vision_enabled or not key.startswith(f"slot.{goal_id}."):
             return False
-        name = key[len(f"slot.{goal_id}."):]
+        name = plain_slot_name(key[len(f"slot.{goal_id}."):])  # a compiled action's key too
         if store.evidence.conflict_open(goal_id, name):
             return False
         question = store.evidence.latest_active_question(goal_id)

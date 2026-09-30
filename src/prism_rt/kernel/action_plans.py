@@ -296,8 +296,6 @@ def compile_actions(txn, goal_id: str, interp: TurnInterpretation, now_us: int, 
     actions = interp.actions
     if not actions:
         return None
-    if txn.store.config.vision_enabled and interp.visual_reference != "none":
-        return None
     if any(not _usable(txn.store, a.tool) for a in actions):
         return None
     unique, index_map = _dedupe(actions)

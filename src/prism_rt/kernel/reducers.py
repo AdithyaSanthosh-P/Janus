@@ -457,6 +457,17 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
             # S3: only a genuine failure counts toward BindScheduler's give-up
             # budget -- a merely stale result (an upstream re-ran) is not.
             _record_bind_failure(txn, job, now_us, step_no, event_id=env.event_id)
+        elif job.kind == JobKind.EXTRACT and payload.status != "ok" and job.goal_id and job.target:
+            # A failed re-extraction counts as tried, so the ordinary question
+            # is asked. Without this the clarify waited on an attempt that kept
+            # failing and being re-dispatched, and never spoke.
+            txn.facts.set(
+                f"reextract.{job.goal_id}.{job.target}",
+                False,
+                FactStatus.COMMITTED,
+                Provenance(source="system", event_id=env.event_id, step_no=step_no, ts_us=now_us),
+                rule="reducers.extract_failed",
+            )
         return
 
     kind = JobKind(payload.kind)
