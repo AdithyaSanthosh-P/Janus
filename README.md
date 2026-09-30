@@ -114,7 +114,7 @@ Tested without a network in `tests/test_devicecare.py`; the camera pump was chec
 
 ## Results
 
-All numbers below are FDB-v3's own runner and evaluators, unmodified, at the pinned commit, with `gpt-4o` as the LLM judge. Full run directories are kept under `run_output/` (git-ignored; the headline reports are summarised in `docs/measurements.md`).
+All numbers below are FDB-v3's own runner and evaluators, unmodified, at the pinned commit, with `gpt-4o` as the LLM judge. **Run logs, reports, configuration and seeds of the voice runs are in [`docs/runs/`](docs/runs/)** (audio left out); the headline numbers are summarised in `docs/measurements.md`.
 
 | Setting | Strict pass rate (Pass@1) | Tool selection | Argument accuracy | Response quality |
 |---|---|---|---|---|
