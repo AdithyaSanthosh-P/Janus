@@ -38,21 +38,84 @@ Seeds and randomness: the model call uses temperature 0 and the kernel is determ
 
 ```mermaid
 flowchart LR
-  subgraph Host["LiveKit room (audio in / audio out)"]
-    MIC["user audio"] --> VAD["Silero VAD"] --> STT["speech-to-text<br/>faster-whisper (local) or OpenAI"]
-    TTS["Kokoro (local)"] --> SPK["agent audio"]
-  end
-  STT -->|"text chunks, end-of-turn,<br/>interruptions"| MBX
-  subgraph Kernel["Janus kernel: ONE synchronous step, sole writer of state"]
-    MBX["mailbox"] --> RED["reducers"] --> INV["invalidation<br/>(read sets)"] --> DEC["decide"] --> GATE["CommitGate +<br/>EmissionGate"] --> LOG["decision log"]
-  end
-  DEC -. "jobs" .-> W
-  W["async workers (outside the kernel)<br/>Interpret · Plan · Compose · Vision"] -. "proposals" .-> MBX
-  W <--> LLM["Gemini (hosted)<br/>or OpenAI"]
-  GATE -->|"SPEAK / TOOL_CALL /<br/>CANCEL / FINAL"| TTS
-  GATE -->|"one admitted call"| TOOLS["tools (FDB mock APIs / device care)"]
-  TOOLS -->|"results"| MBX
-  CAM["camera frames"] -->|"video_frame"| MBX
+%% -------------------------------------------------
+%% STYLING / THEME
+%% -------------------------------------------------
+classDef edgeStyle fill:#EBF3FB,stroke:#1E4E79,stroke-width:2.5px,color:#1A202C;
+classDef kernelStyle fill:#FEF3C7,stroke:#92400E,stroke-width:2.5px,color:#78350F;
+classDef workerStyle fill:#F3E8FF,stroke:#581C87,stroke-width:2.5px,color:#3B0764;
+classDef toolStyle fill:#DCFCE7,stroke:#166534,stroke-width:2.5px,color:#14532D;
+
+%% -------------------------------------------------
+%% 1. REAL-TIME MEDIA EDGE
+%% -------------------------------------------------
+subgraph Edge["1. Real-Time Edge (Local GPU)"]
+    User["User (Voice & Camera)"]
+    LiveKit["LiveKit WebRTC Pipeline<br/>• Silero VAD (Turn Boundaries)<br/>• faster-whisper (STT)<br/>• Kokoro-82M (TTS)"]
+    User <-->|"Bi-directional Audio / Video"| LiveKit
+end
+class Edge,User,LiveKit edgeStyle;
+
+%% -------------------------------------------------
+%% 2. JANUS SYNCHRONOUS KERNEL
+%% -------------------------------------------------
+subgraph Kernel["2. Janus Synchronous Kernel (Single Writer Core, &le;5ms)"]
+    direction TB
+    Mailbox["Ordered Event Mailbox"]
+    Engine["7-Phase Execution Engine<br/>Order ➔ Apply ➔ Invalidate ➔ Decide ➔ Commit"]
+    Safety["Core Invariant Safety Gates<br/>• Optimistic Read Sets (key, ver, digest)<br/>• Same-Step Cancellation Engine<br/>• CommitGate (G1-G11 & 300ms Settle)"]
+    Store[("Versioned Session Store<br/>Facts • Ledgers • Floor State")]
+
+    Mailbox --> Engine
+    Engine <--> Safety
+    Engine <--> Store
+end
+class Kernel,Mailbox,Engine,Safety,Store kernelStyle;
+
+%% -------------------------------------------------
+%% 3. ASYNC WORKERS & LLM
+%% -------------------------------------------------
+subgraph Workers["3. Async Workers (Propose Only)"]
+    WorkerPool["Worker Subsystem<br/>• Turn Interpreter (Speculative)<br/>• DAG Planner & Rebinder<br/>• Response Composer<br/>• Camera Vision Worker"]
+    LLM["Gemini 3.6 Flash<br/>(Hosted Intelligence)"]
+    WorkerPool <--> LLM
+end
+class Workers,WorkerPool,LLM workerStyle;
+
+%% -------------------------------------------------
+%% 4. TOOLS & SAMSUNG EXTENSION
+%% -------------------------------------------------
+subgraph Ecosystem["4. Tool Execution Ecosystem"]
+    Tools["Domain & Care APIs<br/>• FDB-v3 Domain Tools<br/>• Smart Device Care Tools<br/>• Idempotent Booking & Dispatch"]
+end
+class Ecosystem,Tools toolStyle;
+
+%% -------------------------------------------------
+%% CROSS-LAYER FLOWS
+%% -------------------------------------------------
+LiveKit -->|"Speech Chunks & Video Frames"| Mailbox
+Engine -->|"Immediate CANCEL / Spoken Audio"| LiveKit
+
+Engine -.->|"Dispatch Jobs (Frozen State)"| WorkerPool
+WorkerPool -.->|"Proposals (with Read Sets)"| Mailbox
+
+Engine ==>|"Admitted Writes (CommitGate)"| Tools
+Tools -.->|"Tool Results"| Mailbox
+
+%% -------------------------------------------------
+%% LINE COLORS (bold, visible in light + dark mode)
+%% -------------------------------------------------
+linkStyle 0 stroke:#0EA5E9,stroke-width:3px;
+linkStyle 1 stroke:#F97316,stroke-width:3px;
+linkStyle 2 stroke:#EF4444,stroke-width:3px;
+linkStyle 3 stroke:#EAB308,stroke-width:3px;
+linkStyle 4 stroke:#A855F7,stroke-width:3px;
+linkStyle 5 stroke:#14B8A6,stroke-width:3px;
+linkStyle 6 stroke:#EC4899,stroke-width:3px;
+linkStyle 7 stroke:#3B82F6,stroke-width:3px;
+linkStyle 8 stroke:#8B5CF6,stroke-width:3px;
+linkStyle 9 stroke:#22C55E,stroke-width:4px;
+linkStyle 10 stroke:#F59E0B,stroke-width:3px;
 ```
 
 The three rules everything else follows from:
