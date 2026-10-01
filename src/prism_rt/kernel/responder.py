@@ -37,7 +37,7 @@ from config.templates import (
     INFORM_UNKNOWN_WRITE_OUTCOME,
     UNCLEAR_NO_GOAL,
 )
-from prism_rt.kernel.commit import CommitGate
+from prism_rt.kernel.commit import CommitGate, user_audibly_active
 from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.replies import HONEST_REPLY_KEY, duplicate_write_text
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, user_content_pending
@@ -90,6 +90,11 @@ class FastResponder:
         # notice is deferred to the next step the floor is closed, never
         # silently dropped.
         if store.floor_state == FloorState.USER_TURN_OPEN and not store.config.speak_during_open_turn:
+            return []
+        # Same rule before any text exists: the voice host reports the user
+        # speaking (Config.vad_floor_enabled). Deferred, never dropped, for
+        # the same reason as above.
+        if user_audibly_active(store, now_us) and not store.config.speak_during_open_turn:
             return []
         # TRIAGE hold (`docs/prompt 2.txt` §8.3, transitions 23-31): the
         # floor just closed on a turn spoken during an active goal, but

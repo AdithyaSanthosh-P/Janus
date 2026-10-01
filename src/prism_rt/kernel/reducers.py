@@ -277,6 +277,23 @@ def _apply_end_of_turn(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) 
     _TURN_MANAGER.request_interpretation(txn, turn, now_us, step_no, event_id=env.event_id)
 
 
+def _apply_user_speech(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
+    """Config.vad_floor_enabled: records whether the user currently holds the
+    floor audibly. Turns stay text-driven (TurnManager); this only feeds the
+    holds in CommitGate and FastResponder (`kernel/commit.py.user_audibly_active`)."""
+    if not txn.store.config.vad_floor_enabled:
+        return
+    active = env.payload.active is True
+    prov = Provenance(source="user", event_id=env.event_id, step_no=step_no, ts_us=now_us)
+    txn.facts.set("session.user_active", active, FactStatus.COMMITTED, prov, rule="voice.user_speech")
+    txn.facts.set("session.user_active_since", now_us, FactStatus.COMMITTED, prov, rule="voice.user_speech")
+    if active:
+        # Liveness: re-check once the report goes stale, even with no event.
+        txn.store.timers.schedule("user_active_cap", now_us + txn.store.config.vad_floor_max_ms * 1000)
+    else:
+        txn.store.timers.cancel("user_active_cap")
+
+
 def _apply_video_frame(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
     """V3: a frame is always stored as an Observation, never analyzed on
     arrival (§10.4) — relevance is decided later, only by an open question
@@ -645,6 +662,7 @@ _HANDLERS = {
     "audio_clip": _apply_audio_clip,
     "end_of_turn": _apply_end_of_turn,
     "interruption": _apply_interruption,
+    "user_speech": _apply_user_speech,
     "worker_result": _apply_worker_result,
     "watchdog": _apply_watchdog,
     "timer_fired": _apply_timer_fired,

@@ -262,6 +262,10 @@ async def entrypoint(ctx: JobContext) -> None:
         # Speech-to-text writes English; mostly-foreign text is noise or the
         # agent's own voice picked up by the microphone.
         drop_foreign_segments=True,
+        # VAD activity to the kernel (honoured where the profile sets
+        # vad_floor_enabled): no call or speech while the user is speaking or
+        # their words are still being transcribed.
+        report_user_activity=True,
     )
 
     # gemini-3.6-flash, thinking off (28 Sep): same judge-scored full-100 as

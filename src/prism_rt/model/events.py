@@ -49,6 +49,15 @@ class EndOfTurnPayload:
 
 
 @dataclass(frozen=True)
+class UserSpeechPayload:
+    """The user's audible activity, from the voice host: `active` while they
+    are speaking or their last words are still being transcribed. Lets the
+    kernel know the floor is taken before any text exists (1 Oct audit)."""
+
+    active: bool
+
+
+@dataclass(frozen=True)
 class InterruptionPayload:
     reason: str | None = None
 
@@ -104,6 +113,7 @@ PAYLOAD_TYPES: dict[str, type] = {
     "text_chunk": TextChunkPayload,
     "end_of_turn": EndOfTurnPayload,
     "interruption": InterruptionPayload,
+    "user_speech": UserSpeechPayload,
     "tool_result": ToolResultPayload,
     "worker_result": WorkerResultPayload,
     "video_frame": VideoFramePayload,
@@ -117,6 +127,7 @@ EVENT_CLASS_BY_PAYLOAD_TYPE: dict[str, EventClass] = {
     "manifest": EventClass.SETUP,
     "interruption": EventClass.INTERRUPTION,
     "text_chunk": EventClass.USER_CONTENT,
+    "user_speech": EventClass.USER_CONTENT,
     "video_frame": EventClass.USER_CONTENT,
     "audio_clip": EventClass.USER_CONTENT,
     "end_of_turn": EventClass.END_OF_TURN,

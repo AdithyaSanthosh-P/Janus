@@ -104,6 +104,21 @@ def _effective_settle_us(store: SessionStore, call: CallRecord | None = None) ->
     return store.config.settle_ms * 1000
 
 
+def user_audibly_active(store: SessionStore, now_us: int) -> bool:
+    """Config.vad_floor_enabled: the voice host last reported the user as
+    speaking (or their words as still being transcribed), less than
+    vad_floor_max_ms ago."""
+    if not store.config.vad_floor_enabled:
+        return False
+    active = store.facts.get("session.user_active")
+    if active is None or active.status == FactStatus.RETRACTED or active.value is not True:
+        return False
+    since = store.facts.get("session.user_active_since")
+    if since is None or not isinstance(since.value, int):
+        return True
+    return now_us - since.value < store.config.vad_floor_max_ms * 1000
+
+
 class CommitGate:
     def evaluate(self, call: CallRecord, store: SessionStore, now_us: int) -> GateDecision:
         # G1: tool exists and is usable
@@ -143,6 +158,8 @@ class CommitGate:
                 # sentence would change.
                 if store.floor_state != FloorState.USER_TURN_CLOSED:
                     return GateDecision(False, "floor_open", "G3")
+                if user_audibly_active(store, now_us):
+                    return GateDecision(False, "user_speaking", "G3")
                 settle = self._settle_block(store, now_us, call)
                 if settle is not None:
                     return settle
@@ -161,6 +178,8 @@ class CommitGate:
         # G3: floor closed (no commit while the user may still be correcting)
         if store.floor_state != FloorState.USER_TURN_CLOSED:
             return GateDecision(False, "floor_open", "G3")
+        if user_audibly_active(store, now_us):
+            return GateDecision(False, "user_speaking", "G3")
         # G4: commit_intent true for the call's goal. Day 2 (§5.2,
         # Config.g4_exempt_undeclared_mutability's own docstring): a tool
         # whose mutability was never declared (DEFAULTED to STATE_CHANGING,

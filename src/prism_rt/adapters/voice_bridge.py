@@ -88,12 +88,29 @@ class VoiceBridge:
     # waiting -- `say()` alone loses that distinction (it's called for
     # all three). Optional so every existing caller/test is unaffected.
     on_final: Callable[[], None] = field(default=lambda: None)
+    # How long after a speech segment ends its transcript is waited for
+    # before the turn closes without it (a transcription that failed or
+    # timed out must not hold the turn open forever).
+    t_stt_wait_ms: int = 4000
+    # Send `user_speech` events (active while the user speaks or their words
+    # are still being transcribed) so the kernel can hold calls and speech
+    # before any text exists (Config.vad_floor_enabled decides whether it
+    # does). Off by default: hosts without VAD have nothing to report.
+    report_user_activity: bool = False
 
     _start_wall: float = field(init=False, repr=False)
     _eot_task: "asyncio.Task | None" = field(default=None, init=False, repr=False)
     _consumer_task: "asyncio.Task | None" = field(default=None, init=False, repr=False)
     _agent_speaking: bool = field(default=False, init=False, repr=False)
     _stopped: bool = field(default=False, init=False, repr=False)
+    # End-of-turn state (see `_schedule_eot`). Times are event-loop seconds.
+    _user_speaking: bool = field(default=False, init=False, repr=False)
+    _vad_seen: bool = field(default=False, init=False, repr=False)
+    _pending_segments: int = field(default=0, init=False, repr=False)
+    _last_speech_end: "float | None" = field(default=None, init=False, repr=False)
+    _last_final_at: "float | None" = field(default=None, init=False, repr=False)
+    _words_since_eot: bool = field(default=False, init=False, repr=False)
+    _activity_reported: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._start_wall = self.clock()
@@ -129,11 +146,14 @@ class VoiceBridge:
         await self.events.put({"type": "video_frame", "ts_us": self.now_us(), "payload": {"frame_id": frame_id}})
 
     async def on_speech_start(self) -> None:
-        """User speech started. Cancels any pending end-of-turn timer
-        (the user is still talking); if the agent was speaking, this is
-        a barge-in -- FDB's own recordings never do this, but a real
-        voice call will."""
+        """User speech started (VAD). Cancels any pending end-of-turn
+        countdown (the user is still talking); if the agent was speaking,
+        this is a barge-in -- FDB's own recordings never do this, but a
+        real voice call will."""
+        self._user_speaking = True
+        self._vad_seen = True
         self._cancel_eot_timer()
+        await self._report_activity()
         if self._agent_speaking:
             await self.events.put({"type": "interruption", "ts_us": self.now_us(), "payload": {}})
             self.on_interruption_logged("user started speaking while the agent was speaking")
@@ -141,8 +161,12 @@ class VoiceBridge:
     async def on_segment_final(self, text: str) -> None:
         """A finalized STT segment. Janus chunks are append-only -- an
         interim/partial transcript is never sent here, only a segment
-        the STT layer itself considers final. Restarts the T_eot timer:
-        speech has clearly continued past any earlier silence.
+        the STT layer itself considers final.
+
+        Arriving words never restart the end-of-turn countdown by
+        themselves: the countdown follows the user's silence (see
+        `_schedule_eot`). A transcript can land well after its segment
+        ended -- often while the user is already saying the next one.
 
         Sends the text_chunk even when `text` strips to empty -- found
         live (2026-09-27): a real, VAD-detected speech segment that STT
@@ -158,43 +182,118 @@ class VoiceBridge:
         transcript, which a live model reads as UNCLEAR, which
         `never_silent_unclear_enabled` already turns into a spoken
         re-ask instead of silence."""
-        if (self.drop_filler_segments and is_filler_segment(text)) or (
-            self.drop_foreign_segments and is_foreign_segment(text)
+        # Can go below zero: with a fast recognizer the transcript may land
+        # a moment before the VAD stop of its own segment (the session and
+        # the transcriber each run their own VAD stream), and that stop
+        # must not then wait for a transcript that already came.
+        self._pending_segments -= 1
+        self._last_final_at = self._loop_now()
+        if not (
+            (self.drop_filler_segments and is_filler_segment(text))
+            or (self.drop_foreign_segments and is_foreign_segment(text))
         ):
-            # Not speech: no chunk, and the running end-of-turn countdown
-            # (if any) is left alone rather than restarted.
-            return
-        await self.events.put({"type": "text_chunk", "ts_us": self.now_us(), "payload": {"text": text.strip()}})
-        self._restart_eot_timer()
+            await self.events.put({"type": "text_chunk", "ts_us": self.now_us(), "payload": {"text": text.strip()}})
+            self._words_since_eot = True
+        # A dropped segment (filler, noise) sends no chunk, but it still
+        # was the transcript an earlier speech end was waiting for.
+        await self._report_activity()
+        self._schedule_eot()
 
     async def on_speech_end(self) -> None:
-        """The transport's own end-of-utterance/silence-start signal
-        (e.g. VAD dropping to not-speaking). Starts (or restarts) the
-        T_eot countdown if it isn't already running."""
-        if self._eot_task is None or self._eot_task.done():
-            self._restart_eot_timer()
+        """User speech stopped (VAD). Each such stop ends a segment whose
+        transcript is still to come; the silence countdown starts here."""
+        if self._user_speaking:
+            self._user_speaking = False
+            self._pending_segments += 1
+            self._last_speech_end = self._loop_now()
+        await self._report_activity()
+        self._schedule_eot()
 
     def on_agent_speaking_changed(self, speaking: bool) -> None:
         """Wired to the TTS/session's own speaking-state signal so
         `on_speech_start` can tell a barge-in from ordinary silence."""
         self._agent_speaking = speaking
 
-    def _restart_eot_timer(self) -> None:
+    @staticmethod
+    def _loop_now() -> float:
+        # Event-loop time, the clock `asyncio.sleep` itself runs on, so the
+        # countdown arithmetic below and the sleep that carries it out agree.
+        # (`self.clock` only stamps events and may be a test's fake.)
+        return asyncio.get_running_loop().time()
+
+    def _schedule_eot(self) -> None:
+        """(Re)plans the single end-of-turn for the current turn.
+
+        The turn closes once all of these hold:
+        - the user is not speaking (VAD);
+        - `t_eot_ms` of silence has passed since speech last stopped --
+          counted from the VAD stop, not from when a transcript arrived;
+        - every segment that has ended has had its transcript delivered,
+          or `t_stt_wait_ms` has passed since the last stop (a lost
+          transcription must not hold the turn open);
+        - some words were sent since the previous end-of-turn.
+
+        Found by the 1 Oct audit: re-arming a plain timer on every arriving
+        transcript closed 86 turns while the user was still speaking (52 of
+        72 recordings), because hosted transcription lands ~1.1 s after its
+        segment, by which time the user has usually resumed.
+
+        A host that never reports VAD (the offline replay, unit tests)
+        counts silence from the last transcript, as before."""
         self._cancel_eot_timer()
-        if not self._stopped:
-            self._eot_task = asyncio.create_task(self._eot_after_silence())
+        if self._stopped or self._user_speaking:
+            return
+        if not self._words_since_eot:
+            if self._pending_segments > 0 and self._last_speech_end is not None:
+                # Nothing to close yet, but a transcript is awaited: stop
+                # waiting for it after t_stt_wait_ms all the same.
+                self._eot_task = asyncio.create_task(
+                    self._give_up_at(self._last_speech_end + self.t_stt_wait_ms / 1000)
+                )
+            return
+        silence_from = self._last_speech_end if self._vad_seen else self._last_final_at
+        if silence_from is None:
+            return
+        deadline = silence_from + self.t_eot_ms / 1000
+        if self._pending_segments > 0 and self._last_speech_end is not None:
+            deadline = max(deadline, self._last_speech_end + self.t_stt_wait_ms / 1000)
+        self._eot_task = asyncio.create_task(self._eot_at(deadline))
 
     def _cancel_eot_timer(self) -> None:
         if self._eot_task is not None and not self._eot_task.done():
             self._eot_task.cancel()
         self._eot_task = None
 
-    async def _eot_after_silence(self) -> None:
+    async def _eot_at(self, deadline: float) -> None:
         try:
-            await asyncio.sleep(self.t_eot_ms / 1000)
+            await asyncio.sleep(max(0.0, deadline - self._loop_now()))
         except asyncio.CancelledError:
             return
+        self._words_since_eot = False
+        self._pending_segments = 0  # anything still outstanding was given up on
+        await self._report_activity()
         await self.events.put({"type": "end_of_turn", "ts_us": self.now_us(), "payload": {}})
+
+    async def _give_up_at(self, deadline: float) -> None:
+        try:
+            await asyncio.sleep(max(0.0, deadline - self._loop_now()))
+        except asyncio.CancelledError:
+            return
+        self._pending_segments = 0
+        await self._report_activity()
+
+    async def _report_activity(self) -> None:
+        """Sends `user_speech` when the user's audible activity changes:
+        active while they speak or any segment's transcript is outstanding.
+        Sent after the segment's own text_chunk, so the kernel never sees
+        the floor released before the words that took it."""
+        if not self.report_user_activity or self._stopped:
+            return
+        active = self._user_speaking or self._pending_segments > 0
+        if active == self._activity_reported:
+            return
+        self._activity_reported = active
+        await self.events.put({"type": "user_speech", "ts_us": self.now_us(), "payload": {"active": active}})
 
     async def _consume_actions(self) -> None:
         while True:

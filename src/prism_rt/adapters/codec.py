@@ -39,6 +39,7 @@ _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "text_chunk": ("text",),
     "end_of_turn": (),
     "interruption": (),
+    "user_speech": ("active",),
     "tool_result": ("call_id", "status"),
     "worker_result": ("job_id", "kind", "status"),
     "video_frame": ("frame_id",),

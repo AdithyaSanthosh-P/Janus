@@ -90,6 +90,15 @@ def fdb_v3_config(**overrides) -> Config:
       user didn't state is assumed and said aloud instead. Kept or dropped
       on its own A/B evidence, separately from action_plans_enabled.
 
+    1 Oct audit:
+    - vad_floor_enabled: the voice host's `user_speech` reports hold calls and
+      speech while the user is speaking or their words are still being
+      transcribed -- 29 calls went out mid-speech in the 72 current-code
+      recordings. Not set in demo_config yet: without echo cancellation the
+      agent's own voice reaches the microphone in a live room (see
+      VoiceBridge.drop_foreign_segments) and would hold its next utterance;
+      to be enabled there after a live check.
+
     `**overrides` lets a caller tune settle_ms/settle_ms_incomplete/etc.
     per run without editing this function -- passed straight to
     `dataclasses.replace`.
@@ -121,6 +130,7 @@ def fdb_v3_config(**overrides) -> Config:
         conversational_replies_enabled=True,
         idle_replies_enabled=False,
         merge_split_turns_enabled=True,
+        vad_floor_enabled=True,
     )
     return dataclasses.replace(base, **overrides) if overrides else base
 

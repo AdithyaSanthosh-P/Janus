@@ -317,6 +317,17 @@ class Config:
     # effect when turns don't overlap -- no added wait for a single-breath
     # request (unlike raising the end-of-turn silence threshold).
     merge_split_turns_enabled: bool = False
+    # The voice host reports the user's audible activity (`user_speech`
+    # events: speaking, or words still being transcribed). While it is
+    # active, no tool call (a read only under settle_reads_enabled) and no
+    # SPEAK/CLARIFY/FINAL is admitted -- the user has the floor even though
+    # no text exists yet. Found by the 1 Oct audit: the kernel only ever
+    # learned of speech from transcripts that land ~1.1 s late, and 29 calls
+    # went out while the user was audibly speaking. An activity report
+    # older than vad_floor_max_ms is ignored (a lost "stopped" report must
+    # not hold the floor forever).
+    vad_floor_enabled: bool = False
+    vad_floor_max_ms: int = 15_000
 
     # Day 2 (docs/fdb_v3_implementation_plan.md §5.2): G4 (commit_intent)
     # applies to every WRITE-kind call, including a tool whose mutability

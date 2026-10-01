@@ -229,3 +229,158 @@ async def test_foreign_segment_is_dropped_when_enabled():
     await bridge.on_segment_final("Make it evening.")
     items = await _drain_nowait(events)
     assert [i["payload"]["text"] for i in items] == ["Make it evening."]
+
+
+# 1 Oct audit: end-of-turn must follow the user's real silence, not the
+# arrival time of a (late) transcript. Hosted speech-to-text delivers a
+# segment ~1.1 s after it ends (p90 2.0 s); re-arming the end-of-turn timer
+# on that arrival closed 86 turns mid-speech across 52 of 72 recordings.
+
+async def test_late_transcript_while_user_speaks_never_arms_end_of_turn():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=40)
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()  # a short pause closes segment 1
+    await asyncio.sleep(0.005)
+    await bridge.on_speech_start()  # the user carries on
+    await bridge.on_segment_final("the ID is A B")  # segment 1's transcript, late
+    await asyncio.sleep(0.1)  # well past t_eot, user still speaking
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk"]
+
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("C 1 2 3")
+    await asyncio.sleep(0.1)
+    items = await _drain_nowait(events)
+    assert [e["type"] for e in items] == ["text_chunk", "end_of_turn"]
+
+
+async def test_end_of_turn_waits_for_the_outstanding_transcript():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()
+    await asyncio.sleep(0.06)  # silence is long enough, but the words haven't arrived
+    assert await _drain_nowait(events) == []
+    await bridge.on_segment_final("track order BOB12")
+    await asyncio.sleep(0.005)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk", "end_of_turn"]
+
+
+async def test_end_of_turn_counts_silence_from_speech_end_not_transcript_arrival():
+    """Silence already past t_eot when the transcript lands: close at once,
+    instead of waiting another full t_eot (the serial ~1.5 s the audit
+    measured)."""
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=40)
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()
+    await asyncio.sleep(0.06)
+    await bridge.on_segment_final("book it")
+    await asyncio.sleep(0.01)  # far less than t_eot
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk", "end_of_turn"]
+
+
+async def test_every_outstanding_segment_must_arrive_before_end_of_turn():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()  # segment 1
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()  # segment 2
+    await bridge.on_segment_final("search flights to")
+    await asyncio.sleep(0.06)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk"]
+    await bridge.on_segment_final("Chicago")
+    await asyncio.sleep(0.005)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk", "end_of_turn"]
+
+
+async def test_a_transcript_that_never_arrives_is_waited_for_only_up_to_the_cap():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.t_stt_wait_ms = 60
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("cancel my order")
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()  # this segment's transcript is lost
+    await asyncio.sleep(0.03)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk"]
+    await asyncio.sleep(0.06)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["end_of_turn"]
+
+
+async def test_no_end_of_turn_without_any_words_since_the_last_one():
+    """A segment whose transcript is dropped (a filler or noise) leaves
+    nothing to close."""
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.drop_filler_segments = True
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("you")
+    await asyncio.sleep(0.06)
+    assert await _drain_nowait(events) == []
+
+
+async def test_one_end_of_turn_per_turn():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("hello there")
+    await asyncio.sleep(0.06)
+    await bridge.on_speech_end()  # a stray VAD stop with nothing new said
+    await asyncio.sleep(0.06)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk", "end_of_turn"]
+
+
+async def test_transcript_landing_just_before_its_own_speech_end_is_not_waited_for_again():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.t_stt_wait_ms = 2000
+    await bridge.on_speech_start()
+    await bridge.on_segment_final("track order BOB12")  # a fast recognizer beat the VAD stop
+    await bridge.on_speech_end()
+    await asyncio.sleep(0.06)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk", "end_of_turn"]
+
+
+def _activity(items) -> list:
+    return [(e["type"], e["payload"].get("active")) if e["type"] == "user_speech" else (e["type"],) for e in items]
+
+
+async def test_user_activity_spans_speech_and_the_transcript_that_follows():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.report_user_activity = True
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()  # still active: the words are being transcribed
+    await bridge.on_segment_final("track order BOB12")
+    await asyncio.sleep(0.05)
+    assert _activity(await _drain_nowait(events)) == [
+        ("user_speech", True), ("text_chunk",), ("user_speech", False), ("end_of_turn",)]
+
+
+async def test_user_activity_stays_on_across_a_pause_with_a_transcript_in_flight():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.report_user_activity = True
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()
+    await bridge.on_speech_start()
+    await bridge.on_segment_final("the ID is A B")
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("C 1 2 3")
+    await asyncio.sleep(0.05)
+    assert _activity(await _drain_nowait(events)) == [
+        ("user_speech", True), ("text_chunk",), ("text_chunk",), ("user_speech", False), ("end_of_turn",)]
+
+
+async def test_user_activity_is_released_when_a_transcript_is_lost():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.report_user_activity = True
+    bridge.t_stt_wait_ms = 40
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()  # its transcript never arrives, and no words came before
+    await asyncio.sleep(0.08)
+    assert _activity(await _drain_nowait(events)) == [("user_speech", True), ("user_speech", False)]
+
+
+async def test_user_activity_is_not_reported_unless_enabled():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("hello")
+    await asyncio.sleep(0.05)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk", "end_of_turn"]
