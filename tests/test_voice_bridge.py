@@ -384,3 +384,26 @@ async def test_user_activity_is_not_reported_unless_enabled():
     await bridge.on_segment_final("hello")
     await asyncio.sleep(0.05)
     assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk", "end_of_turn"]
+
+
+async def test_events_reach_the_kernel_with_non_decreasing_timestamps():
+    """2 Oct review (F1) worried an end-of-turn could carry an earlier stamp
+    than a transcript queued before it and be reordered ahead of it. Every
+    event is stamped from one monotonic clock when it is queued, and the
+    driver steps once per event in arrival order; this pins the first half."""
+    import time
+
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=10, clock=time.monotonic)
+    bridge.report_user_activity = True
+    bridge.t_stt_wait_ms = 30
+    for text in ("search flights to", "Chicago", "on Friday"):
+        await bridge.on_speech_start()
+        await asyncio.sleep(0.002)
+        await bridge.on_speech_end()
+        await asyncio.sleep(0.004)
+        await bridge.on_segment_final(text)
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()  # a transcript that never comes
+    await asyncio.sleep(0.06)
+    stamps = [e["ts_us"] for e in await _drain_nowait(events)]
+    assert len(stamps) >= 5 and stamps == sorted(stamps) and len(set(stamps)) > 1

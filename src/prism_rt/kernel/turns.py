@@ -19,7 +19,7 @@ from prism_rt.kernel.interpret_apply import (
     merge_outstanding_turns,
 )
 from prism_rt.kernel.proposals import parse_interpretation
-from prism_rt.model.types import FactStatus, FloorState, GoalStatus, JobKind, Provenance, TaskState, Turn
+from prism_rt.model.types import FactStatus, FloorState, GoalStatus, JobKind, Provenance, ReadSet, TaskState, Turn
 from prism_rt.store.session import StoreTxn
 
 
@@ -224,6 +224,8 @@ class TurnManager:
         proposal_fact = txn.facts.get(f"spec_interpret.{turn.turn_id}.proposal")
         if proposal_fact is None or proposal_fact.status == FactStatus.RETRACTED:
             return False
+        if not self._cached_context_still_valid(txn, turn):
+            return False
         tail = None
         if cached_digest.value != prefix_fact.value:
             # The user kept talking past the cached prefix. C1: still
@@ -246,6 +248,28 @@ class TurnManager:
                 rule="speculation.inert_tail_promoted",
             )
         return True
+
+    @staticmethod
+    def _cached_context_still_valid(txn: StoreTxn, turn: Turn) -> bool:
+        """The cached proposal was valid when it was cached; everything it
+        read besides the transcript (active goal, its slots, the last
+        finished task, merged turns) must still be. The transcript itself is
+        checked by the caller (exact digest, or an inert tail).
+
+        Found by the 2 Oct review, reproduced: turn 1's interpretation
+        (slow) landed after turn 2's speculative one (fast) was cached; the
+        cached proposal, computed with no active goal, was promoted and
+        "make it three bedrooms" was lost. A missing job record means no
+        promotion (a fresh interpretation is always safe)."""
+        job_fact = txn.facts.get(f"spec_interpret.{turn.turn_id}.job")
+        if job_fact is None or job_fact.status == FactStatus.RETRACTED:
+            return False
+        job = txn.store.jobs.get(job_fact.value)
+        if job is None:
+            return False
+        prefix_key = f"turn.{turn.turn_id}.prefix"
+        context = ReadSet(entries=tuple(e for e in job.read_set.entries if e.key != prefix_key))
+        return txn.facts.is_valid(context).is_valid
 
     def _inert_tail(self, txn: StoreTxn, turn: Turn, cached_digest: str, proposal) -> str | None:
         """C1 (`docs/prompt 3.txt`): the text after the cached speculative

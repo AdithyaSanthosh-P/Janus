@@ -236,6 +236,15 @@ def _cache_speculative_interpretation(txn: StoreTxn, job, proposal: dict, now_us
         Provenance(source="system", event_id=event_id, turn_id=job.turn_id, step_no=step_no, ts_us=now_us),
         rule="speculation.cache_proposal",
     )
+    # The job whose read set the proposal rests on: promotion re-checks it
+    # (`kernel/turns.py.TurnManager._try_promote_speculative`).
+    txn.facts.set(
+        f"spec_interpret.{job.turn_id}.job",
+        job.job_id,
+        FactStatus.COMMITTED,
+        Provenance(source="system", event_id=event_id, turn_id=job.turn_id, step_no=step_no, ts_us=now_us),
+        rule="speculation.cache_job",
+    )
 
 
 def _apply_tool_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
