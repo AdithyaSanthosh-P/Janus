@@ -56,6 +56,14 @@ _ASSUMABLE_TYPES = frozenset({"integer", "number", "boolean"})
 _TRUE_WORDS = frozenset({"true", "yes", "y", "on"})
 _FALSE_WORDS = frozenset({"false", "no", "n", "off"})
 _LEADING_NUMBER = re.compile(r"^\s*\$?\s*(-?\d[\d,]*(?:\.\d+)?)")
+# A whole value that is an amount as spoken: "$1,800 a month", "1800 dollars",
+# "2,500 per month". Groups: currency sign, number, currency word, period.
+_SPOKEN_AMOUNT = re.compile(
+    r"^\s*([$€£₹])?\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?\s*"
+    r"(dollars?|bucks|usd|euros?|eur|pounds?|gbp|rupees?|inr)?\s*"
+    r"((?:a|an|per|/)\s*(?:month|week|night|day|year)|monthly|weekly|nightly|yearly)?\s*$",
+    re.IGNORECASE,
+)
 
 
 def is_compiled(store, goal_id: str | None) -> bool:
@@ -94,8 +102,10 @@ def coerce_to_schema(value, prop: dict):
     """Coerces a spoken value to the parameter's declared JSON type before
     it is written, so `ToolCatalog.validate_args` (G8) never rejects a value
     the user plainly stated: a number for a string parameter becomes "2500"
-    (never "2500.0"), "2" or 2.0 becomes 2 for an integer, "$1,800" becomes
-    1800 for a number, "yes" becomes True, and an enum value matches
+    (never "2500.0"), a spoken amount for a string parameter becomes the bare
+    number ("$1,800 a month" -> "1800"; 2 Oct voice run, housing_03), "2" or
+    2.0 becomes 2 for an integer, "$1,800" becomes 1800 for a number, "yes"
+    becomes True, and an enum value matches
     case-insensitively. Anything that can't be coerced is returned as is
     (validation then decides)."""
     value = normalize_value(value)
@@ -105,6 +115,12 @@ def coerce_to_schema(value, prop: dict):
             return "true" if value else "false"
         if isinstance(value, (int, float)):
             return str(value)
+        if isinstance(value, str):
+            amount = _SPOKEN_AMOUNT.match(value)
+            # Only with a currency or a period: a bare "1800" (or an ID made
+            # of digits) is left exactly as said.
+            if amount and (amount.group(1) or amount.group(4) or amount.group(5)):
+                return amount.group(2).replace(",", "") + (amount.group(3) or "")
     elif kind in ("integer", "number") and not isinstance(value, bool):
         if isinstance(value, str):
             parsed = _parse_number(value)

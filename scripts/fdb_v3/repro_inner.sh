@@ -105,6 +105,27 @@ cd "$FDB_ROOT"
 "${SHIM[@]}" python run_tool_benchmark_all_released.py --provider janus --root_dir "$OUT/data" --force \
   | tee "$OUT/runner.log"
 
+# 6b. FDB's client (livekit_inference.py) sometimes dies with SIGABRT (exit -6)
+#     and the recording is written as "inference_failed" with nothing scored:
+#     2 of 26 on 2 Oct, 9 across all runs. Stream those recordings again, at
+#     most twice; without --force the runner skips everything already done.
+#     Every retried recording is listed in retried.txt.
+for attempt in 1 2; do
+  failed=()
+  for r in "$OUT"/data/*/result_janus.json; do
+    [[ -f "$r" ]] || continue
+    grep -q '"status": "inference_failed"' "$r" && failed+=("$(dirname "$r")")
+  done
+  [[ ${#failed[@]} -eq 0 ]] && break
+  log "retry $attempt: ${#failed[@]} recording(s) whose client aborted"
+  for d in "${failed[@]}"; do
+    echo "attempt $attempt $(basename "$d")" >> "$OUT/retried.txt"
+    rm -f "$d/result_janus.json" "$d/output_janus.wav"
+  done
+  "${SHIM[@]}" python run_tool_benchmark_all_released.py --provider janus --root_dir "$OUT/data" \
+    | tee -a "$OUT/runner.log"
+done
+
 # 7. FDB's evaluators. REPRO_JUDGE (set by reproduce.sh / native_run.sh) decides whether
 #    the LLM judge runs; an OpenAI key may be present for speech-to-text alone.
 if [[ -n "${REPRO_JUDGE:-}" ]]; then

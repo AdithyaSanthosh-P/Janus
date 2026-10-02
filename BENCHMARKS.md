@@ -6,8 +6,8 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 
 | File | One row per | Use it for |
 |---|---|---|
-| `runs.csv` | scored run (72) | score vs time, configuration comparisons |
-| `recordings.csv` | scenario in each text-replay run (2,202) | per-scenario and per-domain pass rates, text-replay latency |
+| `runs.csv` | scored run (73) | score vs time, configuration comparisons |
+| `recordings.csv` | scenario in each text-replay run (2,226) | per-scenario and per-domain pass rates, text-replay latency |
 | `voice_recordings.csv` | recording in each voice run (370) | per-speaker before/after, turn-ending evidence, latency |
 | `failures.csv` | failing recording in an analysed failure set (102) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
@@ -443,3 +443,4 @@ The commit column is the code the run used (`-dirty` means uncommitted changes a
 | 2026-09-30 | `text_text_replay_0930_fixes` | text_replay | full100 | judged | 77/100 | 77.0% | 0.959 | 0.807 | gemini-3.6-flash | 31ae4cb-dirty |
 | 2026-09-30 | `text_text_replay_0930_setting` | text_replay | full100 | judged | 75/100 | 75.0% | 0.963 | 0.795 | gemini-3.6-flash | 838cea7-dirty |
 | 2026-10-02 | `cloud_20261002_061207` | voice_cloud | subset | exact | 16/26 | 61.5% | 0.958 | 0.736 | gemini-3.6-flash | 86e5fc95 |
+| 2026-10-02 | `text_text_replay_1002_valuerules` | text_replay | subset | exact | 11/24 | 45.8% | 0.911 | 0.618 | gemini-3.6-flash | 1405be2-dirty |

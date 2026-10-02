@@ -446,6 +446,20 @@ def test_coerce_to_schema():
     assert coerce_to_schema("lots", {"type": "integer"}) == "lots"  # uncoercible: left for validation
 
 
+def test_spoken_amount_for_a_string_parameter_is_the_bare_number():
+    # 2 Oct voice run: a string-typed filter value was sent as "$1,800 a month".
+    s = {"type": "string"}
+    assert coerce_to_schema("$1,800 a month", s) == "1800"
+    assert coerce_to_schema("1800 a month", s) == "1800"
+    assert coerce_to_schema("2,500 dollars", s) == "2500"
+    assert coerce_to_schema("$19.99", s) == "19.99"
+    # No currency and no period: left exactly as said (could be an ID).
+    assert coerce_to_schema("1800", s) == "1800"
+    assert coerce_to_schema("0042", s) == "0042"
+    assert coerce_to_schema("3 bedrooms", s) == "3 bedrooms"
+    assert coerce_to_schema("Northside", s) == "Northside"
+
+
 def test_action_plans_replay_identity():
     def run_once() -> list:
         provider = ScriptedProvider()

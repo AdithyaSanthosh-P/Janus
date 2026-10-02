@@ -138,6 +138,7 @@ def main() -> None:
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "headline": headline,
+        "client_abort_retries": _retried(args.out),
         "notes": [
             "FDB's own mock-tool latency jitter is unseeded; repeat runs differ slightly.",
             "The LLM is a hosted API: temperature 0, but hosted models are not bit-reproducible.",
@@ -164,6 +165,7 @@ def main() -> None:
         f"- Judge: {manifest['judge']}",
         f"- Scenarios: {headline['scenarios']}  passed: {headline['passed']}  failed: {headline['failed']}",
         f"- Strict pass rate: {pr}",
+        f"- Recordings re-streamed after FDB's client aborted: {len(manifest['client_abort_retries']) or 'none'}",
         "",
         provider,
         "",
@@ -171,6 +173,15 @@ def main() -> None:
     with open(os.path.join(args.out, "SUMMARY.md"), "w") as fh:
         fh.write("\n".join(lines))
     print("\n".join(lines))
+
+
+def _retried(out: str) -> list[str]:
+    """Lines of retried.txt ("attempt N <recording>"), written by repro_inner.sh."""
+    path = os.path.join(out, "retried.txt")
+    if not os.path.exists(path):
+        return []
+    with open(path) as fh:
+        return [line.strip() for line in fh if line.strip()]
 
 
 if __name__ == "__main__":
