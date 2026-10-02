@@ -244,6 +244,14 @@ async def entrypoint(ctx: JobContext) -> None:
     else:
         events, actions = asyncio.Queue(), asyncio.Queue()
 
+    def stop_speaking() -> None:
+        # Current and queued speech (LiveKit's own barge-in stops only the
+        # utterance playing). Never let this break the bridge.
+        try:
+            session.interrupt()
+        except Exception:  # noqa: BLE001 - nothing playing / not interruptible
+            logger.debug("interrupt: nothing to stop", exc_info=True)
+
     async def say(text: str) -> None:
         # Queue only; never wait for playout, or a TOOL_CALL right behind an
         # acknowledgement would sit until the acknowledgement finished playing.
@@ -266,6 +274,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # vad_floor_enabled): no call or speech while the user is speaking or
         # their words are still being transcribed.
         report_user_activity=True,
+        stop_speaking=stop_speaking,
     )
 
     # gemini-3.6-flash, thinking off (28 Sep): same judge-scored full-100 as

@@ -97,6 +97,12 @@ class VoiceBridge:
     # before any text exists (Config.vad_floor_enabled decides whether it
     # does). Off by default: hosts without VAD have nothing to report.
     report_user_activity: bool = False
+    # Stops the agent's current and queued speech (the host's
+    # `session.interrupt()`). Called when the user's words arrive while the
+    # agent is speaking -- found by the 2 Oct review: LiveKit's own barge-in
+    # stops only the utterance playing, so queued speech (an ACK, then the
+    # answer to the request just corrected) still played over the user.
+    stop_speaking: Callable[[], None] = field(default=lambda: None)
 
     _start_wall: float = field(init=False, repr=False)
     _eot_task: "asyncio.Task | None" = field(default=None, init=False, repr=False)
@@ -194,6 +200,8 @@ class VoiceBridge:
         ):
             await self.events.put({"type": "text_chunk", "ts_us": self.now_us(), "payload": {"text": text.strip()}})
             self._words_since_eot = True
+            if self._agent_speaking and text.strip():
+                self.stop_speaking()  # real words over the agent: a barge-in
         # A dropped segment (filler, noise) sends no chunk, but it still
         # was the transcript an earlier speech end was waiting for.
         await self._report_activity()

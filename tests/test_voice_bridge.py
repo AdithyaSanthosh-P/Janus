@@ -407,3 +407,38 @@ async def test_events_reach_the_kernel_with_non_decreasing_timestamps():
     await asyncio.sleep(0.06)
     stamps = [e["ts_us"] for e in await _drain_nowait(events)]
     assert len(stamps) >= 5 and stamps == sorted(stamps) and len(set(stamps)) > 1
+
+
+# 2 Oct review (F2, verified against livekit-agents 1.8.3): LiveKit's own
+# barge-in stops only the utterance playing; speech already queued with
+# session.say still plays afterwards. The bridge stops all of it once the
+# user's words confirm the barge-in.
+
+async def test_words_during_agent_speech_stop_all_queued_speech():
+    stops = []
+    bridge, events, _actions, _said = _make_bridge()
+    bridge.stop_speaking = lambda: stops.append(True)
+    bridge.on_agent_speaking_changed(True)
+    await bridge.on_speech_start()
+    await bridge.on_segment_final("no wait, make it Friday")
+    assert stops == [True]
+
+
+async def test_noise_or_filler_during_agent_speech_does_not_stop_it():
+    stops = []
+    bridge, _events, _actions, _said = _make_bridge()
+    bridge.stop_speaking = lambda: stops.append(True)
+    bridge.drop_filler_segments = True
+    bridge.on_agent_speaking_changed(True)
+    await bridge.on_speech_start()  # VAD alone is not enough
+    await bridge.on_segment_final("Hmm.")
+    await bridge.on_segment_final("")
+    assert stops == []
+
+
+async def test_words_while_the_agent_is_silent_stop_nothing():
+    stops = []
+    bridge, _events, _actions, _said = _make_bridge()
+    bridge.stop_speaking = lambda: stops.append(True)
+    await bridge.on_segment_final("book it for Friday")
+    assert stops == []
