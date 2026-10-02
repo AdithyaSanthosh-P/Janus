@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config.templates import WATCHDOG_FALLBACK
-from prism_rt.kernel.action_plans import active_actions_view, finished_actions_view, is_compiled
+from prism_rt.kernel.action_plans import active_actions_view, finished_actions_view, is_compiled, step_failed
 from prism_rt.kernel.replies import last_finished_goal
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, merged_turns, user_content_pending
 from prism_rt.kernel.replies import salvage_text
@@ -247,6 +247,8 @@ class TaskStateMachine:
         if plan is None:
             return False
         for step in plan.steps:
+            if step_failed(store, goal_id, step.step_key):
+                continue  # failed on its own; reported as not done (Config.partial_failure_continues)
             latest = store.call_ledger.latest_by_step(goal_id, step.step_key)
             if latest is None or latest.status != CallStatus.CONSUMED:
                 return False

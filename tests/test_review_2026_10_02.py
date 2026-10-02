@@ -342,3 +342,48 @@ def test_a_follow_up_can_act_on_the_results_of_the_task_that_just_finished():
         ("search_products", {"query": "tablet"}), ("add_to_cart", {"product_id": "PROD1", "quantity": 1})]
     assert not [a for a in actions if a.action_type == ActionType.CLARIFY]
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+# --- 1 Oct audit (R04b remainder): one failed step does not drop its siblings --
+
+def _failing_first_run(spec, **overrides):
+    tools = {"track_order": {"latency_ms": 50, "error": {"code": "not_found", "message": "order not found"}},
+             "search_products": {"latency_ms": 50, "response": {"results": [{"id": "K2"}]}},
+             "add_to_cart": {"latency_ms": 50, "response": {"status": "success"}}}
+    provider = ScriptedProvider()
+    provider.register("interpret", "", {"act": "new_goal", "intent": spec[0]["tool"], "slot_deltas": [], "actions": spec})
+    provider.register("compose", "", {"text": "Composed.", "claims": []})
+    h = SimHarness(fdb_v3_config(**overrides), seed=1, provider=provider, tools=tools,
+                   worker_latency_us={k: 10_000 for k in JobKind})
+    h.send(0, [manifest_event([TRACK2, PRODUCTS, CART])])
+    h.send(100_000, [chunk_event("do these things")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + _event_driven(h, 30_000_000)
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+    return h, actions
+
+
+def test_an_independent_action_still_runs_after_a_sibling_fails():
+    spec = [{"tool": "track_order", "args": {"order_id": "ZZ9"}},
+            {"tool": "search_products", "args": {"query": "keyboard"}}]
+    _h, actions = _failing_first_run(spec)
+    assert [c[1] for c in _calls(actions)] == ["track_order", "search_products"]
+    finals = [a.body for a in actions if a.action_type == ActionType.FINAL]
+    assert len(finals) == 1 and finals[0].task_completed is False  # honest: one action failed
+
+
+def test_without_the_flag_one_failure_ends_the_goal():
+    """Negative control: the live failure (housing_24: 'Missing tools')."""
+    spec = [{"tool": "track_order", "args": {"order_id": "ZZ9"}},
+            {"tool": "search_products", "args": {"query": "keyboard"}}]
+    _h, actions = _failing_first_run(spec, partial_failure_continues=False)
+    assert [c[1] for c in _calls(actions)] == ["track_order"]
+
+
+def test_an_action_that_needs_the_failed_ones_result_fails_with_it():
+    spec = [{"tool": "track_order", "args": {"order_id": "ZZ9"}},
+            {"tool": "search_products", "args": {"query": "keyboard"}},
+            {"tool": "add_to_cart", "args": {}, "refs": [{"param": "product_id", "from": 0, "field": "id", "select": "it"}]}]
+    _h, actions = _failing_first_run(spec)
+    assert [c[1] for c in _calls(actions)] == ["track_order", "search_products"]
+    finals = [a.body for a in actions if a.action_type == ActionType.FINAL]
+    assert len(finals) == 1 and finals[0].task_completed is False

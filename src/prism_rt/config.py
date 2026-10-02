@@ -336,6 +336,13 @@ class Config:
     # read can depend on an earlier one without a ref, e.g. "how do I fix
     # it" after a diagnosis).
     parallel_independent_actions: bool = False
+    # On a compiled plan, a step that can never complete (a tool error past
+    # its retries, an input the tool rejects, ...) fails on its own: steps
+    # that read its result fail with it, the rest still run, and the answer
+    # reports what failed (task_completed False). Off, the whole goal is
+    # abandoned at the first failure -- found by the 1 Oct audit (housing_24:
+    # one failed update dropped the search and commute after it).
+    partial_failure_continues: bool = False
     vad_floor_max_ms: int = 15_000
 
     # Day 2 (docs/fdb_v3_implementation_plan.md §5.2): G4 (commit_intent)

@@ -103,6 +103,9 @@ def fdb_v3_config(**overrides) -> Config:
       waits on an earlier one that is waiting for the user's answer, unless
       it reads that step's result -- an unanswered question no longer starves
       an independent action (class K).
+    - partial_failure_continues (also in demo_config): one failed action no
+      longer abandons the whole goal; actions that read its result fail with
+      it, the rest still run, and the answer says what failed.
 
     `**overrides` lets a caller tune settle_ms/settle_ms_incomplete/etc.
     per run without editing this function -- passed straight to
@@ -137,6 +140,7 @@ def fdb_v3_config(**overrides) -> Config:
         merge_split_turns_enabled=True,
         vad_floor_enabled=True,
         parallel_independent_actions=True,
+        partial_failure_continues=True,
     )
     return dataclasses.replace(base, **overrides) if overrides else base
 
@@ -183,6 +187,7 @@ def demo_config(**overrides) -> Config:
         conversational_replies_enabled=True,
         merge_split_turns_enabled=True,
         parallel_independent_actions=True,
+        partial_failure_continues=True,
         watchdog_timeout_ms=0,
     )
     return dataclasses.replace(base, **overrides) if overrides else base

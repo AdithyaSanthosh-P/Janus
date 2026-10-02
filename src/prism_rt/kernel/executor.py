@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from prism_rt.kernel.action_plans import bind_key, valid_bind_fact
+from prism_rt.kernel.action_plans import bind_key, step_failed, step_failed_key, valid_bind_fact
 from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.interpret_apply import active_goal_id
 from prism_rt.kernel.replies import duplicate_write_text
@@ -206,6 +206,15 @@ class PlanExecutor:
         created: list[str] = []
         waiting_on_user: set[str] = set()  # steps that just asked the user for a value
         for step in plan.steps:
+            if step_failed(store, gid, step.step_key):
+                continue  # failed on its own (Config.partial_failure_continues)
+            failed_input = next(
+                (b.step_key for b in step.bindings.values() if b.step_key and step_failed(store, gid, b.step_key)), None
+            )
+            if failed_input is not None:
+                upstream = next((s.tool for s in plan.steps if s.step_key == failed_input), failed_input)
+                self._fail_goal(store, gid, step, now_us, step_no, reason=f"it needed the result of {upstream}, which failed")
+                continue
             latest = store.call_ledger.latest_by_step(gid, step.step_key)
 
             if latest is not None and latest.status == CallStatus.IN_FLIGHT:
@@ -342,6 +351,7 @@ class PlanExecutor:
 
             if not all(
                 self._step_done(store, gid, dep)
+                or step_failed(store, gid, dep)  # failed on its own; not read (checked above)
                 or (
                     store.config.parallel_independent_actions
                     and dep in waiting_on_user
@@ -999,6 +1009,27 @@ class PlanExecutor:
             rule="executor.already_done",
         )
 
+    def _fail_step_only(self, store, goal_id: str, step, now_us: int, step_no: int, reason: str | None) -> bool:
+        """Config.partial_failure_continues, compiled plans: record this
+        step as failed and keep the goal going while any other step can
+        still complete, or has completed (TaskStateMachine then composes an
+        answer that lists the failed actions as not done). False -- the
+        whole goal fails as before -- when nothing else ran or can run."""
+        plan = store.plans.current(goal_id)
+        if not store.config.partial_failure_continues or plan is None or plan.origin != "compiled" or len(plan.steps) < 2:
+            return False
+        others = [s for s in plan.steps if s.step_key != step.step_key and not step_failed(store, goal_id, s.step_key)]
+        if not others:
+            return False
+        store.facts.set(
+            step_failed_key(goal_id, step.step_key),
+            reason or f"{step.tool} kept failing",
+            FactStatus.COMMITTED,
+            Provenance(source="system", step_no=step_no, ts_us=now_us),
+            rule="executor.step_failed_only",
+        )
+        return True
+
     def _fail_goal(self, store, goal_id: str, step, now_us: int, step_no: int, *, reason: str | None = None) -> None:
         """A step that can never complete is a genuine task failure, not
         a completion — `goal.status` must become `ABANDONED` (not left
@@ -1019,6 +1050,8 @@ class PlanExecutor:
         goal = store.goals.get(goal_id)
         if goal is not None and goal.task_state == TaskState.RESPONDING:
             return  # already reported
+        if self._fail_step_only(store, goal_id, step, now_us, step_no, reason):
+            return
         store.goals.update(goal_id, status=GoalStatus.ABANDONED, task_state=TaskState.RESPONDING)
         text = f"I couldn't complete this — {reason}." if reason else f"I couldn't complete this — {step.tool} kept failing."
         store.facts.set(

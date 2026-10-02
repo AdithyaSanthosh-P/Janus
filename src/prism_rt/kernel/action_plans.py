@@ -461,6 +461,16 @@ def active_actions_view(store, goal_id: str | None) -> list[dict]:
 _RESULT_VIEW_CHARS = 600
 
 
+def step_failed_key(goal_id: str, step_key: str) -> str:
+    return f"step_failed.{goal_id}.{step_key}"
+
+
+def step_failed(store, goal_id: str, step_key: str) -> bool:
+    """Config.partial_failure_continues: this step failed on its own."""
+    fact = store.facts.get(step_failed_key(goal_id, step_key))
+    return fact is not None and fact.status != FactStatus.RETRACTED and bool(fact.value)
+
+
 def finished_actions_view(store, goal_id: str | None) -> list[dict]:
     """`active_actions_view` plus each action's own result, compacted -- for
     the task that just finished, so a follow-up can act on what it found

@@ -37,6 +37,7 @@ from config.templates import (
     INFORM_UNKNOWN_WRITE_OUTCOME,
     UNCLEAR_NO_GOAL,
 )
+from prism_rt.kernel.action_plans import step_failed
 from prism_rt.kernel.commit import CommitGate, user_audibly_active
 from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.replies import HONEST_REPLY_KEY, duplicate_write_text
@@ -361,7 +362,9 @@ class FastResponder:
         # generic post-FINAL side effect either way; this field is what
         # the protocol output actually reports.
         is_watchdog_salvage = text_fact.provenance.source == "watchdog"
-        task_completed = goal.status != GoalStatus.ABANDONED and not is_watchdog_salvage
+        plan = store.plans.current(goal.goal_id)
+        any_step_failed = plan is not None and any(step_failed(store, goal.goal_id, s.step_key) for s in plan.steps)
+        task_completed = goal.status != GoalStatus.ABANDONED and not is_watchdog_salvage and not any_step_failed
 
         grade = None
         if store.config.claim_grades_enabled:
