@@ -387,3 +387,44 @@ def test_an_action_that_needs_the_failed_ones_result_fails_with_it():
     assert [c[1] for c in _calls(actions)] == ["track_order", "search_products"]
     finals = [a.body for a in actions if a.action_type == ActionType.FINAL]
     assert len(finals) == 1 and finals[0].task_completed is False
+
+
+# --- 1 Oct audit: an empty required argument is not a filled one -----------
+
+COMMUTE = {"name": "calculate_commute", "parameters": {"type": "object", "properties": {
+    "origin_address": {"type": "string"}, "destination_address": {"type": "string"},
+    "mode": {"type": "string", "default": "driving"}}, "required": ["origin_address", "destination_address"]}}
+APT3 = {"name": "search_apartments", "parameters": {"type": "object", "properties": {
+    "city": {"type": "string"}}, "required": ["city"]}}
+
+
+def test_a_blank_value_picked_for_a_required_argument_is_not_sent():
+    """housing_17 (voice, both runs): calculate_commute went out with
+    origin_address="" -- a required string bound to "" counted as filled."""
+    spec = [{"tool": "search_apartments", "args": {"city": "Austin"}},
+            {"tool": "calculate_commute", "args": {"destination_address": "the university"},
+             "refs": [{"param": "origin_address", "from": 0, "field": "address", "select": "first"}]}]
+    provider = ScriptedProvider()
+    provider.register("interpret", "", {"act": "new_goal", "intent": "search_apartments", "slot_deltas": [], "actions": spec})
+    provider.register("compose", "", {"text": "Composed.", "claims": []})
+    provider.register("bind", "", {"values": {"origin_address": ""}})
+    h = SimHarness(fdb_v3_config(), seed=1, provider=provider, worker_latency_us={k: 10_000 for k in JobKind},
+                   tools={"search_apartments": {"latency_ms": 50, "response": {"results": [{"id": "A1", "address": ""}]}},
+                          "calculate_commute": {"latency_ms": 50, "response": {"minutes": 12}}})
+    h.send(0, [manifest_event([APT3, COMMUTE])])
+    h.send(100_000, [chunk_event("find a place in Austin and the commute from it to the university")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + _event_driven(h, 30_000_000)
+    calls = _calls(actions)
+    assert [c[1] for c in calls] == ["search_apartments"]
+    finals = [a.body for a in actions if a.action_type == ActionType.FINAL]
+    assert len(finals) == 1 and finals[0].task_completed is False
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_validate_args_rejects_a_blank_required_string():
+    provider = ScriptedProvider()
+    h = SimHarness(fdb_v3_config(), seed=1, provider=provider)
+    h.send(0, [manifest_event([COMMUTE])])
+    result = h.store.catalog.validate_args("calculate_commute", {"origin_address": "  ", "destination_address": "x"})
+    assert not result.valid and "blank_required:origin_address" in result.errors
+    assert h.store.catalog.validate_args("calculate_commute", {"origin_address": "home", "destination_address": "x"}).valid

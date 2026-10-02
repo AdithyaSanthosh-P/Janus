@@ -178,6 +178,10 @@ class ToolCatalog:
         for field_name in required:
             if field_name not in args:
                 errors.append(f"missing_required:{field_name}")
+            elif isinstance(args[field_name], str) and not args[field_name].strip():
+                # A blank string is not a value: found in the 1 Oct audit,
+                # calculate_commute(origin_address="") went out as "filled".
+                errors.append(f"blank_required:{field_name}")
 
         if schema.get("additionalProperties") is False:
             for key in args:
