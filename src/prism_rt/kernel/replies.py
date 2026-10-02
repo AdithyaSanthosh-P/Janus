@@ -194,8 +194,15 @@ def confirmed_writes(store, goal_id: str) -> list:
 def earlier_confirmed_writes(store, goal_id: str | None, tools) -> list:
     """Writes with one of `tools` that went through for any goal other than
     `goal_id` (None: any goal at all)."""
-    wanted = set(tools)
+    wanted = {t for t in tools if not _repeatable(store, t)}
     return _consumed_writes(store, lambda call: call.goal_id != goal_id and call.tool in wanted)
+
+
+def _repeatable(store, tool: str) -> bool:
+    """A device command the manifest declares repeatable ("resume" after
+    "stop" is a new command, not a second booking)."""
+    spec = store.catalog.get(tool)
+    return bool(spec is not None and spec.repeatable)
 
 
 def write_summary(calls) -> str:

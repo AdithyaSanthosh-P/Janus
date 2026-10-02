@@ -58,6 +58,10 @@ class ToolSpec:
     status: str  # "USABLE" | "QUARANTINED"
     frame_param: str | None = None
     quarantine_reason: str | None = None
+    # A device command ("pause", "resume"): each request is its own action,
+    # so a later request for the same tool is not a repeat of an earlier one
+    # that went through. Declared in the manifest; the benchmark's never is.
+    repeatable: bool = False
 
 
 @dataclass(frozen=True)
@@ -156,6 +160,7 @@ class ToolCatalog:
             mutability_source=mutability_source,
             status="USABLE",
             frame_param=raw.get("frame_param"),
+            repeatable=raw.get("repeatable") is True,
         )
 
     def get(self, name: str) -> ToolSpec | None:

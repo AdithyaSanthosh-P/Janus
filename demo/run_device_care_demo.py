@@ -17,7 +17,8 @@ Second story (--story washer), a Samsung washer on SmartThings (simulated backen
                              -> its SmartThings status: paused, error 4C (no water supply).
   2. "How do I fix it?"      -> the fix steps.
   3. "Can you resume the wash?"  -> the washer refuses (still 4C); the agent says so.
-  4. "Open an urgent ticket and book a technician for Friday afternoon." and, just
+  4. "Okay, then stop the wash."  -> a second command to the same washer; it stops.
+  5. "Open an urgent ticket and book a technician for Friday afternoon." and, just
      after, "No wait, make the technician Saturday morning."
                              -> ONE ticket, ONE booking, Saturday morning; Friday is never booked.
 
@@ -145,6 +146,7 @@ def main() -> None:
             [("my washing machine stopped in the middle of a wash. what's wrong with it?", 0, True)],
             [("okay, how do I fix it?", 0, True)],
             [("can you resume the wash?", 0, True)],
+            [("okay, then stop the wash", 0, True)],
             [("okay. open an urgent ticket and book a technician for Friday afternoon", 0, True),
              ("no wait, make the technician Saturday morning", 600_000, True)],
         ]

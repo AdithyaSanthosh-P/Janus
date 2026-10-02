@@ -507,6 +507,71 @@ def test_a_refused_command_is_counted_as_refused_not_committed():
     assert format_effect_summary(summary).startswith("Effect ledger: 0 committed")
 
 
+def _control(command: str) -> dict:
+    return {"act": "new_goal", "intent": "control_appliance", "commit_intent": True,
+            "slot_deltas": [{"name": "device_type", "scope": "goal", "op": "set", "value": "washer"},
+                            {"name": "command", "scope": "goal", "op": "set", "value": command}],
+            "actions": [{"tool": "control_appliance", "args": {"device_type": "washer", "command": command}}]}
+
+
+def _say(actions):
+    return [a.body.text for a in actions if a.action_type in (ActionType.SPEAK, ActionType.FINAL, ActionType.CLARIFY)]
+
+
+def test_device_commands_in_later_requests_are_new_commands_not_repeats():
+    """2 Oct live demo: "resume" after "stop" was held as a repeat of a
+    write that went through ("do you want a second one?"), and the stall
+    salvage then fired. A repeatable device command runs on its own request,
+    and the same command in a later request is a new one (G5 still dedupes
+    within a request)."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "pause the wash", _control("pause"))
+    provider.register("interpret", "resume the wash", _control("resume"))
+    provider.register("compose", "control_appliance", {"text": "Done.", "claims": []})
+    tk = DeviceCareToolset()
+    tk.status["washer"].update(machine_state="run", error_code=None)
+    h = harness(provider, tk)
+    said, t = [], 100_000
+    for text in ("pause the wash", "resume the wash", "pause the wash"):
+        h.send(t, [chunk_event(text)])
+        said += _say([er.action for er in h.send(t + 50_000, [eot_event()]).emit_report.emitted])
+        said += _say(drain(h, t + 6_000_000))
+        t += 6_100_000
+
+    assert [c["command"] for c in tk.commands] == ["pause", "resume", "pause"]
+    assert not [x for x in said if "second one" in x or "couldn't finish" in x or "already done" in x]
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_bookings_are_still_guarded_against_repeats():
+    """The flag is per tool: book_technician is not repeatable."""
+    tk = DeviceCareToolset()
+    h = harness(ScriptedProvider(), tk)
+    assert h.store.catalog.get("control_appliance").repeatable is True
+    assert h.store.catalog.get("book_technician").repeatable is False
+
+
+def test_no_stall_salvage_while_the_agent_waits_for_a_yes():
+    """After "do you want a second one?" the user may take a while; the 15 s
+    stall salvage must not answer for them ("I couldn't finish this in time")."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "cancel it", _booking("Friday", "evening"))
+    provider.register("interpret", "Monday", _booking("Monday", "evening"))
+    provider.register("compose", "book_technician", {"text": "Booked.", "claims": []})
+    tk = _diagnosed_toolset()
+    h = harness(provider, tk)
+    h.send(100_000, [chunk_event("book a technician for Monday evening")])
+    h.send(150_000, [eot_event()])
+    drain(h, 6_000_000)
+    h.send(6_100_000, [chunk_event("no, cancel it, make it Friday")])
+    actions = [er.action for er in h.send(6_150_000, [eot_event()]).emit_report.emitted]
+    actions += drain(h, 40_000_000, stop_on_final=False)
+    said = _say(actions)
+    assert any("second one" in x for x in said)
+    assert not [x for x in said if "couldn't finish" in x]
+    assert len(tk.bookings) == 1
+
+
 # --- prompts and profiles -----------------------------------------------------
 
 BASE_VIEW = {"transcript": "hello", "active_intent": None, "active_slots": {}, "suspended_goals": [],

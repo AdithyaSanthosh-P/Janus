@@ -590,7 +590,8 @@ class TraceChecker:
     # later one is a legitimate retry (CallRecord.attempt > 1) of a FAILED
     # prior attempt — CommitGate G5/G6 only ever admits a repeat fingerprint
     # in that case (a FAILED effect doesn't block), so a repeat with
-    # attempt == 1 indicates a real duplicate slipped through.
+    # attempt == 1 indicates a real duplicate slipped through. A tool the
+    # manifest declares `repeatable` is compared within one request only.
     def _check_cs13(self, reports: list, store) -> list[Violation]:
         seen: dict[str, tuple[int, str]] = {}
         violations = []
@@ -603,6 +604,13 @@ class TraceChecker:
                 if body.mutability != ToolMutability.STATE_CHANGING:
                     continue
                 fp = fingerprint_for(body.tool_name, body.arguments)
+                catalog = getattr(store, "catalog", None)
+                spec = catalog.get(body.tool_name) if catalog is not None else None
+                if spec is not None and spec.repeatable:
+                    # A declared device command: the same command in a later
+                    # request is a new one; within a request it must not repeat.
+                    call = store.call_ledger.get(body.call_id)
+                    fp = f"{fp}:{call.goal_id if call is not None else ''}"
                 if fp in seen:
                     prev_step, prev_call = seen[fp]
                     call = store.call_ledger.get(body.call_id) if store is not None else None

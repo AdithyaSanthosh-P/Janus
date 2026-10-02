@@ -168,6 +168,7 @@ The kernel X-ray draws a session from its decision log: what the user said, what
 - **Conversation safeguards**, each from a live session and each with a regression test:
   - A booking without a clear go-ahead is not made in silence: the agent asks *"Shall I go ahead and book technician (Friday, afternoon)?"* and a yes supplies the go-ahead.
   - A change after a booking went through is never re-run as a second booking: *"That's already done — book technician (Thursday, morning) went through. I can't change it from here, and I won't make a second one."* A new request for the same kind of booking asks first and names the one that already stands.
+  - A device command the manifest declares `repeatable` (`control_appliance`) is a new command in each request: "stop" after "resume" runs, while a repeated booking is still asked about first. While the agent waits for a yes to "shall I go ahead?", the 15 s stall safety net stays quiet.
   - A missing detail is asked with its allowed values (*"What's the time slot: morning, afternoon or evening?"*), and the camera can answer a question the plan already asked.
   - A question about something an earlier result said (*"What's my router's name?"*) is answered from that result; a request no tool covers is declined honestly, with what the agent can do instead.
 - **Camera.** The worker samples the room's video track at about 1 frame per second into JPEGs (`src/prism_rt/voice/camera.py`). The kernel only sees a `frame_id`; the vision worker resolves the bytes.
@@ -178,9 +179,10 @@ The washer story, same safeguards:
 "My washing machine stopped in the middle of a wash. What's wrong with it?"   -> get_device_status: paused, error 4C
 "How do I fix it?"                                                          -> tap, inlet hose, inlet filter
 "Can you resume the wash?"   -> the washer refuses (4C still showing); the agent says so, nothing is claimed done
+"Okay, then stop the wash."  -> a second command to the same washer: a new command, not a repeat; it stops
 "Open an urgent ticket and book a technician for Friday afternoon ... no wait, Saturday morning."
    -> one ticket, one booking, Saturday morning; Friday is never booked
-   Effect ledger: 2 committed, 1 refused, 0 duplicates
+   Effect ledger: 3 committed, 1 refused, 0 duplicates
 ```
 
 Run it:
@@ -271,7 +273,7 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 - **The model is a hosted API.** Temperature 0 does not make it bit-reproducible, and evaluation needs network access to Gemini.
 - **No cancel or modify tool.** A booking that went through cannot be changed; the agent says so and will not make a second one without an explicit yes, but it cannot undo the first.
 - **Camera:** one frame per second, one still image per question. It cannot tell a *blinking* light from a solid one, so the user says that part.
-- **The extension's tools and the Samsung-style device backend are simulations** over a small knowledge base of two devices; it demonstrates the safe-action pattern, not a live Samsung integration or a product catalogue. A second command to the same appliance after one already went through (for example "stop" after "resume") is treated as a repeat of a finished write and asked about first; the demo story avoids it.
+- **The extension's tools and the Samsung-style device backend are simulations** over a small knowledge base of two devices; it demonstrates the safe-action pattern, not a live Samsung integration or a product catalogue.
 - Python 3.10/3.12 are supported by construction only; the tested targets are 3.11 (Docker) and the 3.14 dev venv.
 
 ## Repo map

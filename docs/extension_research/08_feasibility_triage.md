@@ -64,13 +64,13 @@ unless the Kernel column says otherwise. No candidate needs a change to the benc
 |---|---|---|---|
 | Live SmartThings REST adapter (virtual washer via `virtualdevices:create`) | M + a Samsung account | No | **Deferred.** Credentials needed (24 h PAT before every recording), network during the demo; reproduction must never depend on it. Ask the team. |
 | `cancel_booking` tool (Gemini's last beat) | S–M | Touches the repeat-write guard (G6 lineage) | Deferred; the current honest reply ("I can't cancel it from here") is tested. |
-| `control_appliance` declared as repeatable, so "resume" after "stop" is not treated as a repeat of a write that already went through | S | **Yes** (catalog field + `replies.earlier_confirmed_writes`) | **Needs team approval** (the rule is no kernel change). Avoided in the demo script by ordering the turns (see `09_demo_script_3min.md`). |
-| The 15 s stall rescue firing while the agent's own question is open ("I couldn't finish this in time") | S | **Yes** | Real bug, found 2 Oct while probing; fix needs approval. Only reachable in the demo through the case above. |
+| `control_appliance` declared as repeatable, so "resume" after "stop" is not treated as a repeat of a write that already went through | S | Yes: `ToolSpec.repeatable` (manifest), `replies.earlier_confirmed_writes` skips it, the write fingerprint is scoped to the request (G5 still dedupes within one), `TraceChecker` CS-13 likewise | **Done 2 Oct.** No benchmark tool declares it. |
+| The 15 s stall rescue firing while the agent's own "shall I go ahead?" question is open ("I couldn't finish this in time") | S | Yes (`kernel/task.py._maybe_salvage_stalled_turn`) | **Done 2 Oct**, same rule as the existing clarify exemption. |
 
 ## What is built (2 Oct)
 
 - KB: Samsung washer codes (4C/4E/E1, 5C/5E/E2, UB/UE, dC/dE) and a SmartThings-shaped washer status.
 - `get_device_status` (READ) and `control_appliance` (WRITE: pause / resume / stop; refuses resume while an error is showing).
 - `observability/effects.py`: committed / withdrawn before sending / refused or failed / duplicates; printed by the demo script and logged by the voice worker at session end (demo mode).
-- `demo/run_device_care_demo.py --story washer` (the 3-minute script's order); README extension section with the real/simulated table; 7 new deterministic tests; suite 583/583.
+- `demo/run_device_care_demo.py --story washer` (the 3-minute script's order); README extension section with the real/simulated table; 10 new deterministic tests; suite 586/586.
 - Live (Gemini, text demo): router story and washer story both correct (see `09_demo_script_3min.md`). **NOT VERIFIED:** any of it over LiveKit voice with the camera.

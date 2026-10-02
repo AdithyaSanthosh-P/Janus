@@ -116,7 +116,7 @@ class BindResult:
     read_set: ReadSet
 
 
-def _fingerprint(store, tool: str, args: dict) -> str:
+def _fingerprint(store, tool: str, args: dict, goal_id: str | None = None) -> str:
     """Duplicate-detection fingerprint over the arguments as the tool will
     receive them: schema defaults filled in. The FDB adapter fills them only
     after emission, so {K2} and {K2, quantity: 1} used to look like two
@@ -127,6 +127,10 @@ def _fingerprint(store, tool: str, args: dict) -> str:
     for name, schema in props.items():
         if name not in filled and isinstance(schema, dict) and "default" in schema:
             filled[name] = schema["default"]
+    if spec is not None and spec.repeatable and goal_id is not None:
+        # "Pause" asked again in a later request is a new command; a retry
+        # within the same request is still the same write (G5).
+        filled = {**filled, "__request": goal_id}
     return fingerprint_for(tool, filled)
 
 
@@ -444,7 +448,7 @@ class PlanExecutor:
                     self._request_fresh_view(store, gid, stale_key, now_us, step_no)
                     continue
 
-            new_fingerprint = _fingerprint(store, step.tool, bind_result.args)
+            new_fingerprint = _fingerprint(store, step.tool, bind_result.args, gid)
             if self._write_lineage_confirmed_elsewhere(store, gid, step, new_fingerprint):
                 self._fail_goal(
                     store, gid, step, now_us, step_no,

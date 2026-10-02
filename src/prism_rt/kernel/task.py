@@ -217,6 +217,13 @@ class TaskStateMachine:
                 and asked is not None and asked.status != FactStatus.RETRACTED and asked.value == target.value
             ):
                 return False
+            # Same for "shall I go ahead?" / "do you want a second one?": the
+            # write waits on the user's yes (found 2 Oct, device-care demo).
+            waiting = store.facts.get(f"goal.{goal_id}.awaiting_confirmation")
+            if goal is not None and waiting is not None and waiting.status != FactStatus.RETRACTED:
+                call = store.call_ledger.get(waiting.value)
+                if call is not None and call.status == CallStatus.PROPOSED:
+                    return False
             text = salvage_text(store, goal_id)
         store.goals.update(goal_id, task_state=TaskState.RESPONDING)
         store.facts.set(

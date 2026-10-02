@@ -139,6 +139,7 @@ MANIFEST: list[dict] = [
         "description": "Pause, resume or stop a connected appliance through SmartThings (simulated in this demo). "
         "Only when the user has asked for it.",
         "mutability": "state_changing",
+        "repeatable": True,
         "params_schema": _obj(
             {"device_type": _str("The kind of device: washer."), "command": _str("pause, resume or stop.")},
             ["device_type", "command"],

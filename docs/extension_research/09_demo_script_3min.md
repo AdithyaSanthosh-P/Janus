@@ -38,33 +38,34 @@ real; the device adapter is replaceable through the tool manifest."**
 | 1:05 | User | "How do I fix that?" | Fix steps: tap fully open, inlet hose kinks, inlet filter |
 | 1:20 | User | "Can you resume the wash?" | `control_appliance(washer, resume)` → **the washer refuses** |
 | 1:25 | Agent | It won't resume while 4C is showing; fix the water supply first. | **Honest failure**: no "done" claim. Ledger counts it as refused, not committed. |
+| 1:35 | User | "Okay, then stop the wash." | `control_appliance(washer, stop)`: a second command to the same washer, run as a new command |
 | 1:40 | User | "Okay. Open an urgent ticket and book a technician for Friday afternoon." *(stop)* … "No wait, make the technician Saturday morning." | Two writes queued; the correction lands within about 1 s of the first turn ending |
 | 1:50 | Agent | Ticket opened, technician booked for Saturday morning. | `open_support_ticket(urgent)` once; `book_technician(Saturday, morning)` once; Friday is never booked |
 | 2:05 | User | "Book it for Saturday morning again." | The repeat guard: "You already have … confirmed. Do you want a second one?" (answer "no") |
-| 2:20 | Closing card | Effect ledger: **2 committed, 1 refused, 0 duplicates** | Printed by `effect_summary` |
+| 2:20 | Closing card | Effect ledger: **3 committed, 1 refused, 0 duplicates** | Printed by `effect_summary` |
 | 2:30 | Narration | "The important part isn't that the agent heard the correction. It's that the system changed what it was about to do." | Show the decision-log rows for the cancelled Friday request |
 | 3:00 | End | | |
 
-### Why the turns are in this order
+### Second device command
 
-`control_appliance` must be called only once per session. A second call (for example "stop" after
-"resume") currently hits the repeat-write guard and asks a nonsensical confirmation question. Fixing that
-is a kernel change (`repeatable` tool flag) and needs team approval; see `08_feasibility_triage.md`.
-The order above was checked in the deterministic harness on 2 Oct: ticket and booking once,
-Saturday morning, resume refused; ledger 2 committed / 1 refused / 0 duplicates.
+"Stop" after the refused "resume" used to be held by the repeat-write guard (a nonsensical "do you want a
+second one?") and then hit the 15 s stall salvage. Fixed 2 Oct: `control_appliance` is declared
+`repeatable` in the manifest (each request is a new command; bookings are still guarded), and the salvage
+waits while a "shall I go ahead?" question is open.
 
 ## Verification status (updated 2 Oct, late)
 
 | Step | Status |
 |---|---|
 | Router story (camera frame, fix steps, Thursday morning → Friday afternoon, one booking) | **Verified live** (text demo, Gemini, synthetic router photo), after the 2 Oct changes |
-| Washer story in this order (status 4C, fix steps, resume refused, ticket plus booking with the Saturday correction) | **Verified live** (text demo, Gemini): refusal reported honestly, one ticket, one Saturday booking, ledger 2 committed / 1 refused / 0 duplicates |
+| Washer story in this order (status 4C, fix steps, resume refused, stop, ticket plus booking with the Saturday correction) | **Verified live** (text demo, Gemini): refusal reported honestly, stop runs as a second command, one ticket, one Saturday booking, ledger 3 committed / 1 refused / 0 duplicates |
 | Repeat-booking question | Tested (`test_a_new_booking_request_after_one_went_through_is_confirmed_first`) |
 | Ledger summary at the end of a voice session | **Built** (`voice/agent.py`, demo mode, logged at shutdown; `entry.py` `meta["on_session"]` hook, tested); **NOT VERIFIED** in a real voice session |
 | Full voice plus camera session in the Playground with this script | **NOT VERIFIED** (needs a person, headphones and a camera) |
-| A second `control_appliance` call after one went through | Held by the repeat-write guard (see `08_feasibility_triage.md`); the script avoids it |
+| A second `control_appliance` call after one went through | **Fixed** (`repeatable` manifest flag); tested, and verified live in the washer story |
+| Router story flakiness | 3 of 4 live text runs correct; in one the model did not flag the camera, the agent asked for the colour, and turns 2–3 got no reply. Not reproduced; open |
 
 ## Remaining work
 
 1. One rehearsal in the Playground with camera and headphones (`JANUS_MODE=demo`, `scripts/make_demo_token.py`), then record.
-2. Optional, needs team approval: the two small kernel fixes listed in `08_feasibility_triage.md`.
+2. If the router story's silent run recurs, capture its decision log (`JANUS_DECISION_LOG_DIR`) and investigate.
