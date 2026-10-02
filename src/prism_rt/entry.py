@@ -32,6 +32,7 @@ is the second line of defense for anything that gets past it anyway.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
@@ -54,6 +55,7 @@ from prism_rt.workers.runner import AsyncWorkerRunner
 # enough that a worker completing mid-turn is picked up promptly; not so
 # small it busy-spins.
 _POLL_INTERVAL_S = 0.05
+_log = logging.getLogger("janus.runtime")
 
 
 class HarnessIO(Protocol):
@@ -235,11 +237,19 @@ class Runtime:
         failure path above, or if the event decoded to nothing."""
         try:
             envelopes = codec.decode(raw, seq=seq)
-        except Exception:  # noqa: BLE001 - decode is documented tolerant; this is pure insurance
+        except Exception as exc:  # noqa: BLE001 - decode is documented tolerant; this is pure insurance
+            _log.exception("janus: event could not be decoded (seq %d, type %r)", seq, raw.get("type") if isinstance(raw, dict) else None)
+            if kernel.log is not None:
+                kernel.log.error(step_no=None, now_us=None, message=f"decode failed: {exc!r}")
             return None
         try:
             report = kernel.step(envelopes)
-        except Exception:  # noqa: BLE001 - a single step's failure must not end the scenario
+        except Exception as exc:  # noqa: BLE001 - a single step's failure must not end the scenario
+            # Never silent: a swallowed step looked, in a live run, exactly like
+            # the agent choosing to say nothing (1 Oct audit).
+            _log.exception("janus: kernel step failed (seq %d)", seq)
+            if kernel.log is not None:
+                kernel.log.error(step_no=None, now_us=None, message=f"step failed: {exc!r}")
             return None
         summary.reports.append(report)
         summary.step_count += 1

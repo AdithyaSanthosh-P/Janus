@@ -13,6 +13,25 @@ from pathlib import Path
 from typing import Any
 
 
+def _value(x):
+    return getattr(x, "value", x)
+
+
+def _batch_entry(env) -> dict[str, Any]:
+    entry = {"seq": env.seq, "type": env.payload_type, "event_id": env.event_id, "ts_us": env.ts_us}
+    payload = env.payload
+    if env.payload_type == "worker_result":
+        # What the model proposed, before the kernel accepted or dropped it.
+        entry.update(job_id=payload.job_id, kind=payload.kind, status=payload.status, proposal=payload.proposal)
+    elif env.payload_type == "tool_result":
+        entry.update(call_id=payload.call_id, status=payload.status)
+    elif env.payload_type == "text_chunk":
+        entry["text"] = payload.text
+    elif env.payload_type == "user_speech":
+        entry["active"] = payload.active
+    return entry
+
+
 class DecisionLogger:
     def __init__(self, path: str | Path | None = None) -> None:
         self._path = Path(path) if path else None
@@ -25,10 +44,7 @@ class DecisionLogger:
             "step_no": step_no,
             "now_us": now_us,
             "batch_size": len(batch),
-            "batch": [
-                {"seq": env.seq, "type": env.payload_type, "event_id": env.event_id, "ts_us": env.ts_us}
-                for env in batch
-            ],
+            "batch": [_batch_entry(env) for env in batch],
             "notes": [],
         }
 
@@ -36,7 +52,17 @@ class DecisionLogger:
         if self._current is not None:
             self._current["notes"].append(message)
 
-    def end(self, *, step_no: int, now_us: int, change_set, invalidation, emit_report) -> dict[str, Any]:
+    def end(
+        self,
+        *,
+        step_no: int,
+        now_us: int,
+        change_set,
+        invalidation,
+        emit_report,
+        gate_rejections=(),
+        dispatched=(),
+    ) -> dict[str, Any]:
         record = self._current if self._current is not None else {
             "step_no": step_no,
             "now_us": now_us,
@@ -74,13 +100,37 @@ class DecisionLogger:
             {"action_type": rr.intended.action_type.value, "reason": rr.reason_code}
             for rr in emit_report.rejected
         ]
+        # Why a proposed call is still waiting (CommitGate), and which model
+        # jobs this step started -- found needed by the 1 Oct audit, which
+        # could not tell a model error from a kernel hold in a live log.
+        record["gate_rejections"] = [
+            {"call_id": gr.call_id, "tool": gr.tool, "rule": gr.rule_id, "reason": gr.blocked_reason} for gr in gate_rejections
+        ]
+        record["dispatched"] = [{"job_id": req.job_id, "kind": _value(req.kind)} for req in dispatched]
+        self._write(record)
+        self._current = None
+        return record
 
+    def error(self, *, step_no: int | None, now_us: int | None, message: str) -> dict[str, Any]:
+        """A step that raised: the batch it was handling (if `begin` ran)
+        and the error, instead of a silent gap in the log."""
+        record = self._current if self._current is not None else {
+            "step_no": step_no,
+            "now_us": now_us,
+            "batch_size": 0,
+            "batch": [],
+            "notes": [],
+        }
+        record["error"] = message
+        self._write(record)
+        self._current = None
+        return record
+
+    def _write(self, record: dict[str, Any]) -> None:
         self.records.append(record)
         if self._file is not None:
             self._file.write(json.dumps(record, default=str) + "\n")
             self._file.flush()
-        self._current = None
-        return record
 
     def close(self) -> None:
         if self._file is not None:

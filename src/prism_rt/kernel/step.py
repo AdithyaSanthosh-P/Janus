@@ -182,6 +182,8 @@ class Kernel:
                 change_set=change_set,
                 invalidation=invalidation,
                 emit_report=emit_report,
+                gate_rejections=gate_rejections,
+                dispatched=dispatch_requests,
             )
 
         return StepReport(
