@@ -106,17 +106,20 @@ def _status_text(store) -> str:
     if last is None:
         return "I haven't done anything yet — what would you like me to do?"
     done = done_summary(store, last.goal_id)
-    if not done and last.status == GoalStatus.ABANDONED:
+    if not done:
         # Found live, 29 Sep: a request dropped before anything ran hid the
         # booking just before it ("was the flight booked?" -> "nothing was
-        # done"). Say what the last request that did run achieved.
+        # done"). Say what the last request that did run achieved. Same for a
+        # request that needed nothing new because it had already gone
+        # through (executor._finish_with_prior_effect).
         earlier = last_goal_that_ran(store, exclude=last.goal_id)
         if earlier is not None:
-            return (
-                "Your last request was dropped before anything ran. Before that, "
-                + done_summary(store, earlier.goal_id)
-                + " That still stands."
+            lead = (
+                "Your last request was dropped before anything ran."
+                if last.status == GoalStatus.ABANDONED
+                else "Your last request needed nothing new; it had already been done."
             )
+            return f"{lead} Before that, {done_summary(store, earlier.goal_id)} That still stands."
     if last.status == GoalStatus.ABANDONED:
         tail = " It didn't finish, so nothing else was done." if done else " It didn't finish, so nothing was done."
     else:
@@ -155,10 +158,10 @@ def abort_text(store, goal_id: str) -> str:
     return "Okay, I've dropped that request. Nothing was done."
 
 
-def duplicate_write_text(call) -> str:
-    """G5 blocked an identical write whose effect is confirmed: say which one."""
-    values = ", ".join(str(v) for v in call.args.values())
-    what = f"{_human(call.tool)} ({values})" if values else _human(call.tool)
+def duplicate_write_text(tool: str, args: dict) -> str:
+    """An identical write whose effect is confirmed: say which one."""
+    values = ", ".join(str(v) for v in args.values())
+    what = f"{_human(tool)} ({values})" if values else _human(tool)
     return f"I've already done that — {what} went through earlier, so I won't repeat it."
 
 

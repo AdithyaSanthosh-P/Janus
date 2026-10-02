@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from prism_rt.kernel.action_plans import bind_key, valid_bind_fact
 from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.interpret_apply import active_goal_id
+from prism_rt.kernel.replies import duplicate_write_text
 from prism_rt.model.actions import CancelBody, IntendedAction
 from prism_rt.model.types import (
     EMPTY_READ_SET,
@@ -113,6 +114,20 @@ def _bfs_find_field(root: object, field_name: str) -> _FieldSearchResult:
 class BindResult:
     args: dict
     read_set: ReadSet
+
+
+def _fingerprint(store, tool: str, args: dict) -> str:
+    """Duplicate-detection fingerprint over the arguments as the tool will
+    receive them: schema defaults filled in. The FDB adapter fills them only
+    after emission, so {K2} and {K2, quantity: 1} used to look like two
+    different writes (1 Oct audit). Emitted arguments are unchanged."""
+    spec = store.catalog.get(tool)
+    props = ((spec.params_schema or {}).get("properties") or {}) if spec is not None else {}
+    filled = dict(args)
+    for name, schema in props.items():
+        if name not in filled and isinstance(schema, dict) and "default" in schema:
+            filled[name] = schema["default"]
+    return fingerprint_for(tool, filled)
 
 
 class PlanExecutor:
@@ -398,12 +413,15 @@ class PlanExecutor:
                     self._request_fresh_view(store, gid, stale_key, now_us, step_no)
                     continue
 
-            new_fingerprint = fingerprint_for(step.tool, bind_result.args)
+            new_fingerprint = _fingerprint(store, step.tool, bind_result.args)
             if self._write_lineage_confirmed_elsewhere(store, gid, step, new_fingerprint):
                 self._fail_goal(
                     store, gid, step, now_us, step_no,
                     reason=f"a previous {step.tool} request already went through before I could change it",
                 )
+                continue
+            if self._already_done_elsewhere(store, gid, plan, step, new_fingerprint):
+                self._finish_with_prior_effect(store, gid, step, bind_result.args, now_us, step_no)
                 continue
 
             call_id = store.ids.next("call")
@@ -936,6 +954,38 @@ class PlanExecutor:
             lineage_effect is not None
             and lineage_effect.status == EffectStatus.CONFIRMED
             and lineage_effect.fingerprint != fingerprint
+        )
+
+    def _already_done_elsewhere(self, store, goal_id: str, plan, step, fingerprint: str) -> bool:
+        """An identical write (same tool, same arguments with schema defaults
+        filled) already CONFIRMED this session, and it is this goal's only
+        unfinished work. Creating the call would leave it blocked by G5
+        forever: the goal never finished, an ACK said "working on it" and
+        the stall salvage later claimed nothing had been done (1 Oct audit,
+        ecommerce_13). With other steps still to run, the call is created
+        as before and G5's notice explains the block."""
+        if step.kind != StepKind.WRITE:
+            return False
+        effect = store.effect_ledger.by_fingerprint(fingerprint)
+        if effect is None or effect.status != EffectStatus.CONFIRMED:
+            return False
+        return all(other.step_key == step.step_key or self._step_done(store, goal_id, other.step_key) for other in plan.steps)
+
+    def _finish_with_prior_effect(self, store, goal_id: str, step, args: dict, now_us: int, step_no: int) -> None:
+        """The success counterpart of `_fail_goal`: the request is already
+        satisfied, so the goal answers with what went through and completes
+        (status stays ACTIVE until the FINAL is emitted, so it reports
+        task_completed=True)."""
+        goal = store.goals.get(goal_id)
+        if goal is not None and goal.task_state == TaskState.RESPONDING:
+            return
+        store.goals.update(goal_id, task_state=TaskState.RESPONDING)
+        store.facts.set(
+            f"compose.{goal_id}.text",
+            duplicate_write_text(step.tool, args),
+            FactStatus.COMMITTED,
+            Provenance(source="system", step_no=step_no, ts_us=now_us),
+            rule="executor.already_done",
         )
 
     def _fail_goal(self, store, goal_id: str, step, now_us: int, step_no: int, *, reason: str | None = None) -> None:

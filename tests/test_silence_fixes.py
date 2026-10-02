@@ -151,8 +151,11 @@ def test_repeat_booking_cancel_and_status_say_what_actually_ran():
         return [a.body.text for a in actions if a.action_type in (ActionType.SPEAK, ActionType.FINAL)]
 
     assert "I've already done that — book flight (Ana) went through earlier, so I won't repeat it." in turn(3_100_000, "book Ana again")
-    assert turn(5_200_000, "no cancel it") == ["Okay, I've dropped that request. Nothing new was done — your earlier request still stands."]
+    # The repeat finished at once (2 Oct: a write already confirmed is reported
+    # done, not left blocked), so there is nothing in progress to cancel.
+    assert turn(5_200_000, "no cancel it") == [
+        "There's nothing in progress to cancel. Book flight (Ana) already went through, and I can't cancel it from here."]
     assert turn(7_300_000, "was it booked") == [
-        "Your last request was dropped before anything ran. Before that, I ran book flight (Ana). That still stands. "
-        "What I found: booking ref B1."]
+        "Your last request needed nothing new; it had already been done. Before that, I ran book flight (Ana). "
+        "That still stands. What I found: booking ref B1."]
     assert_clean(h)

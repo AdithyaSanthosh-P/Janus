@@ -426,7 +426,7 @@ class FastResponder:
             confirmed = blocking_effect is not None and blocking_effect.status == EffectStatus.CONFIRMED
             text = INFORM_DUPLICATE_WRITE if confirmed else INFORM_UNKNOWN_WRITE_OUTCOME
             if confirmed and store.config.conversational_replies_enabled:
-                text = duplicate_write_text(call)
+                text = duplicate_write_text(call.tool, call.args)
             actions.append(
                 IntendedAction(
                     action_type=ActionType.SPEAK,

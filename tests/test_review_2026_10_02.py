@@ -143,3 +143,54 @@ def test_different_values_stay_different(a, b):
     from prism_rt.canonical import equivalent_values
 
     assert not equivalent_values(a, b) and not equivalent_values(b, a)
+
+
+# --- 1 Oct audit R03/R03b: a write already confirmed this session --------
+
+CART = {"name": "add_to_cart", "parameters": {"type": "object", "properties": {
+    "product_id": {"type": "string"}, "quantity": {"type": "integer", "default": 1}}, "required": ["product_id"]}}
+
+
+def _event_driven(h, until_us: int) -> list:
+    actions = []
+    while True:
+        due = [h.store.timers.next_due_us()]
+        due += [d for d, _k, _v in h.runner._pending.values()]
+        due += [entry[0] for entry in h.mock_tools._scheduled.values()]
+        due = [t for t in due if t is not None]
+        if not due or min(due) > until_us:
+            return actions
+        actions += [er.action for er in h.send(max(min(due), h.clock.now_us())).emit_report.emitted]
+
+
+def _repeat_write_run(second_args: dict):
+    """ecommerce_13 (voice): "could you add item K2" ran add_to_cart{K2}; the
+    rest of the sentence, "to my cart, just one of them", asked again with the
+    schema default spelled out."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "just one of them", {"act": "new_goal", "intent": "add_to_cart", "slot_deltas": [],
+                      "commit_intent": True, "actions": [{"tool": "add_to_cart", "args": second_args}]})
+    provider.register("interpret", "add item K2", {"act": "new_goal", "intent": "add_to_cart", "slot_deltas": [],
+                      "commit_intent": True, "actions": [{"tool": "add_to_cart", "args": {"product_id": "K2"}}]})
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    h = SimHarness(fdb_v3_config(), seed=1, provider=provider,
+                   tools={"add_to_cart": {"latency_ms": 50, "response": {"status": "success"}}},
+                   worker_latency_us={k: 10_000 for k in JobKind})
+    h.send(0, [manifest_event([CART])])
+    h.send(100_000, [chunk_event("could you add item K2")])
+    actions = [er.action for er in h.send(200_000, [eot_event()]).emit_report.emitted] + _event_driven(h, 5_000_000)
+    h.send(5_000_000, [chunk_event("to my cart just one of them")])
+    actions += [er.action for er in h.send(5_100_000, [eot_event()]).emit_report.emitted] + _event_driven(h, 40_000_000)
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+    return h, actions
+
+
+@pytest.mark.parametrize("second_args", [{"product_id": "K2"}, {"product_id": "K2", "quantity": 1}])
+def test_a_write_already_confirmed_is_reported_done_not_repeated(second_args):
+    h, actions = _repeat_write_run(second_args)
+    assert [a.body.tool_name for a in actions if a.action_type == ActionType.TOOL_CALL] == ["add_to_cart"]
+    later = [a for a in actions if a.ts_us >= 5_000_000]
+    spoken = [(a.action_type, a.body.text) for a in later if a.action_type in (ActionType.SPEAK, ActionType.CLARIFY, ActionType.FINAL)]
+    assert len(spoken) == 1 and spoken[0][0] == ActionType.FINAL  # no "working on it", no salvage
+    assert "already" in spoken[0][1] and "K2" in spoken[0][1]
+    assert all(g.status.value == "completed" for g in h.store.goals.all())
