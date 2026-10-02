@@ -20,19 +20,23 @@ command -v nvidia-smi >/dev/null || die "nvidia-smi not found: no NVIDIA driver 
 say "GPU: $(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader)"
 
 PY=""
-for c in python3.11 python3.12 python3.10 python3; do
+for c in python3.11 python3.12 python3; do
   command -v "$c" >/dev/null || continue
   v="$("$c" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-  case "$v" in 3.10|3.11|3.12) PY="$c"; break ;; esac
+  # Ubuntu 22.04's own python3.11 package is a pre-release (3.11.0rc1) that breaks modern PyTorch.
+  rc="$("$c" -c 'import sys; print(sys.version_info.releaselevel)')"
+  case "$v" in 3.11|3.12) [[ "$rc" == "final" ]] && { PY="$c"; break; } ;; esac
 done
 if [[ -z "$PY" ]]; then
-  say "no Python 3.10-3.12 found; trying apt (deadsnakes) for 3.11"
+  say "no Python 3.11 or 3.12 found (the pinned requirements need >= 3.11); trying apt (deadsnakes) for 3.11"
   $SUDO apt-get update -y >/dev/null
-  $SUDO apt-get install -y --no-install-recommends software-properties-common ca-certificates >/dev/null
+  # gnupg is needed to add the PPA key; without it apt silently falls back to the pre-release 3.11.0rc1.
+  $SUDO apt-get install -y --no-install-recommends software-properties-common ca-certificates gnupg dirmngr >/dev/null
   $SUDO add-apt-repository -y ppa:deadsnakes/ppa >/dev/null && $SUDO apt-get update -y >/dev/null
   $SUDO apt-get install -y --no-install-recommends python3.11 python3.11-venv python3.11-distutils >/dev/null
   PY=python3.11
 fi
+[[ "$("$PY" -c 'import sys; print(sys.version_info.releaselevel)')" == "final" ]] || die "$PY is a pre-release build; install a release Python 3.11 or 3.12 and re-run"
 say "python: $($PY --version) ($(command -v $PY))"
 
 command -v ffmpeg >/dev/null || { say "installing ffmpeg"; $SUDO apt-get update -y >/dev/null; $SUDO apt-get install -y --no-install-recommends ffmpeg git curl >/dev/null; }
