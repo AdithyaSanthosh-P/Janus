@@ -152,15 +152,17 @@ class FastResponder:
         acked = store.facts.get(f"ack.{goal_id}.acked_job")
         if acked is not None and acked.status != FactStatus.RETRACTED and acked.value == job_id:
             return []
-        store.facts.set(
-            f"ack.{goal_id}.acked_job",
-            job_id,
-            FactStatus.COMMITTED,
-            Provenance(source="system", step_no=step_no, ts_us=now_us),
-            rule="responder.ack",
-        )
+        provenance = Provenance(source="system", step_no=step_no, ts_us=now_us)
+        store.facts.set(f"ack.{goal_id}.acked_job", job_id, FactStatus.COMMITTED, provenance, rule="responder.ack")
         grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
         text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
+        # A re-plan (a re-extracted value, a correction) dispatches a new PLAN
+        # job; say the ACK again only if it now says something different --
+        # found in the 1 Oct audit (ecommerce_13): the identical ACK, twice.
+        spoken = store.facts.get(f"ack.{goal_id}.text")
+        if spoken is not None and spoken.status != FactStatus.RETRACTED and spoken.value == text:
+            return []
+        store.facts.set(f"ack.{goal_id}.text", text, FactStatus.COMMITTED, provenance, rule="responder.ack")
         return [
             IntendedAction(
                 action_type=ActionType.SPEAK,

@@ -194,3 +194,31 @@ def test_a_write_already_confirmed_is_reported_done_not_repeated(second_args):
     assert len(spoken) == 1 and spoken[0][0] == ActionType.FINAL  # no "working on it", no salvage
     assert "already" in spoken[0][1] and "K2" in spoken[0][1]
     assert all(g.status.value == "completed" for g in h.store.goals.all())
+
+
+# --- 1 Oct audit R06b: one acknowledgement per goal ----------------------------
+
+def test_a_replan_does_not_repeat_the_same_acknowledgement():
+    """ecommerce_13 (voice): a missing value was re-extracted, the goal went
+    back to planning with a new PLAN job, and the identical ACK was spoken a
+    second time 4 s after the first."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "", {"act": "new_goal", "intent": "add_to_cart", "commit_intent": True,
+                      "slot_deltas": [{"name": "quantity", "op": "set", "value": 1}],
+                      "ack_phrase": "I'll add one of those items to your cart."})
+    provider.register("plan", "", {"steps": [{"local_id": "s1", "tool": "add_to_cart", "kind": "write", "after": [],
+                      "bindings": {"product_id": {"type": "fact", "key": "slot.$G.product_id"},
+                                   "quantity": {"type": "fact", "key": "slot.$G.quantity"}}}]})
+    provider.register("extract", "", {"value": "K2"})
+    provider.register("compose", "", {"text": "Added K2.", "claims": []})
+    latency = {k: 10_000 for k in JobKind}
+    latency.update({JobKind.PLAN: 1_000_000, JobKind.EXTRACT: 800_000})
+    h = SimHarness(fdb_v3_config(), seed=1, provider=provider,
+                   tools={"add_to_cart": {"latency_ms": 50, "response": {"status": "success"}}}, worker_latency_us=latency)
+    h.send(0, [manifest_event([CART])])
+    h.send(100_000, [chunk_event("could you add item K2 to my cart, just one of them")])
+    actions = [er.action for er in h.send(1_600_000, [eot_event()]).emit_report.emitted] + _event_driven(h, 30_000_000)
+    acks = [a.body.text for a in actions if a.action_type == ActionType.SPEAK and a.body.kind == "ack"]
+    assert acks == ["I'll add one of those items to your cart."]
+    assert [a.body.tool_name for a in actions if a.action_type == ActionType.TOOL_CALL] == ["add_to_cart"]
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
