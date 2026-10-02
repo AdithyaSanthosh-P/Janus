@@ -1,0 +1,19 @@
+taxonomy,class,definition,recordings,status
+audit_2026-10-01,split_turn,Turn ended mid-sentence by the voice bridge; the first half was acted on alone,10,"Turn splitting fixed 1 Oct; on 2 Oct 6 of 10 of these recordings pass, 4 fail for other reasons (label wording, a client abort)"
+audit_2026-10-01,reasoning,"Interpretation error that also fails in text replay (filter update folded into a search, conditionals, typed values)",9,Open; several are label-schema questions
+audit_2026-10-01,label_mismatch,"Label disagrees with the audio or is stricter than the judge (""keyboards"" vs ""keyboard"", city never spoken)",7,Mostly not recoverable honestly
+audit_2026-10-01,schema_gap,"Label needs pets_allowed, which the declared tool schema does not have",6,Open; deliberate (integrity question)
+audit_2026-10-01,stt_error,Speech-to-text dropped or misheard a word,3,Hosted STT helps; whole-turn re-transcription not built
+audit_2026-10-01,infra,Agent joined late (a stray demo worker shared the LiveKit project),1,Operational; not a code fault
+full100_2026-09-29,A,FDB client aborted after the stream (SIGABRT); no result recorded,8,"Late speech at teardown removed by the filler filter; 0 aborts in a later 32-recording run, 2 in the 2 Oct run"
+full100_2026-09-29,B,"Late or stalled execution: agent silent, calls 15-40 s after speech end or never",13,Whisper CPU fallback (fixed 30 Sep) and two kernel liveness bugs (fixed)
+full100_2026-09-29,C,Premature end-of-turn at a mid-utterance pause gave a partial interpretation,6,Turn-ending fix 1 Oct
+full100_2026-09-29,C2,"Same root cause, extra calls: a read ran on the first half, then again after the rest",4,Turn-ending fix 1 Oct
+full100_2026-09-29,D,"Enum-like values not in the canonical form the tool implies (driver license, filter keys)",7,Interpreter value rule 30 Sep
+full100_2026-09-29,E,"Spoken-ID shapes from Whisper not canonicalised (""P.O. 999"", ""F A S T nine nine"")",3,Spoken-ID joiner 30 Sep
+full100_2026-09-29,F,"Exact-match brittleness the judge usually accepts (""Vegas"" vs ""Las Vegas"")",5,Judge scoring
+full100_2026-09-29,G,Speech-to-text or label disagrees with the audio,4,Not recoverable
+full100_2026-09-29,H,Tool-schema gap (search_apartments has no pets_allowed),3,Open; deliberate
+full100_2026-09-29,I,Interpretation or reasoning error,3,Partly open
+full100_2026-09-29,J,Conditionals: both branches executed,2,Open
+full100_2026-09-29,K,Sequential-chain blocking: an independent action waited on a blocked one,1,Independent-action fix 2 Oct (not yet re-measured)

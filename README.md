@@ -8,9 +8,9 @@ Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptib
 
 **Highlights**
 - **Self-correction, the category FDB-v3 finds hardest for every system:** 0.412 Pass@1 on our full voice run, against 0.176 for the published cascaded pipeline (the same family as ours); 0.824 for the reasoning core in text replay.
-- **77 % strict pass rate for the reasoning core** on all 100 FDB-v3 scenarios (text replay, judged with gpt-4o); 42 % on the full voice path, with the hardest recordings since improved from 4 to 13 of 31.
+- **77 % strict pass rate for the reasoning core** on all 100 FDB-v3 scenarios (text replay, judged with gpt-4o); 42 % on the full voice path, with the hardest recordings since improved from 4 to 13 of 31, and from 12 to 16 of 26 after a turn-ending fix (below). Every run is recorded in [`BENCHMARKS.md`](BENCHMARKS.md).
 - **No double actions, no false claims, by construction:** every write passes one commit gate and is recorded before it is emitted; a correction cancels stale work in the same kernel step.
-- **Deterministic and replayable:** 499 tests on a stepped clock with a trace checker over every decision log, plus an adversarial explorer over 19 race scenarios.
+- **Deterministic and replayable:** 575 tests on a stepped clock with a trace checker over every decision log, plus an adversarial explorer over 19 race scenarios.
 - **Use-case extension:** camera-grounded device care over live voice: it reads the device from the camera, diagnoses it, and books exactly one technician visit.
 
 > **Provider declaration.** Custom LiveKit agent (Janus). Decisions: the Janus kernel with **Gemini 3.6 Flash** (hosted Gemini API, thinking budget 0, temperature 0). Speech-to-text: **OpenAI `gpt-4o-mini-transcribe-2025-12-15`** (hosted, pinned snapshot). Local on the GPU: **Kokoro-82M** (TTS), **Silero VAD**. Nothing else is called at evaluation time. Keys needed: LiveKit, `GEMINI_API_KEY`, `OPENAI_API_KEY` (see [Keys](#keys)). Two switches change the providers: `JANUS_STT=local` runs faster-whisper large-v3-turbo on the GPU instead, and `JANUS_LLM_PROVIDER=openai` moves decisions to OpenAI (see [Keys](#keys)); every run writes the providers it actually used to `PROVIDER.txt`.
@@ -200,6 +200,7 @@ All numbers below are FDB-v3's own runner and evaluators, unmodified, at the pin
 | Janus, **voice** over LiveKit, all 100 recordings, cloud RTX 3090, native path (29–30 Sep, before the fixes below) | 42.0 % | 0.844 | 0.611 | 0.597 |
 | Janus, **voice**, 32-recording rerun of that run's hardest recordings, after the speech-to-text GPU fix | 11 / 32 (was 8 / 32) | | | exact-match; turn-taking 32 / 32 (was 72 %); first word 7.8 s mean |
 | Janus, **voice**, current code with hosted speech-to-text, on recordings the full run failed (30 Sep) | 13 / 31 (the same recordings: 4 / 30 in the full run) | | | judged; turn-taking 64 / 64 |
+| Janus, **voice**, current code (2 Oct, local speech-to-text), 26 recordings including the earlier turn-splitting failures | 16 / 26 (the same recordings: 12 / 26 on 30 Sep) | | | exact-match; turns cut off mid-sentence: 0 (31 on 30 Sep); judge not run |
 | Published FDB-v3 baselines (paper, Table 2): GPT-Realtime / Gemini Live 3.1 / Cascaded | 60.0 % / 54.0 % / 45.0 % | 0.876 / 0.817 / 0.803 | 0.680 / 0.588 / 0.562 | 0.792 / 0.718 / 0.600 |
 
 Notes on the table:
@@ -210,9 +211,10 @@ Notes on the table:
   - A kernel liveness bug left a clarifying question undispatched when no other event arrived.
   - The stall timeout could fire while the user was still speaking.
   - Whisper's silence hallucinations ("you", "Hmm.") were taken as turns.
+  - The voice bridge restarted its end-of-turn timer whenever a transcript arrived. Hosted transcription lands about a second after its segment, usually after the user had resumed, so turns were closed mid-sentence (86 early closes across 52 of 72 recordings). End-of-turn now follows the user's silence, waits for outstanding transcripts, and the kernel is told when the user is speaking. On 26 recordings re-run on 2 Oct: 0 early closes (31 before) and 16 passes (12 before).
   - Spoken codes ("F A S T nine nine") were not joined into identifiers.
   
-  Eight recordings were also lost to the benchmark client itself aborting after the stream; our decision logs show correct tool calls in six of them. The full voice run has not yet been repeated with these fixes.
+  Eight recordings were also lost to the benchmark client itself aborting after the stream; our decision logs show correct tool calls in six of them. The full voice run has not yet been repeated with these fixes; [`BENCHMARKS.md`](BENCHMARKS.md) lists every run, which comparisons are like for like, and what each failure was.
 - **Turn-taking and latency** on the post-fix rerun: the agent responded in all 32 recordings; mean time to its first word was 7.8 s (median 6.7 s). Published first-word means (paper Table 6): GPT-Realtime 6.36 s, Gemini Live 3.1 3.95 s, the cascaded pipeline 8.78 s. Part of ours is deliberate: a turn closes after 1.5 s of silence, and a call waits a settle window so a correction can still land.
 - By domain (text replay): finance 100 %, travel 95 %, e-commerce 83 %, **housing 35 %**. Housing is the weakest domain for every published system too; ours fails mostly on argument values in long, constraint-heavy requests.
 - **Self-correction** ("…no wait, make it Friday") is the category the paper finds hardest for every system (Table 3, Pass@1 per category: GPT-Realtime 0.588, Gemini Live 3.1 0.353, the cascaded Whisper pipeline 0.176). It is what the kernel is built for: **0.824** in text replay, and **0.412** on the voice run above, against 0.176 for the published cascaded pipeline, the same family as ours.
@@ -241,7 +243,7 @@ With both set to `openai`, a run needs only LiveKit and OpenAI keys: the same Op
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-python -m pytest tests/ -q          # 499 tests, deterministic: stepped clock, scripted model, mock tools
+python -m pytest tests/ -q          # 575 tests, deterministic: stepped clock, scripted model, mock tools
 docker build -t janus . && docker run --rm janus     # the same suite on Python 3.11
 ```
 
@@ -249,7 +251,7 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 
 ## Limitations
 
-- **The full-100 voice run (42 %) predates the fixes above.** It has not been repeated on all 100; on the recordings it failed, the current code passes 13 of 31 (the same recordings: 4 of 30 before). The organizers' re-run measures the current code.
+- **The full-100 voice run (42 %) predates the fixes above.** It has not been repeated on all 100; on the recordings it failed, the current code passes 13 of 31 (the same recordings: 4 of 30 before), and 16 of 26 after the turn-ending fix (12 of 26 before; that run used local speech-to-text, so it is not like for like with the hosted-transcription runs). The organizers' re-run measures the current code.
 - **Our voice runs used the native path** (`scripts/fdb_v3/native_run.sh`, the same inner script `./reproduce.sh` runs in its container) on a cloud GPU without Docker; the Docker wrapper itself is verified in its parts.
 - **Speech-to-text still mishears some names** (e.g. a city). Hosted transcription is the default for that reason; the local faster-whisper option mishears more.
 - **Housing (35 %)** is the weakest domain; argument values in long constraint-heavy requests are the main loss.
@@ -271,6 +273,7 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 | `src/prism_rt/observability/` | Decision log, watchdog, metrics, kernel X-ray |
 | `src/prism_rt/sim/` | Deterministic harness, `TraceChecker`, adversarial explorer |
 | `docs/` | Architecture (`prompt 2.txt`), measurements, integration notes, [version history](docs/history.md) |
+| `BENCHMARKS.md`, `benchmarks/` | Every benchmark run, the failures behind the misses, and the CSVs they come from |
 | `currentStatus.md`, `CLAUDE.md` | Live project state and working rules |
 
 ## Citations

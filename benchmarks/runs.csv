@@ -1,0 +1,73 @@
+run_id,date,kind,class,phase,scored_by,scenarios,passed,pass_rate,tool_selection_acc,argument_acc,response_quality,turn_take_rate,avg_response_latency_s,model,stt,commit,overrides,description,source
+text_fdb_v3_text_replay,2026-09-25,text_replay,subset,Day 1,exact,20,0,0.0,0.2,0.0,,1.0,,,,,,"First harness run, 20 scenarios (all e-commerce); bare fact-key bug stalled every scenario",run_output/fdb_v3_text_replay
+text_fdb_v3_text_replay_full100,2026-09-25,text_replay,full100,Day 1,exact,100,21,0.21,0.493,0.25,,0.94,,,,,,"Full 100, gemini-3.5-flash-lite; G4 commit-intent gate blocked undeclared-mutability tools",run_output/fdb_v3_text_replay_full100
+text_fdb_v3_text_replay_full100_g4fix,2026-09-25,text_replay,full100,Day 1,exact,100,33,0.33,0.832,0.411,,0.95,,,,,,G4 exemption for tools that declare no mutability,run_output/fdb_v3_text_replay_full100_g4fix
+text_fdb_v3_text_replay_wp2,2026-09-26,text_replay,full100,Day 2,exact,100,42,0.42,0.931,0.505,,0.96,,,,,,Multi-action interpretation + settle barrier + FDB profile,run_output/fdb_v3_text_replay_wp2
+lk_20260927_173552,2026-09-27,voice_local,debug,,exact,0,0,0,,,,,,,,,,,run_output/livekit_20260927_173552
+lk_20260927_173959,2026-09-27,voice_local,debug,S1,exact,1,0,0.0,1.0,0.0,,1.0,8.0,,,,,"First LiveKit run, 1 recording (travel_01)",run_output/livekit_20260927_173959
+lk_20260927_174631,2026-09-27,voice_local,subset,S1,exact,5,1,0.2,0.75,0.25,,0.8,8.2,,,,,5 recordings (after the first reboot),run_output/livekit_20260927_174631
+lk_20260927_175223,2026-09-27,voice_local,subset,S1,exact,26,11,0.423,0.984,0.524,,0.808,7.482,,,,,"26-recording stratified sample, first voice baseline (laptop GPU)",run_output/livekit_20260927_175223
+lk_20260927_213947,2026-09-27,voice_local,subset,S2,exact,26,15,0.577,0.97,0.682,,0.846,6.172,,,,,Same 26 recordings after the quick-win pack and value rules,run_output/livekit_20260927_213947
+lk_20260927_222409,2026-09-27,voice_local,debug,S2,exact,6,3,0.5,1.0,0.75,,0.667,10.4,,,,,Targeted check of the speech-recognition silence fix,run_output/livekit_20260927_222409
+lk_20260927_223446,2026-09-27,voice_local,debug,S2,exact,6,3,0.5,1.0,0.75,,0.667,6.24,,,,,Targeted check of the speech-recognition silence fix,run_output/livekit_20260927_223446
+lk_20260927_225322,2026-09-27,voice_local,debug,S2,exact,4,2,0.5,1.0,1.0,,0.5,12.16,,,,,"Targeted check, 4 recordings",run_output/livekit_20260927_225322
+lk_20260927_230003,2026-09-27,voice_local,debug,S2,exact,4,3,0.75,1.0,1.0,,0.75,5.333,,,,,"Targeted check, 4 recordings",run_output/livekit_20260927_230003
+lk_20260927_230439,2026-09-27,voice_local,debug,S2,exact,2,2,1.0,1.0,1.0,,1.0,5.2,,,,,"Targeted check, 2 recordings",run_output/livekit_20260927_230439
+lk_20260927_230718,2026-09-27,voice_local,subset,S2,exact,26,15,0.577,0.841,0.619,,0.808,6.141,,,,,26-recording sample after the speech-recognition CUDA fixes,run_output/livekit_20260927_230718
+text_s2_full100_v2,2026-09-27,text_replay,full100,S2,exact,100,64,0.64,0.92,0.703,,1.0,,,,,,"Plus value rules (date ordinals, currency codes, account words, leading articles)",run_output/s2_full100_v2
+text_s2_full100_v3,2026-09-27,text_replay,full100,S2,exact,100,68,0.68,0.941,0.735,,1.0,,,,,,Leading-article rule reverted (FDB labels inconsistent on articles),run_output/s2_full100_v3
+text_s2_full100_validation,2026-09-27,text_replay,full100,S2,exact,100,52,0.52,0.942,0.61,,1.0,,,,,,Quick-win pack (11 items) before value rules,run_output/s2_full100_validation
+text_s2_housing13_after_fix,2026-09-27,text_replay,debug,,exact,1,0,0.0,,,,0.0,,,,,,,run_output/s2_housing13_after_fix
+text_s2_housing13_after_fix2,2026-09-27,text_replay,debug,,exact,1,0,0.0,0.0,0.0,,1.0,,,,,,,run_output/s2_housing13_after_fix2
+text_s2_validation_20,2026-09-27,text_replay,subset,S2,exact,20,15,0.75,0.95,0.75,,1.0,,,,,,"20-scenario slice (alphabetical, all e-commerce) after the silent-stall fixes",run_output/s2_validation_20
+text_s2_validation_housing11,2026-09-27,text_replay,debug,,exact,1,0,0.0,0.0,0.0,,1.0,,,,,,,run_output/s2_validation_housing11
+text_s2_validation_housing13,2026-09-27,text_replay,debug,,exact,1,0,0.0,,,,0.0,,,,,,,run_output/s2_validation_housing13
+text_s2_validation_housing13_retry,2026-09-27,text_replay,debug,,exact,1,0,0.0,,,,0.0,,,,,,,run_output/s2_validation_housing13_retry
+text_stall_debug_finance_15,2026-09-27,text_replay,debug,,exact,1,1,1.0,1.0,1.0,,1.0,,,,,,,run_output/stall_debug_finance_15
+text_stall_debug_housing_11,2026-09-27,text_replay,debug,,exact,1,0,0.0,,,,0.0,,,,,,,run_output/stall_debug_housing_11
+text_stall_debug_housing_13,2026-09-27,text_replay,debug,,exact,1,0,0.0,,,,0.0,,,,,,,run_output/stall_debug_housing_13
+lk_20260928_195832,2026-09-28,voice_local,debug,S3,exact,1,0,0.0,1.0,0.5,0.0,1.0,13.44,,,,,One recording during the live-demo fixes,run_output/livekit_20260928_195832
+text_s3_full100_A,2026-09-28,text_replay,full100,S3,exact,100,65,0.65,0.927,0.723,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,action_plans_enabled=false fill_unstated_required_enabled=false,Arm A: action plans and assume-and-say both off,run_output/s3_full100_A
+text_s3_full100_A.judged,2026-09-28,text_replay,full100,S3,judged,100,66,0.66,0.927,0.723,0.74,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,action_plans_enabled=false fill_unstated_required_enabled=false,Arm A: action plans and assume-and-say both off,run_output/s3_full100_A/rescore_llm
+text_s3_full100_A2,2026-09-28,text_replay,full100,S3,exact,100,66,0.66,0.923,0.713,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,action_plans_enabled=false fill_unstated_required_enabled=false,Arm A2: repeat of A (run-to-run noise),run_output/s3_full100_A2
+text_s3_full100_A2.judged,2026-09-28,text_replay,full100,S3,judged,100,68,0.68,0.923,0.718,0.77,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,action_plans_enabled=false fill_unstated_required_enabled=false,Arm A2: repeat of A (run-to-run noise),run_output/s3_full100_A2/rescore_llm
+text_s3_full100_B,2026-09-28,text_replay,full100,S3,exact,100,62,0.62,0.908,0.678,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,action_plans_enabled=false,Arm B: assume-and-say only,run_output/s3_full100_B
+text_s3_full100_B.judged,2026-09-28,text_replay,full100,S3,judged,100,63,0.63,0.908,0.675,0.72,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,action_plans_enabled=false,Arm B: assume-and-say only,run_output/s3_full100_B/rescore_llm
+text_s3_full100_C,2026-09-28,text_replay,full100,S3,exact,100,66,0.66,0.964,0.74,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,"Arm C: action plans + assume-and-say, earlier prompt",run_output/s3_full100_C
+text_s3_full100_C.judged,2026-09-28,text_replay,full100,S3,judged,100,72,0.72,0.964,0.765,0.8,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,"Arm C: action plans + assume-and-say, earlier prompt",run_output/s3_full100_C/rescore_llm
+text_s3_full100_C2,2026-09-28,text_replay,full100,S3,exact,100,70,0.7,0.974,0.768,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,"Arm C2: both on, current prompt (the arm kept)",run_output/s3_full100_C2
+text_s3_full100_C2.judged,2026-09-28,text_replay,full100,S3,judged,100,73,0.73,0.974,0.767,0.8,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,"Arm C2: both on, current prompt (the arm kept)",run_output/s3_full100_C2/rescore_llm
+text_s3_full100_D,2026-09-28,text_replay,full100,S3,judged,100,73,0.73,0.933,0.767,0.77,1.0,,gemini-3.5-flash-lite,,f70857c-dirty,,"Arm D: C2 re-run after late binding (judged), flash-lite",run_output/s3_full100_D
+text_s3_full100_E_flash,2026-09-28,text_replay,full100,S3,judged,100,73,0.73,0.953,0.76,0.83,1.0,,gemini-3.6-flash,,8fa5e67,,Arm E: same as D with gemini-3.6-flash (became the default model),run_output/s3_full100_E_flash
+text_s3_targeted_1000_ecommerce_20_,2026-09-28,text_replay,debug,,exact,1,0,0.0,0.8,1.0,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_1000/ecommerce_20_
+text_s3_targeted_1000_housing_10_,2026-09-28,text_replay,debug,,exact,1,0,0.0,1.0,0.0,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_1000/housing_10_
+text_s3_targeted_1000_housing_13_,2026-09-28,text_replay,debug,,exact,1,0,0.0,0.0,0.0,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_1000/housing_13_
+text_s3_targeted_1000_housing_18_,2026-09-28,text_replay,debug,,exact,1,0,0.0,0.667,0.5,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_1000/housing_18_
+text_s3_targeted_1000_housing_20_,2026-09-28,text_replay,debug,,exact,1,0,0.0,1.0,0.667,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_1000/housing_20_
+text_s3_targeted_1000_housing_21_,2026-09-28,text_replay,debug,,exact,1,0,0.0,0.0,0.0,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_1000/housing_21_
+text_s3_targeted_1000_housing_22_,2026-09-28,text_replay,debug,,exact,1,0,0.0,1.0,0.333,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_1000/housing_22_
+text_s3_targeted_1000_housing_24_,2026-09-28,text_replay,debug,,exact,2,0,0.0,0.25,0.167,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_1000/housing_24_
+text_s3_targeted_1000_housing_25_,2026-09-28,text_replay,debug,,exact,1,0,0.0,0.5,0.0,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_1000/housing_25_
+text_s3_targeted_1000_travel_07_,2026-09-28,text_replay,debug,,exact,2,1,0.5,0.5,0.5,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_1000/travel_07_
+text_s3_targeted_inc2_1012_ecommerce_20_,2026-09-28,text_replay,debug,,exact,1,0,0.0,0.8,1.0,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_inc2_1012/ecommerce_20_
+text_s3_targeted_inc2_1012_housing_10_,2026-09-28,text_replay,debug,,exact,1,0,0.0,1.0,0.0,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_inc2_1012/housing_10_
+text_s3_targeted_inc2_1012_housing_13_,2026-09-28,text_replay,debug,,exact,1,0,0.0,0.0,0.0,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_inc2_1012/housing_13_
+text_s3_targeted_inc2_1012_housing_18_,2026-09-28,text_replay,debug,,exact,1,0,0.0,1.0,0.5,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_inc2_1012/housing_18_
+text_s3_targeted_inc2_1012_housing_20_,2026-09-28,text_replay,debug,,exact,1,0,0.0,1.0,0.667,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_inc2_1012/housing_20_
+text_s3_targeted_inc2_1012_housing_21_,2026-09-28,text_replay,debug,,exact,1,0,0.0,0.0,0.0,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_inc2_1012/housing_21_
+text_s3_targeted_inc2_1012_housing_22_,2026-09-28,text_replay,debug,,exact,1,0,0.0,1.0,0.333,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_inc2_1012/housing_22_
+text_s3_targeted_inc2_1012_housing_24_,2026-09-28,text_replay,debug,,exact,2,0,0.0,0.9,0.5,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_inc2_1012/housing_24_
+text_s3_targeted_inc2_1012_housing_25_,2026-09-28,text_replay,debug,,exact,1,0,0.0,0.8,0.333,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_inc2_1012/housing_25_
+text_s3_targeted_inc2_1012_travel_07_,2026-09-28,text_replay,debug,,exact,2,0,0.0,0.0,0.0,,1.0,,gemini-3.5-flash-lite,,7a22495-dirty,,,run_output/s3_targeted_inc2_1012/travel_07_
+lk_20260927_230718.judged,2026-09-29,voice_local,subset,S2,judged,26,16,0.615,0.841,0.667,0.524,0.808,6.141,,,,,26-recording sample after the speech-recognition CUDA fixes,run_output/livekit_20260927_230718
+text_openai_gpt41_subset,2026-09-29,text_replay,subset,29 Sep,judged,15,7,0.467,0.96,0.633,0.8,1.0,,gpt-4.1,,dd1e648-dirty,,"gpt-4.1 as the reasoning model, 15 scenarios",run_output/openai_gpt41_subset
+text_openai_gpt41_subset_r3,2026-09-29,text_replay,subset,29 Sep,judged,15,8,0.533,0.96,0.622,0.733,1.0,,gpt-4.1,,871e088-dirty,,"gpt-4.1, 15 scenarios, third repeat",run_output/openai_gpt41_subset_r3
+cloud_20260929_232528,2026-09-30,voice_cloud,full100,Cloud,exact,100,41,0.41,0.844,0.611,,0.72,8.032,gemini-3.6-flash,"faster-whisper large-v3-turbo (local, GPU)",unknown,,"All 100 recordings, native path, RTX 3090, local Whisper (fell back to CPU for the last quarter)",docs/runs/janus_fdbv3_voice_full100_2026-09-30.tgz
+cloud_20260929_232528.judged,2026-09-30,voice_cloud,full100,Cloud,judged,100,42,0.42,0.844,0.611,0.597,0.72,8.032,gemini-3.6-flash,"faster-whisper large-v3-turbo (local, GPU)",unknown,,"All 100 recordings, native path, RTX 3090, local Whisper (fell back to CPU for the last quarter)",docs/runs/janus_fdbv3_voice_full100_2026-09-30.tgz
+cloud_20260930_032600,2026-09-30,voice_cloud,subset,Cloud,exact,32,11,0.344,0.877,0.5,,1.0,7.77,gemini-3.6-flash,"faster-whisper large-v3-turbo (local, GPU)",unknown,,"32 hardest recordings of the full run, after the Whisper GPU fix",docs/runs/janus_fdbv3_voice_rerun32_2026-09-30.tgz
+cloud_20260930_140536,2026-09-30,voice_cloud,subset,Cloud,exact,64,12,0.188,0.363,0.24,,1.0,7.13,gemini-3.6-flash,gpt-4o-mini-transcribe-2025-12-15 (hosted OpenAI API),unknown,,"64 recordings, hosted speech-to-text; 33 rooms were served by a stray demo worker and score 0 (31 valid)",docs/runs/janus_fdbv3_voice_run64_2026-09-30.tgz
+cloud_20260930_174502,2026-09-30,voice_cloud,subset,Cloud,judged,41,17,0.415,0.835,0.524,0.366,1.0,6.396,gemini-3.6-flash,gpt-4o-mini-transcribe-2025-12-15 (hosted OpenAI API),unknown,,"41 recordings (clean re-run of the 29 contaminated ids), hosted speech-to-text, judged",docs/runs/janus_fdbv3_voice_clean41_2026-09-30.tgz
+text_text_replay_0930_final,2026-09-30,text_replay,full100,30 Sep,judged,100,77,0.77,0.949,0.803,0.82,1.0,,gemini-3.6-flash,,a928087-dirty,,Configuration of the 30 Sep submission,run_output/text_replay_0930_final
+text_text_replay_0930_fixes,2026-09-30,text_replay,full100,30 Sep,judged,100,77,0.77,0.959,0.807,0.84,1.0,,gemini-3.6-flash,,31ae4cb-dirty,,Identifier-style value rule + spoken-ID joiner,run_output/text_replay_0930_fixes
+text_text_replay_0930_setting,2026-09-30,text_replay,full100,30 Sep,judged,100,75,0.75,0.963,0.795,0.85,1.0,,gemini-3.6-flash,,838cea7-dirty,,Tried: 'update a setting' prompt rule (reverted: 75% vs 77%),run_output/text_replay_0930_setting
+cloud_20261002_061207,2026-10-02,voice_cloud,subset,Cloud,exact,26,16,0.615,0.958,0.736,,0.923,6.847,gemini-3.6-flash,"faster-whisper large-v3-turbo (local, GPU)",86e5fc95,,"26 recordings (10 split-turn failures, 5 fragile passes, 3 controls), local Whisper, after the turn-ending fix",docs/runs/janus_fdbv3_voice_verify26_2026-10-02.tgz

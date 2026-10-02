@@ -1,5 +1,7 @@
 # Measurements
 
+> **Benchmark runs** (FDB-v3 text replay and voice, the failures behind the misses, and the data as CSV) are recorded in [`BENCHMARKS.md`](../BENCHMARKS.md). This page keeps the kernel-level measurements (tests, per-step latency, adversarial exploration, simulator numbers); its FDB-v3 section below is the 30 Sep snapshot.
+
 All numbers on this page were produced by actually running this repository's own test suite and a small benchmark script against `SimHarness` — none are estimated or asserted from design intent. Where the project's guiding rule ("never claim untested work is verified") would be violated by a number we don't actually have (e.g. scoring against the hidden evaluation kit, which is unreleased), that's stated explicitly rather than approximated.
 
 ## Test coverage by version
@@ -125,7 +127,7 @@ Bounded, not exhaustive: latency knobs are per worker *kind*, event order is alw
 
 Current suite: **246/246 passing**, Docker-verified on Python 3.11.
 
-## FDB-v3: current results (30 Sep 2026)
+## FDB-v3: results as of 30 Sep 2026 (later runs are in `BENCHMARKS.md`)
 
 FDB-v3's own runner and evaluators at the pinned commit `3e799c45`, unmodified. "Judged" means FDB's `--use-llm` with `gpt-4o`, the organizers' evaluation setting.
 
@@ -144,7 +146,7 @@ What the full voice run's decision logs showed, each fixed with a regression tes
 - **Whisper artefacts**: silence hallucinations ("you", "Hmm.") became turns; spoken codes ("F A S T nine nine") were not joined into identifiers.
 - **8 recordings lost to the benchmark client aborting (SIGABRT) after the stream**; the agent's decision logs show correct tool calls in 6 of them.
 
-Hosted transcription (`JANUS_STT=openai`, `gpt-4o-mini-transcribe-2025-12-15`) heard every name and code local Whisper got wrong on the checked recordings ("Chicago", "Milan", "BOB12", "123ABC", "P88990011"); a voice run with it has not been scored yet.
+Hosted transcription (`JANUS_STT=openai`, `gpt-4o-mini-transcribe-2025-12-15`) heard every name and code local Whisper got wrong on the checked recordings ("Chicago", "Milan", "BOB12", "123ABC", "P88990011"). Voice runs with it, the 1-2 Oct audit of why turns were being cut off mid-sentence, the turn-ending fix and its live check (0 early closes on 26 recordings, 16/26 exact against 12/26 before) are recorded in `BENCHMARKS.md`.
 
 ## FDB-v3 published baselines (docs/fdb_v3_implementation_plan.md Day 1)
 

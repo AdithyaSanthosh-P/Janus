@@ -1,0 +1,73 @@
+category,metric,value,unit,date,condition,source
+tests,tests passing,328,count,2026-09-27,before S2,currentStatus.md / pytest
+tests,tests passing,352,count,2026-09-27,S2 quick-win pack,currentStatus.md / pytest
+tests,tests passing,377,count,2026-09-28,S3 action plans + late binding,currentStatus.md / pytest
+tests,tests passing,418,count,2026-09-29,extension + reproduction + docs,currentStatus.md / pytest
+tests,tests passing,447,count,2026-09-30,voice-path fixes,currentStatus.md / pytest
+tests,tests passing,486,count,2026-09-30,polish pass,currentStatus.md / pytest
+tests,tests passing,499,count,2026-09-30,submission,currentStatus.md / pytest
+tests,tests passing,519,count,2026-10-01,turn-ending fix,currentStatus.md / pytest
+tests,tests passing,522,count,2026-10-02,speculative-promotion fix,currentStatus.md / pytest
+tests,tests passing,524,count,2026-10-02,observability,currentStatus.md / pytest
+tests,tests passing,533,count,2026-10-02,trailing-off settle,currentStatus.md / pytest
+tests,tests passing,554,count,2026-10-02,equivalent restatement,currentStatus.md / pytest
+tests,tests passing,556,count,2026-10-02,duplicate detection,currentStatus.md / pytest
+tests,tests passing,557,count,2026-10-02,no repeated acknowledgement,currentStatus.md / pytest
+tests,tests passing,562,count,2026-10-02,independent actions,currentStatus.md / pytest
+tests,tests passing,563,count,2026-10-02,follow-ups see results,currentStatus.md / pytest
+tests,tests passing,571,count,2026-10-02,"partial failure, barge-in, blank arguments",currentStatus.md / pytest
+tests,tests passing,572,count,2026-10-02,prompt contradiction,currentStatus.md / pytest
+tests,tests passing,575,count,2026-10-02,class K follow-ups,currentStatus.md / pytest
+kernel_latency,per-step wall time mean,9.2,microseconds,2026-09-23,"44,200 steps over 200 runs of an I-03-style scenario; budget 5,000 us",docs/measurements.md
+kernel_latency,per-step wall time p50,5.8,microseconds,2026-09-23,"44,200 steps over 200 runs of an I-03-style scenario; budget 5,000 us",docs/measurements.md
+kernel_latency,per-step wall time p95,17.9,microseconds,2026-09-23,"44,200 steps over 200 runs of an I-03-style scenario; budget 5,000 us",docs/measurements.md
+kernel_latency,per-step wall time p99,82.3,microseconds,2026-09-23,"44,200 steps over 200 runs of an I-03-style scenario; budget 5,000 us",docs/measurements.md
+kernel_latency,per-step wall time max,2760.8,microseconds,2026-09-23,"44,200 steps over 200 runs of an I-03-style scenario; budget 5,000 us",docs/measurements.md
+latency_sim,"TTFS after end-of-turn, speculative interpretation off",300000,microseconds,2026-09,"INTERPRET latency 300 ms, chunk spacing 150 ms",docs/measurements.md
+latency_sim,"TTFS after end-of-turn, speculative interpretation on",0,microseconds,2026-09,same scenario,docs/measurements.md
+latency_sim,"TTFS after end-of-turn, trailing ""please"", C1 off",100000,microseconds,2026-09,INTERPRET 300 ms,docs/measurements.md
+latency_sim,"TTFS after end-of-turn, trailing ""please"", C1 on",0,microseconds,2026-09,INTERPRET 300 ms,docs/measurements.md
+exploration,"schedules explored: first run, before fixes (text)",471,count,2026-09,9 scenarios,docs/measurements.md
+exploration,"failing schedules: first run, before fixes (text)",126,count,2026-09,9 scenarios,docs/measurements.md
+exploration,schedules explored: after fixes (text),9142,count,2026-09,"10 scenarios, 3 seeds",docs/measurements.md
+exploration,failing schedules: after fixes (text),0,count,2026-09,"10 scenarios, 3 seeds",docs/measurements.md
+exploration,schedules explored: after fixes (multimodal),8194,count,2026-09,9 scenarios,docs/measurements.md
+exploration,failing schedules: after fixes (multimodal),0,count,2026-09,9 scenarios,docs/measurements.md
+exploration,schedules explored: TRIAGE hold disabled alone (text),3122,count,2026-09,ablation,docs/measurements.md
+exploration,failing schedules: TRIAGE hold disabled alone (text),704,count,2026-09,ablation,docs/measurements.md
+exploration,schedules explored: ASR capture order + dedupe window disabled,912,count,2026-09,ablation,docs/measurements.md
+exploration,failing schedules: ASR capture order + dedupe window disabled,629,count,2026-09,ablation,docs/measurements.md
+exploration,schedules explored: TRIAGE hold disabled alone (multimodal),927,count,2026-09,ablation,docs/measurements.md
+exploration,failing schedules: TRIAGE hold disabled alone (multimodal),161,count,2026-09,ablation,docs/measurements.md
+speech,TTS->ASR round trip: sentences with all facts intact,4,of 4,2026-09-25,"Kokoro-82M -> Parakeet-tdt-0.6b-v2; order ids, amounts, codes",run_output/kokoro_parakeet_roundtrip
+speech,TTS->ASR round trip: individual facts intact,8,of 8,2026-09-25,same,run_output/kokoro_parakeet_roundtrip
+simulator_kit,"weighted score, Janus after the first integration pass",10.4,points (0-100),2026-09-24,"9 public scenarios, 3 repetitions, gemini-3.6-flash; superseded by FDB-v3 on 24 Sep",run_output/after_57bc9a8+wt_eval_*.txt
+simulator_kit,"weighted score, Janus after the timer-liveness fix",8.9,points (0-100),2026-09-24,same,run_output/after2_timerfix_eval_*.txt
+turn_ending_replay,recordings kept as one turn (old bridge),12,of 72,2026-10-01,real speech timing of 72 voice recordings replayed through each bridge,1 Oct audit
+turn_ending_replay,recordings kept as one turn (new bridge),66,of 72,2026-10-01,same,1 Oct audit
+turn_ending_replay,end-of-turns inside speech (old bridge),98,count,2026-10-01,real speech timing of 72 voice recordings replayed through each bridge,1 Oct audit
+turn_ending_replay,end-of-turns inside speech (new bridge),0,count,2026-10-01,same,1 Oct audit
+turn_ending_replay,"final turn close after last word, median (old bridge)",2.85,seconds,2026-10-01,real speech timing of 72 voice recordings replayed through each bridge,1 Oct audit
+turn_ending_replay,"final turn close after last word, median (new bridge)",2.08,seconds,2026-10-01,same,1 Oct audit
+turn_ending_live,"premature end-of-turns, wire order (30 Sep)",42,count,2026-09-30,same recordings; hosted STT on 30 Sep,voice_recordings.csv
+turn_ending_live,"premature end-of-turns, wire order (2 Oct)",0,count,2026-10-02,same recordings; local Whisper,voice_recordings.csv
+turn_ending_live,"recordings kept as one turn, wire order (30 Sep)",2,of 24,2026-09-30,same recordings; hosted STT on 30 Sep,voice_recordings.csv
+turn_ending_live,"recordings kept as one turn, wire order (2 Oct)",24,of 24,2026-10-02,same recordings; local Whisper,voice_recordings.csv
+turn_ending_live,"premature end-of-turns, word-timestamp definition (30 Sep)",31,count,2026-09-30,same 26 recordings,1-2 Oct analyses
+turn_ending_live,"premature end-of-turns, word-timestamp definition (2 Oct)",0,count,2026-10-02,same 26 recordings,1-2 Oct analyses
+turn_ending_live,"recordings kept as one turn, word-timestamp definition (30 Sep)",5,of 26,2026-09-30,same 26 recordings,1-2 Oct analyses
+turn_ending_live,"recordings kept as one turn, word-timestamp definition (2 Oct)",26,of 26,2026-10-02,same 26 recordings,1-2 Oct analyses
+turn_ending_live,exact-match passes (30 Sep),12,of 26,2026-09-30,same 26 recordings,1-2 Oct analyses
+turn_ending_live,exact-match passes (2 Oct),16,of 26,2026-10-02,same 26 recordings,1-2 Oct analyses
+published_reference,"strict pass@1, GPT-Realtime",60.0,percent,2026,"FDB-v3 paper, judged",FDB-v3 paper
+published_reference,"first response latency, GPT-Realtime",6.89,seconds,2026,FDB-v3 paper,FDB-v3 paper
+published_reference,"strict pass@1, Gemini Live 3.1",54.0,percent,2026,"FDB-v3 paper, judged",FDB-v3 paper
+published_reference,"first response latency, Gemini Live 3.1",4.25,seconds,2026,FDB-v3 paper,FDB-v3 paper
+published_reference,"strict pass@1, Gemini Live 2.5",49.0,percent,2026,"FDB-v3 paper, judged",FDB-v3 paper
+published_reference,"first response latency, Gemini Live 2.5",7.26,seconds,2026,FDB-v3 paper,FDB-v3 paper
+published_reference,"strict pass@1, Cascaded (Whisper -> GPT-4o -> TTS)",45.0,percent,2026,"FDB-v3 paper, judged",FDB-v3 paper
+published_reference,"first response latency, Cascaded (Whisper -> GPT-4o -> TTS)",10.12,seconds,2026,FDB-v3 paper,FDB-v3 paper
+published_reference,"strict pass@1, Grok",43.0,percent,2026,"FDB-v3 paper, judged",FDB-v3 paper
+published_reference,"first response latency, Grok",6.65,seconds,2026,FDB-v3 paper,FDB-v3 paper
+published_reference,"strict pass@1, Ultravox",41.0,percent,2026,"FDB-v3 paper, judged",FDB-v3 paper
+published_reference,"first response latency, Ultravox",8.4,seconds,2026,FDB-v3 paper,FDB-v3 paper
