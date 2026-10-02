@@ -327,9 +327,11 @@ class Config:
     # older than vad_floor_max_ms is ignored (a lost "stopped" report must
     # not hold the floor forever).
     vad_floor_enabled: bool = False
-    # Plan steps keep the order asked, but a step no longer waits on an
+    # Plan steps keep the order asked, but a READ step no longer waits on an
     # earlier step that is itself waiting for the user to answer a question
-    # -- unless it reads that step's result. Found by the 1 Oct audit: an
+    # -- unless it reads that step's result. A WRITE keeps the order asked
+    # (2 Oct voice run: "find flights, then book it" booked with no search),
+    # and the executor keeps running while the goal is asking. Found by the 1 Oct audit: an
     # action blocked on a question nobody answers (single-turn recordings)
     # starved a fully specified sibling (class K). A step waiting on the
     # camera, a tool or a model still holds back the ones after it (a later

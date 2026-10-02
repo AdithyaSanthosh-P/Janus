@@ -197,7 +197,12 @@ class PlanExecutor:
         if gid is None:
             return []
         goal = store.goals.get(gid)
-        if goal is None or goal.status != GoalStatus.ACTIVE or goal.task_state != TaskState.EXECUTING:
+        # Config.parallel_independent_actions: steps that don't wait on the
+        # question keep running while the goal is asking it (found in the
+        # 2 Oct voice run, finance_18: the third action never ran because the
+        # executor stopped once the first one asked).
+        runnable = (TaskState.EXECUTING, TaskState.CLARIFYING) if store.config.parallel_independent_actions else (TaskState.EXECUTING,)
+        if goal is None or goal.status != GoalStatus.ACTIVE or goal.task_state not in runnable:
             return []
         plan = store.plans.current(gid)
         if plan is None:
@@ -349,17 +354,22 @@ class PlanExecutor:
                 # on the stale call's eventual (irrelevant) result.
                 attempt = latest.attempt + 1
 
-            if not all(
-                self._step_done(store, gid, dep)
-                or step_failed(store, gid, dep)  # failed on its own; not read (checked above)
-                or (
-                    store.config.parallel_independent_actions
-                    and dep in waiting_on_user
-                    and not any(b.step_key == dep for b in step.bindings.values())
-                )
-                for dep in step.after
-            ):
-                continue
+            pending = [
+                dep for dep in step.after
+                if not (self._step_done(store, gid, dep) or step_failed(store, gid, dep))  # failed: not read (checked above)
+            ]
+            if pending:
+                held_by_question = store.config.parallel_independent_actions and all(dep in waiting_on_user for dep in pending)
+                reads_it = any(b.step_key in pending for b in step.bindings.values())
+                # Only a READ may run ahead of a step waiting for the user's
+                # answer: a write keeps the order asked ("find flights to X,
+                # then book it" booked with no flight searched, 2 Oct voice
+                # run, travel_21). A step held this way is itself waiting on
+                # the question, for the steps after it.
+                if not (held_by_question and not reads_it and step.kind != StepKind.WRITE):
+                    if held_by_question:
+                        waiting_on_user.add(step.step_key)
+                    continue
 
             if self._commit_last_blocked(store, gid, step, plan, now_us):
                 continue

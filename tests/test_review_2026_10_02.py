@@ -440,3 +440,56 @@ def test_the_interpreter_prompt_does_not_both_require_and_forbid_suffixed_slots(
     assert "order_id_2" not in with_plans and 'never a "_2" suffix' in with_plans
     without_plans = build_prompt({"multi_action_enabled": True, "transcript": "x"})
     assert "order_id_2" in without_plans  # the slot-delta path still needs it
+
+
+# --- 2 Oct verification run: class K follow-ups ----------------------------
+
+RATE = {"name": "get_exchange_rate", "parameters": {"type": "object", "properties": {
+    "amount": {"type": "number"}, "from_currency": {"type": "string"}, "to_currency": {"type": "string"}},
+    "required": ["amount", "from_currency", "to_currency"]}}
+AUTOPAY = {"name": "modify_autopay", "parameters": {"type": "object", "properties": {
+    "bill_type": {"type": "string"}, "source_account": {"type": "string"}}, "required": ["bill_type", "source_account"]}}
+BENEFITS = {"name": "get_card_benefits", "parameters": {"type": "object", "properties": {
+    "card_type": {"type": "string"}}, "required": ["card_type"]}}
+FIN_TOOLS = {"get_exchange_rate": {"latency_ms": 50, "response": {"rate": 0.9}},
+             "modify_autopay": {"latency_ms": 300, "response": {"status": "success"}},
+             "get_card_benefits": {"latency_ms": 50, "response": {"benefits": ["lounge"]}}}
+
+
+def _fin_run(spec, read_only=("get_exchange_rate", "get_card_benefits"), **overrides):
+    provider = ScriptedProvider()
+    provider.register("interpret", "", {"act": "new_goal", "intent": spec[0]["tool"], "slot_deltas": [], "actions": spec})
+    provider.register("compose", "", {"text": "Composed.", "claims": []})
+    provider.register("extract", "", {"value": None})
+    h = SimHarness(fdb_v3_config(read_only_tools=read_only, **overrides), seed=1, provider=provider, tools=FIN_TOOLS,
+                   worker_latency_us={k: 10_000 for k in JobKind})
+    h.send(0, [manifest_event([RATE, AUTOPAY, BENEFITS])])
+    h.send(100_000, [chunk_event("do these things")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + _event_driven(h, 30_000_000)
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+    return [c[1] for c in _calls(actions)]
+
+
+def test_a_later_independent_read_runs_after_its_predecessor_finishes_during_a_question():
+    """finance_18 (2 Oct run): the rate lookup asked for a currency; the next
+    action ran, but the third never did -- once the goal was asking, the
+    executor stopped running."""
+    spec = [{"tool": "get_exchange_rate", "args": {"amount": 1000, "from_currency": "USD"}},  # to_currency missing
+            {"tool": "get_card_benefits", "args": {"card_type": "gold"}},
+            {"tool": "get_card_benefits", "args": {"card_type": "premium"}}]
+    assert _fin_run(spec) == ["get_card_benefits", "get_card_benefits"]
+
+
+def test_a_write_does_not_skip_ahead_of_a_step_waiting_for_the_user():
+    """travel_21 (2 Oct run): "find flights to <lost word>, then book it" --
+    the booking ran with no flight searched. A write keeps the order asked."""
+    spec = [{"tool": "get_exchange_rate", "args": {"amount": 1000, "from_currency": "USD"}},
+            {"tool": "modify_autopay", "args": {"bill_type": "credit_card", "source_account": "savings"}}]
+    assert _fin_run(spec) == []
+
+
+def test_a_read_after_a_held_write_still_runs():
+    spec = [{"tool": "get_exchange_rate", "args": {"amount": 1000, "from_currency": "USD"}},
+            {"tool": "modify_autopay", "args": {"bill_type": "credit_card", "source_account": "savings"}},
+            {"tool": "get_card_benefits", "args": {"card_type": "premium"}}]
+    assert _fin_run(spec) == ["get_card_benefits"]
