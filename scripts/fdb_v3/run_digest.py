@@ -1,6 +1,6 @@
 """A compact digest of one FDB-v3 results directory (stdlib only, runs anywhere).
 
-    python scripts/fdb_v3/run_digest.py results/<timestamp> [--out digest.md] [--passes]
+    python scripts/fdb_v3/run_digest.py results/<timestamp> [--out digest.md] [--no-passes]
 
 Reads what the run already wrote (pass_rate_report.json, tool_calls_report.json,
 data/*/result_janus.json, decisions/*.wire.jsonl, agent.log, retried.txt) and
@@ -43,7 +43,7 @@ def _lit(value):
     return value
 
 
-def _short(text, n=220) -> str:
+def _short(text, n=900) -> str:
     text = " ".join(str(text or "").split())
     return text if len(text) <= n else text[: n - 1] + "…"
 
@@ -111,7 +111,33 @@ def _guess_cause(res: dict, wire: dict, result_file: dict | None) -> str:
     return "other"
 
 
-def _agent_log_errors(path: Path, top: int = 8) -> list[str]:
+def _kernel_facts(path: Path) -> str:
+    """A line of kernel facts from one room's decision log: steps, what held calls back,
+    what was invalidated, errors. Enough to tell where to look, not a replacement for the log."""
+    if not path.exists():
+        return "decision log missing"
+    steps = errors = invalidated = discarded = 0
+    holds: collections.Counter = collections.Counter()
+    emitted: collections.Counter = collections.Counter()
+    for line in path.read_text().splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        steps += 1
+        errors += bool(rec.get("error"))
+        inv = rec.get("invalidations") or {}
+        invalidated += len(inv.get("invalidated_call_ids", []))
+        discarded += len(inv.get("discarded_call_ids", []))
+        for gr in rec.get("gate_rejections") or []:
+            holds[f"{gr.get('rule')}:{gr.get('tool')}"] += 1
+        for em in rec.get("emitted") or []:
+            emitted[em.get("action_type")] += 1
+    return (f"{steps} kernel steps, {errors} step errors, {invalidated} calls invalidated, {discarded} discarded; "
+            f"emitted {dict(emitted)}; gate holds {dict(holds.most_common(6))}")
+
+
+def _agent_log_errors(path: Path, top: int = 15) -> list[str]:
     if not path.exists():
         return ["agent.log missing"]
     seen: collections.Counter = collections.Counter()
@@ -138,11 +164,11 @@ def build(run: Path, include_passes: bool = False) -> str:
     if sm.exists():
         lines += [f"- {l[2:]}" for l in sm.read_text().splitlines() if l.startswith(("- Janus commit", "- Judge"))]
     tm = tools.get("turn_taking") or {}
-    lines.append(f"- Tool metrics: {json.dumps(tools.get('by_metric'))[:300]}")
-    lines.append(f"- Turn-taking: {json.dumps(tm)[:200]}  Latency: {json.dumps(tools.get('latency'))[:240]}")
-    for key in ("by_domain", "by_difficulty", "by_disfluency_feature"):
+    lines.append(f"- Tool metrics: {json.dumps(tools.get('by_metric'))}")
+    lines.append(f"- Turn-taking: {json.dumps(tm)}  Latency: {json.dumps(tools.get('latency'))}")
+    for key in ("by_domain", "by_difficulty", "by_num_tools", "by_disfluency_feature", "by_state_rollback", "failure_breakdown"):
         if report.get(key):
-            lines.append(f"- {key}: {json.dumps(report[key])[:420]}")
+            lines.append(f"- {key}: {json.dumps(report[key])}")
     retried = run / "retried.txt"
     lines.append(f"- Recordings re-streamed after a client abort: {len(retried.read_text().split(chr(10))) - 1 if retried.exists() else 0}")
     missing = [i for i, (rf, _) in files.items() if i not in by_id]
@@ -169,11 +195,14 @@ def build(run: Path, include_passes: bool = False) -> str:
             f"- reason: {_short(res.get('failure_reason'), 200)}",
             f"- expected tools: {sel.get('expected')}  actual: {sel.get('actual')}",
             *([f"- wrong arguments:"] + arg_lines if arg_lines else []),
-            f"- reference transcript: {_short((rf or {}).get('input_transcript'), 300)}",
-            f"- agent heard ({wire['turns']} turn end(s)): {_short(wire['heard'], 300)}",
-            f"- agent said: {_short(' | '.join(t for _, t in wire['spoke']), 260)}",
-            f"- calls emitted: {_calls(_lit((rf or {}).get('actual_tool_calls')))}",
-            f"- first speech: {_short(_lit((rf or {}).get('latency')), 90)}; decision log: {f'decisions/{room}.jsonl' if room else 'none (no room)'}",
+            f"- reference transcript: {_short((rf or {}).get('input_transcript'))}",
+            f"- agent heard ({wire['turns']} turn end(s)): {_short(wire['heard'])}",
+            f"- agent said: {_short(' | '.join(f'[{k}] {t}' for k, t in wire['spoke']))}",
+            f"- calls emitted (wire): {'; '.join(wire['calls']) or 'none'}",
+            f"- calls recorded by the benchmark: {_calls(_lit((rf or {}).get('actual_tool_calls')))}",
+            f"- latency: {_short(_lit((rf or {}).get('latency')), 200)}",
+            f"- kernel: {_kernel_facts(run / 'decisions' / f'{room}.jsonl') if room else 'n/a'}",
+            f"- decision log: {f'decisions/{room}.jsonl' if room else 'none (no room)'}",
         ]))
 
     lines += ["", f"## Failures by guessed cause ({len(failed)} total)"]
@@ -188,10 +217,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("run", help="a results/<timestamp> directory")
     ap.add_argument("--out", help="write here too (default: <run>/digest.md)")
-    ap.add_argument("--passes", action="store_true", help="also list the passing recordings")
+    ap.add_argument("--no-passes", action="store_true", help="leave out the list of passing recordings")
     args = ap.parse_args()
     run = Path(args.run)
-    text = build(run, include_passes=args.passes)
+    text = build(run, include_passes=not args.no_passes)
     (Path(args.out) if args.out else run / "digest.md").write_text(text)
     print(text)
 
