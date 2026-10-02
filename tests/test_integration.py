@@ -353,3 +353,18 @@ async def test_run_scenario_survives_unknown_event_types_on_the_real_queue():
     summary = await asyncio.wait_for(runtime.run_scenario(events, actions, meta={"seed": 1}), timeout=5.0)
     assert summary.step_count >= 3  # manifest + text_chunk + end_of_turn all applied; unknown event just skipped
     assert summary.watchdog_fired is False
+
+
+async def test_on_session_hands_the_host_the_store_for_the_ledger_summary():
+    """A host (the voice worker) can read the ledgers when the session ends."""
+    from prism_rt.observability.effects import effect_summary
+
+    held: dict = {}
+    runtime = entry.setup(Config(), provider=ScriptedProvider())
+    events: "asyncio.Queue[dict | None]" = asyncio.Queue()
+    await events.put(None)
+    await asyncio.wait_for(
+        runtime.run_scenario(events, asyncio.Queue(), meta={"seed": 1, "on_session": lambda s: held.update(store=s)}),
+        timeout=5.0,
+    )
+    assert effect_summary(held["store"]) == {"committed": 0, "withdrawn_before_sending": 0, "refused_or_failed": 0, "duplicates": 0}

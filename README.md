@@ -161,7 +161,9 @@ The kernel X-ray draws a session from its decision log: what the user said, what
 "Your technician is booked for Friday afternoon."
 ```
 
-- **Tools** (mock services over a small local knowledge base, `src/prism_rt/devicecare/`): `identify_indicator`, `lookup_error_code`, `get_fix_steps`, `check_warranty` (reads) and `book_technician`, `open_support_ticket` (writes). Two devices: a Wi-Fi router (LED patterns) and a washing machine (error codes, so it also works audio-only).
+- **Tools** (mock services over a small local knowledge base, `src/prism_rt/devicecare/`): `identify_indicator`, `lookup_error_code`, `get_fix_steps`, `check_warranty`, `get_device_status` (reads) and `book_technician`, `open_support_ticket`, `control_appliance` (writes). Two devices: a Wi-Fi router (LED patterns) and a Samsung-style washing machine (Samsung's published error codes 4C, 5C, UB and dC, and a status shaped like a SmartThings washer, so it also works audio-only).
+- **What is real and what is simulated.** Real: speech in and out, turn-taking, the camera frames, the reasoning and vision model, and the Janus kernel (corrections, commit gate, effect ledger). **Simulated: the device backend** (SmartThings-style status and control) **and the Samsung Care booking and ticket services.** Nothing here calls a Samsung API; the device adapter is replaceable through the tool manifest, and the contribution is the coordination layer above it.
+- **Effect ledger.** At the end of a demo run (and in the worker's log when a voice session ends) the kernel reports what the session did to the world: writes committed, writes withdrawn before they were sent, writes the device or service refused, and duplicates (always 0). A command the washer refuses ("resume" while it shows 4C) is reported as refused, never as done.
 - **Same kernel, different profile.** `demo_config()` in `src/prism_rt/profiles.py`: vision on, tool mutability declared by the manifest, a booking needs the user's explicit go-ahead and waits out the settle window, missing details are asked about instead of assumed.
 - **Conversation safeguards**, each from a live session and each with a regression test:
   - A booking without a clear go-ahead is not made in silence: the agent asks *"Shall I go ahead and book technician (Friday, afternoon)?"* and a yes supplies the go-ahead.
@@ -170,11 +172,22 @@ The kernel X-ray draws a session from its decision log: what the user said, what
   - A question about something an earlier result said (*"What's my router's name?"*) is answered from that result; a request no tool covers is declined honestly, with what the agent can do instead.
 - **Camera.** The worker samples the room's video track at about 1 frame per second into JPEGs (`src/prism_rt/voice/camera.py`). The kernel only sees a `frame_id`; the vision worker resolves the bytes.
 
+The washer story, same safeguards:
+
+```
+"My washing machine stopped in the middle of a wash. What's wrong with it?"   -> get_device_status: paused, error 4C
+"How do I fix it?"                                                          -> tap, inlet hose, inlet filter
+"Can you resume the wash?"   -> the washer refuses (4C still showing); the agent says so, nothing is claimed done
+"Open an urgent ticket and book a technician for Friday afternoon ... no wait, Saturday morning."
+   -> one ticket, one booking, Saturday morning; Friday is never booked
+   Effect ledger: 2 committed, 1 refused, 0 duplicates
+```
+
 Run it:
 
 ```bash
-# 1. Text + camera image, live Gemini (fastest way to see it):
-PYTHONPATH=src:. python demo/run_device_care_demo.py [--image photo.jpg] [--trace]
+# 1. Text + camera image, live Gemini (fastest way to see it); --story router (default) or washer:
+PYTHONPATH=src:. python demo/run_device_care_demo.py [--story washer] [--image photo.jpg] [--trace]
 
 # 2. Voice + real camera, in a browser: start the worker in demo mode ...
 JANUS_MODE=demo JANUS_STT=openai JANUS_DECISION_LOG_DIR=run_output/demo python -m prism_rt.voice.agent start
@@ -258,7 +271,7 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 - **The model is a hosted API.** Temperature 0 does not make it bit-reproducible, and evaluation needs network access to Gemini.
 - **No cancel or modify tool.** A booking that went through cannot be changed; the agent says so and will not make a second one without an explicit yes, but it cannot undo the first.
 - **Camera:** one frame per second, one still image per question. It cannot tell a *blinking* light from a solid one, so the user says that part.
-- **The extension's tools are mocks** over a small knowledge base of two devices; it demonstrates the safe-action pattern, not a product catalogue.
+- **The extension's tools and the Samsung-style device backend are simulations** over a small knowledge base of two devices; it demonstrates the safe-action pattern, not a live Samsung integration or a product catalogue. A second command to the same appliance after one already went through (for example "stop" after "resume") is treated as a repeat of a finished write and asked about first; the demo story avoids it.
 - Python 3.10/3.12 are supported by construction only; the tested targets are 3.11 (Docker) and the 3.14 dev venv.
 
 ## Repo map

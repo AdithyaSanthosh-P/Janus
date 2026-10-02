@@ -124,6 +124,8 @@ class Runtime:
         """
         meta = meta or {}
         session = SessionStore.new(self.config, IdGenerator(meta.get("seed", 0)))
+        if meta.get("on_session") is not None:
+            meta["on_session"](session)  # lets a host read the ledgers when the session ends
         clock: ClockPort = CoupledClock() if self.config.clock_model == "A" else SteppedClock()
         # Two roles: `codec` speaks the harness's wire format (external
         # events in, actions out); `internal` decodes the events this loop

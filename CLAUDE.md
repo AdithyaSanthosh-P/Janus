@@ -103,6 +103,7 @@ Tests are deterministic by construction: `SteppedClock` (no real sleeps), `Scrip
 
 - **Project instructions, decisions and state go only into `currentStatus.md` or this file** — not into new files under `docs/`, and not into the assistant's private memory.
 - **Reports, analyses and plans go only into `docs-personal/private-docs/`** (the whole `docs-personal/` folder is gitignored and never committed). The current findings and fix order (1–4 Oct) are in `audit_2026-10-01/AUDIT.md` there, summarized in `currentStatus.md` ("Audit (2026-10-01)" and Next Task); the 27–30 Sep plan (`win_plan_2026-09-27.md`) is historical.
+- **Exception (2026-10-02, team decision): the extension research and plan live in `docs/extension_research/` (committed)** — ecosystem research, feasibility triage, 3-minute demo script. Keep them neutral like any committed file.
 - Committed files (code, docs, README, deck, `currentStatus.md`, this file) must not reference or compare against any other team's repository or evaluation kit. Material under `docs-personal/` stays local.
 - Committed files record decisions and results in neutral, professional wording: no verbatim quotes of messages, no "asked/said" attributions.
 - **Benchmark results go in `BENCHMARKS.md` and `benchmarks/`** (committed; generated from the run data by `benchmarks/collect.py`, `curated.py`, `build_report.py`). After a new run, add its archive to `docs/runs/` (audio left out), add a label in `benchmarks/collect.py`'s `LABELS`, and regenerate; do not hand-edit the generated tables.

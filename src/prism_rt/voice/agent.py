@@ -70,6 +70,7 @@ from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter
 from prism_rt.adapters.voice_bridge import VoiceBridge
 from prism_rt.devicecare import DeviceCareToolset
 from prism_rt.entry import setup
+from prism_rt.observability.effects import effect_summary, format_effect_summary
 from prism_rt.observability.xray import TracedQueue
 from prism_rt.profiles import demo_config, fdb_v3_config
 from prism_rt.voice.camera import FrameStore, pump_video_track
@@ -298,6 +299,9 @@ async def entrypoint(ctx: JobContext) -> None:
         config = fdb_v3_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 105_000))
     runtime = setup(config=config, provider=provider, blob_resolver=frames.get)
     meta: dict = {"seed": 0}
+    held: dict = {}
+    if MODE == "demo":
+        meta["on_session"] = lambda store: held.update(store=store)
     if log_dir:
         meta["log_path"] = os.path.join(log_dir, f"{room_name}.jsonl")
 
@@ -343,6 +347,10 @@ async def entrypoint(ctx: JobContext) -> None:
         await events.put(None)
         with contextlib.suppress(Exception):
             await asyncio.wait_for(run_task, timeout=5)
+        if held.get("store") is not None:
+            # What the session did to the world (demo mode): the video's closing line.
+            with contextlib.suppress(Exception):
+                logger.info(format_effect_summary(effect_summary(held["store"])))
 
     ctx.add_shutdown_callback(_shutdown)
 

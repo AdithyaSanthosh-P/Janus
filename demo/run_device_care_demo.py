@@ -12,9 +12,21 @@ Story (three user turns):
      afternoon."             -> ONE booking, for Friday afternoon; the Thursday
      request is cancelled before anything is booked.
 
+Second story (--story washer), a Samsung washer on SmartThings (simulated backend):
+  1. "My washing machine stopped in the middle of a wash. What's wrong?"
+                             -> its SmartThings status: paused, error 4C (no water supply).
+  2. "How do I fix it?"      -> the fix steps.
+  3. "Can you resume the wash?"  -> the washer refuses (still 4C); the agent says so.
+  4. "Open an urgent ticket and book a technician for Friday afternoon." and, just
+     after, "No wait, make the technician Saturday morning."
+                             -> ONE ticket, ONE booking, Saturday morning; Friday is never booked.
+
+Both end with the effect-ledger summary: writes committed, withdrawn before
+sending, refused or failed, duplicates.
+
 Run (needs GEMINI_API_KEY in the environment or .env, and Pillow for the
 synthetic router photo; or pass --image your.jpg):
-    PYTHONPATH=src:. python demo/run_device_care_demo.py [--image photo.jpg] [--turn N]
+    PYTHONPATH=src:. python demo/run_device_care_demo.py [--story router|washer] [--image photo.jpg] [--turn N]
 """
 
 from __future__ import annotations
@@ -45,6 +57,7 @@ _load_dotenv(REPO_ROOT / ".env")
 
 from prism_rt.devicecare import DeviceCareToolset  # noqa: E402
 from prism_rt.model.types import ActionType, JobKind  # noqa: E402
+from prism_rt.observability.effects import effect_summary, format_effect_summary  # noqa: E402
 from prism_rt.profiles import demo_config  # noqa: E402
 from prism_rt.sim.harness import SimHarness  # noqa: E402
 from prism_rt.workers.gateway import GeminiProvider, MediaPart  # noqa: E402
@@ -72,7 +85,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--image", help="a photo of the device (default: a synthetic router panel)")
     ap.add_argument("--trace", action="store_true", help="print every model call and its JSON answer")
-    ap.add_argument("--turn", type=int, default=0, help="run only this turn (1-3); 0 = all")
+    ap.add_argument("--story", choices=("router", "washer"), default="router")
+    ap.add_argument("--turn", type=int, default=0, help="run only this turn; 0 = all")
     args = ap.parse_args()
 
     if args.image:
@@ -117,22 +131,35 @@ def main() -> None:
     h.send(0, [{"type": "manifest", "payload": {"tools": toolset.manifest}}])
     h.send(20_000, [{"type": "video_frame", "payload": {"frame_id": "cam-1"}}])
 
-    turns = [
-        [("my router has a blinking light that is not green. what does it mean?", 0)],
-        [("okay, how do I fix it?", 0)],
-        [("book a technician for Thursday morning", 0), ("no wait, make it Friday afternoon", 1_500_000)],
-    ]
+    # Each user turn: (text, gap before it in us, end the turn after it?).
+    # A chunk after an ended turn is a new turn that lands while the first
+    # one's writes still wait out the settle barrier.
+    if args.story == "router":
+        turns = [
+            [("my router has a blinking light that is not green. what does it mean?", 0, True)],
+            [("okay, how do I fix it?", 0, True)],
+            [("book a technician for Thursday morning", 0, False), ("no wait, make it Friday afternoon", 1_500_000, True)],
+        ]
+    else:
+        turns = [
+            [("my washing machine stopped in the middle of a wash. what's wrong with it?", 0, True)],
+            [("okay, how do I fix it?", 0, True)],
+            [("can you resume the wash?", 0, True)],
+            [("okay. open an urgent ticket and book a technician for Friday afternoon", 0, True),
+             ("no wait, make the technician Saturday morning", 600_000, True)],
+        ]
     t = h.clock.now_us() + 200_000
     for n, chunks in enumerate(turns, start=1):
         if args.turn and n != args.turn:
             continue
         print(f"\nTurn {n}")
-        for text, gap in chunks:
+        for text, gap, end in chunks:
             t += gap
             print(f"  USER      {text}")
             h.send(t, [{"type": "text_chunk", "payload": {"text": text}}])
-        t += 1_100_000
-        h.send(t, [{"type": "end_of_turn", "payload": {}}])
+            if end:
+                t += 1_100_000
+                h.send(t, [{"type": "end_of_turn", "payload": {}}])
         quiet_since, limit = t, t + 60_000_000
         while t < limit:
             t += 20_000
@@ -154,6 +181,8 @@ def main() -> None:
     print(RULE)
     print(f"bookings made: {toolset.bookings}")
     print(f"tickets opened: {toolset.tickets}")
+    print(f"appliance commands: {toolset.commands}")
+    print(format_effect_summary(effect_summary(h.store)))
     print(RULE)
 
 

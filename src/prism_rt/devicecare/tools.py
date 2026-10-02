@@ -1,4 +1,4 @@
-"""Mock device-care services: three lookups, a warranty check and two writes.
+"""Mock device-care services: four lookups, a warranty check and three writes.
 
 `DeviceCareToolset` is the whole extension's tool layer: `manifest` is what the
 kernel is told about (mutability declared, so no benchmark-style exemptions are
@@ -9,6 +9,13 @@ booking made in a conversation is visible to the next tool call and to tests.
 The write tools are idempotent by design of the *kernel*, not of this mock:
 the CommitGate never emits a second booking for the same plan step, so if two
 ever appear in `bookings` something upstream is broken.
+
+The washer stands in for a Samsung appliance on SmartThings: its error codes
+are Samsung's published ones (4C water supply, 5C drain, UB unbalanced, dC
+door), and `get_device_status` / `control_appliance` return and change the
+fields a SmartThings washer reports (`washerOperatingState`: machine state,
+job state, completion time). The backend is simulated; nothing here talks to
+SmartThings.
 """
 
 from __future__ import annotations
@@ -51,6 +58,28 @@ def _device_key(kb: dict, raw) -> str | None:
     for alias, key in aliases.items():
         if alias in text:
             return key
+    return None
+
+
+def _error_code(raw) -> str:
+    """"4 C", "four C", "4-c", "d c" -> the code as the display shows it ("4C", "DC")."""
+    text = str(raw or "").strip().upper().replace("-", " ")
+    for word, digit in (("FOUR", "4"), ("FIVE", "5"), ("ONE", "1"), ("TWO", "2")):
+        text = text.replace(word, digit)
+    return text.replace(" ", "")
+
+
+_STATE_WORD = {"pause": "paused", "run": "running", "stop": "stopped"}
+
+_COMMANDS = {"pause": "pause", "hold": "pause", "resume": "resume", "continue": "resume", "start": "resume",
+             "restart": "resume", "stop": "stop", "cancel": "stop", "end": "stop", "off": "stop"}
+
+
+def _command(raw) -> str | None:
+    words = _norm(raw).split()
+    for word in words:
+        if word in _COMMANDS:
+            return _COMMANDS[word]
     return None
 
 
@@ -99,6 +128,23 @@ MANIFEST: list[dict] = [
         "params_schema": _obj({"serial_number": _str("The device serial number, for example SN-R500-1042.")}, ["serial_number"]),
     },
     {
+        "name": "get_device_status",
+        "description": "Read a connected appliance's live status from SmartThings (simulated in this demo): "
+        "whether it is running, paused or stopped, the cycle phase, the minutes remaining, and any error code on its display.",
+        "mutability": "read_only",
+        "params_schema": _obj({"device_type": _str("The kind of device: washer.")}, ["device_type"]),
+    },
+    {
+        "name": "control_appliance",
+        "description": "Pause, resume or stop a connected appliance through SmartThings (simulated in this demo). "
+        "Only when the user has asked for it.",
+        "mutability": "state_changing",
+        "params_schema": _obj(
+            {"device_type": _str("The kind of device: washer."), "command": _str("pause, resume or stop.")},
+            ["device_type", "command"],
+        ),
+    },
+    {
         "name": "book_technician",
         "description": "Book ONE technician home visit for a diagnosed issue. Only when the user has asked to book.",
         "mutability": "state_changing",
@@ -134,6 +180,11 @@ class DeviceCareToolset:
         self.tickets: list[dict] = []
         self.calls: list[tuple[str, dict]] = []
         self.current_issue: str | None = None  # the open case: set by a diagnosis
+        self.commands: list[dict] = []  # control_appliance calls that changed something
+        # Live appliance state (a copy: each session starts from the KB's).
+        self.status: dict[str, dict] = {
+            key: dict(dev["status"]) for key, dev in self.kb["devices"].items() if "status" in dev
+        }
 
     # ---- executor -----------------------------------------------------
     def make_executor(self) -> Callable[[str, dict], Awaitable[dict]]:
@@ -187,7 +238,7 @@ class DeviceCareToolset:
         dev = _device_key(self.kb, a.get("device_type"))
         if dev is None or "error_codes" not in self.kb["devices"][dev]:
             return {"found": False, "message": f"No error-code list for {a.get('device_type')!r}."}
-        code = str(a.get("code", "")).strip().upper().replace(" ", "")
+        code = _error_code(a.get("code"))
         entry = self.kb["devices"][dev]["error_codes"].get(code)
         if entry is None:
             return {"found": False, "message": f"Code {code} is not in the list for the {self.kb['devices'][dev]['name']}."}
@@ -209,6 +260,23 @@ class DeviceCareToolset:
             return {"found": False, "message": f"No warranty record for serial {serial}."}
         return {"found": True, "serial_number": serial, "status": rec["status"], "expires": rec["expires"]}
 
+    def _get_device_status(self, a: dict) -> dict:
+        dev = _device_key(self.kb, a.get("device_type"))
+        if dev is None or dev not in self.status:
+            return {"found": False, "message": f"No connected {a.get('device_type') or 'device'} on SmartThings."}
+        st = self.status[dev]
+        out = {"found": True, "device": self.kb["devices"][dev]["name"], "machine_state": _STATE_WORD[st["machine_state"]],
+               "cycle_phase": st["job_state"], "minutes_remaining": st["remaining_min"]}
+        code = st.get("error_code")
+        entry = self.kb["devices"][dev].get("error_codes", {}).get(code) if code else None
+        if entry is not None:
+            self.current_issue = entry["issue"]
+            out.update(error_code=code, error_meaning=entry["meaning"],
+                       technician_may_be_needed=self.kb["issues"][entry["issue"]]["technician_needed"])
+        else:
+            out["error_code"] = None
+        return out
+
     # ---- writes -------------------------------------------------------
     def _book_technician(self, a: dict) -> dict:
         issue_id = self._issue(a)
@@ -228,3 +296,26 @@ class DeviceCareToolset:
         ticket = {"ticket_id": f"TK-{len(self.tickets) + 1:04d}", "issue_id": issue_id, "priority": _norm(a.get("priority")) or "normal"}
         self.tickets.append(ticket)
         return {"opened": True, **{k: v for k, v in ticket.items() if k != "issue_id"}}
+
+    def _control_appliance(self, a: dict) -> dict:
+        dev = _device_key(self.kb, a.get("device_type"))
+        if dev is None or dev not in self.status:
+            return {"done": False, "message": f"No connected {a.get('device_type') or 'device'} on SmartThings."}
+        command = _command(a.get("command"))
+        if command is None:
+            return {"done": False, "message": "The command must be pause, resume or stop."}
+        st, name = self.status[dev], self.kb["devices"][dev]["name"]
+        code = st.get("error_code")
+        if command == "resume" and code:
+            # The appliance itself refuses: the agent must say so, not claim it resumed.
+            meaning = self.kb["devices"][dev]["error_codes"][code]["meaning"].rstrip(".").lower()
+            return {"done": False, "machine_state": _STATE_WORD[st["machine_state"]],
+                    "message": f"The {name} refused to resume: it is still showing {code} ({meaning}). Fix that first."}
+        target = {"pause": "pause", "resume": "run", "stop": "stop"}[command]
+        if st["machine_state"] == target:
+            return {"done": True, "machine_state": _STATE_WORD[target], "message": f"The {name} was already {_STATE_WORD[target]}."}
+        st["machine_state"] = target
+        if command == "stop":
+            st.update(job_state="none", remaining_min=0)
+        self.commands.append({"device": dev, "command": command})
+        return {"done": True, "device": name, "machine_state": _STATE_WORD[target]}

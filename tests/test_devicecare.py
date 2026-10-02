@@ -42,7 +42,7 @@ def test_diagnosis_opens_a_case_that_later_calls_use():
     tk = DeviceCareToolset()
     ex = tk.make_executor()
     assert run(ex, "get_fix_steps")["found"] is False  # nothing diagnosed yet
-    run(ex, "lookup_error_code", device_type="washing machine", code="e3")
+    run(ex, "lookup_error_code", device_type="washing machine", code="5c")
     steps = run(ex, "get_fix_steps")
     assert steps["found"] is True and steps["technician_needed"] is True
     booked = run(ex, "book_technician", date="Friday", time_slot="afternoon")
@@ -53,7 +53,7 @@ def test_booking_is_refused_without_a_diagnosis_or_with_a_bad_slot():
     tk = DeviceCareToolset()
     ex = tk.make_executor()
     assert run(ex, "book_technician", date="Friday", time_slot="morning")["booked"] is False
-    run(ex, "lookup_error_code", device_type="washer", code="E1")
+    run(ex, "lookup_error_code", device_type="washer", code="4C")
     assert run(ex, "book_technician", date="Friday", time_slot="midnight")["booked"] is False
     assert tk.bookings == []
 
@@ -62,6 +62,37 @@ def test_warranty_lookup():
     ex = DeviceCareToolset().make_executor()
     assert run(ex, "check_warranty", serial_number="sn-r500-1042")["status"] == "active"
     assert run(ex, "check_warranty", serial_number="nope")["found"] is False
+
+
+def test_samsung_codes_are_read_however_they_are_spoken():
+    ex = DeviceCareToolset().make_executor()
+    for spoken in ("4C", "4 c", "four C", "4-c", "E1"):
+        assert run(ex, "lookup_error_code", device_type="washer", code=spoken)["meaning"].startswith("Water is not")
+    assert run(ex, "lookup_error_code", device_type="washer", code="d C")["code"] == "DC"
+    assert run(ex, "lookup_error_code", device_type="washer", code="LE")["found"] is False  # a leak on Samsung, not in the guide
+
+
+def test_device_status_reports_the_error_and_opens_the_case():
+    tk = DeviceCareToolset()
+    ex = tk.make_executor()
+    status = run(ex, "get_device_status", device_type="washing machine")
+    assert (status["machine_state"], status["cycle_phase"], status["error_code"]) == ("paused", "washing", "4C")
+    assert tk.current_issue == "washer_no_water"
+    assert run(ex, "get_fix_steps")["title"] == "No water inlet"
+    assert run(ex, "get_device_status", device_type="router")["found"] is False
+
+
+def test_the_washer_refuses_to_resume_while_it_shows_an_error():
+    tk = DeviceCareToolset()
+    ex = tk.make_executor()
+    refused = run(ex, "control_appliance", device_type="washer", command="resume")
+    assert refused["done"] is False and "4C" in refused["message"]
+    assert run(ex, "control_appliance", device_type="washer", command="pause")["message"] == (
+        "The Samsung front-load washing machine was already paused.")
+    assert run(ex, "control_appliance", device_type="washer", command="stop")["machine_state"] == "stopped"
+    assert run(ex, "control_appliance", device_type="washer", command="fly")["done"] is False
+    assert tk.commands == [{"device": "washer", "command": "stop"}]
+    assert DeviceCareToolset().status["washer"]["machine_state"] == "pause"  # each session starts from the KB
 
 
 # --- the kernel driving them --------------------------------------------------
@@ -387,6 +418,93 @@ def test_without_the_users_go_ahead_nothing_is_booked():
     """A declared write is never made on an answer that isn't a go-ahead (G4)."""
     h, tk, actions = _self_correcting_booking(commit=False)
     assert calls(actions) == [] and tk.bookings == []
+
+
+def _stop_and_book(control: str) -> dict:
+    return {"act": "new_goal", "intent": "control_appliance", "commit_intent": True,
+            "slot_deltas": [{"name": "device_type", "scope": "goal", "op": "set", "value": "washer"},
+                            {"name": "command", "scope": "goal", "op": "set", "value": control},
+                            {"name": "date", "scope": "goal", "op": "set", "value": "Friday"},
+                            {"name": "time_slot", "scope": "goal", "op": "set", "value": "afternoon"}],
+            "actions": [{"tool": "control_appliance", "args": {"device_type": "washer", "command": control}},
+                        {"tool": "book_technician", "args": {"date": "Friday", "time_slot": "afternoon"}}]}
+
+
+def test_a_correction_to_one_of_two_writes_changes_only_that_one():
+    """Two writes in one request; the user changes one mid-sentence. The stale
+    one (stop) is never sent, the other (the booking) is sent once, and the
+    effect ledger says so."""
+    from prism_rt.observability.effects import effect_summary
+
+    provider = ScriptedProvider()
+    provider.register("interpret", "pause it", _stop_and_book("pause"))  # the whole corrected turn
+    provider.register("interpret", "stop the washer", _stop_and_book("stop"))  # the prefix
+    provider.register("compose", "control_appliance", {"text": "Paused, and booked for Friday afternoon.", "claims": []})
+    tk = _diagnosed_toolset()
+    tk.status["washer"]["machine_state"] = "run"
+    h = harness(provider, tk)
+    h.send(100_000, [chunk_event("stop the washer and book a technician for Friday afternoon")])
+    h.send(1_600_000, [chunk_event("actually don't stop it, just pause it")])
+    h.send(1_700_000, [eot_event()])
+    actions = drain(h, 14_000_000)
+
+    assert sorted(c[0] for c in calls(actions)) == ["book_technician", "control_appliance"]
+    assert ("control_appliance", {"device_type": "washer", "command": "pause"}) in calls(actions)
+    assert tk.commands == [{"device": "washer", "command": "pause"}] and len(tk.bookings) == 1
+    summary = effect_summary(h.store)
+    assert (summary["committed"], summary["refused_or_failed"], summary["duplicates"]) == (2, 0, 0)
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_a_correction_just_after_the_turn_withdraws_the_pending_write():
+    """The request is finished and its writes wait out the settle barrier;
+    "wait, just pause it" lands then. The pending stop is withdrawn before it
+    is ever sent; the booking from the same request goes through once."""
+    from prism_rt.observability.effects import effect_summary
+
+    provider = ScriptedProvider()
+    provider.register("interpret", "pause it", {
+        "act": "slot_update", "slot_deltas": [{"name": "command", "scope": "goal", "op": "set", "value": "pause"}],
+        "actions": [{"tool": "control_appliance", "args": {"device_type": "washer", "command": "pause"}}]})
+    provider.register("interpret", "stop the washer", _stop_and_book("stop"))
+    provider.register("compose", "control_appliance", {"text": "Paused, and booked for Friday afternoon.", "claims": []})
+    tk = _diagnosed_toolset()
+    tk.status["washer"]["machine_state"] = "run"
+    h = harness(provider, tk)
+    h.send(100_000, [chunk_event("stop the washer and book a technician for Friday afternoon")])
+    h.send(150_000, [eot_event()])
+    actions = drain(h, 1_050_000, stop_on_final=False)
+    assert calls(actions) == []  # both writes still pending
+    h.send(1_100_000, [chunk_event("wait, don't stop it, just pause it")])
+    h.send(1_150_000, [eot_event()])
+    actions += drain(h, 14_000_000)
+
+    assert ("control_appliance", {"device_type": "washer", "command": "stop"}) not in calls(actions)
+    assert tk.commands == [{"device": "washer", "command": "pause"}] and len(tk.bookings) == 1
+    assert effect_summary(h.store) == {"committed": 2, "withdrawn_before_sending": 1, "refused_or_failed": 0, "duplicates": 0}
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_a_refused_command_is_counted_as_refused_not_committed():
+    from prism_rt.observability.effects import effect_summary, format_effect_summary
+
+    provider = ScriptedProvider()
+    provider.register("interpret", "resume", {
+        "act": "new_goal", "intent": "control_appliance", "commit_intent": True,
+        "slot_deltas": [{"name": "device_type", "scope": "goal", "op": "set", "value": "washer"},
+                        {"name": "command", "scope": "goal", "op": "set", "value": "resume"}],
+        "actions": [{"tool": "control_appliance", "args": {"device_type": "washer", "command": "resume"}}]})
+    provider.register("compose", "control_appliance", {"text": "It refused to resume: it still shows 4C.", "claims": []})
+    tk = DeviceCareToolset()
+    h = harness(provider, tk)
+    h.send(100_000, [chunk_event("resume the washer")])
+    h.send(150_000, [eot_event()])
+    drain(h, 8_000_000)
+
+    assert tk.commands == [] and tk.status["washer"]["machine_state"] == "pause"
+    summary = effect_summary(h.store)
+    assert (summary["committed"], summary["refused_or_failed"], summary["duplicates"]) == (0, 1, 0)
+    assert format_effect_summary(summary).startswith("Effect ledger: 0 committed")
 
 
 # --- prompts and profiles -----------------------------------------------------

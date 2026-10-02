@@ -24,12 +24,19 @@
       ]
     },
     "washer": {
-      "name": "AquaLine W7 washing machine",
+      "name": "Samsung front-load washing machine",
+      "status": {"machine_state": "pause", "job_state": "washing", "remaining_min": 34, "error_code": "4C"},
       "error_codes": {
-        "E1": {"issue": "washer_no_water", "meaning": "The drum is not filling with water."},
-        "E3": {"issue": "washer_drain_blocked", "meaning": "The water is not draining out of the drum."},
+        "4C": {"issue": "washer_no_water", "meaning": "Water is not being supplied to the drum."},
+        "4E": {"issue": "washer_no_water", "meaning": "Water is not being supplied to the drum."},
+        "E1": {"issue": "washer_no_water", "meaning": "Water is not being supplied to the drum."},
+        "5C": {"issue": "washer_drain_blocked", "meaning": "The water is not draining out of the drum."},
+        "5E": {"issue": "washer_drain_blocked", "meaning": "The water is not draining out of the drum."},
+        "E2": {"issue": "washer_drain_blocked", "meaning": "The water is not draining out of the drum."},
+        "UB": {"issue": "washer_unbalanced", "meaning": "The load is unbalanced in the drum."},
         "UE": {"issue": "washer_unbalanced", "meaning": "The load is unbalanced in the drum."},
-        "LE": {"issue": "washer_door_lock", "meaning": "The door lock has not engaged."}
+        "DC": {"issue": "washer_door_lock", "meaning": "The door is not closed and locked."},
+        "DE": {"issue": "washer_door_lock", "meaning": "The door is not closed and locked."}
       }
     }
   },
@@ -47,13 +54,13 @@
     "router_wifi_off": {"title": "Wi-Fi switched off", "technician_needed": false,
       "fix_steps": ["Press the Wi-Fi button on the side of the router for two seconds.", "The Wi-Fi light should turn green within ten seconds."]},
     "washer_no_water": {"title": "No water inlet", "technician_needed": true,
-      "fix_steps": ["Make sure the tap behind the machine is fully open.", "Check the inlet hose for kinks.", "Clean the inlet filter at the back of the machine.", "If E1 returns, book a technician."]},
+      "fix_steps": ["Make sure the tap behind the machine is fully open.", "Check the inlet hose for kinks.", "Clean the inlet filter at the back of the machine.", "If 4C returns, book a technician."]},
     "washer_drain_blocked": {"title": "Drain blocked", "technician_needed": true,
-      "fix_steps": ["Switch the machine off and unplug it.", "Open the small service flap at the bottom front and clean the drain filter.", "Check the drain hose for kinks.", "If E3 returns, book a technician."]},
+      "fix_steps": ["Switch the machine off and unplug it.", "Open the small service flap at the bottom front and clean the drain filter.", "Check the drain hose for kinks.", "If 5C returns, book a technician."]},
     "washer_unbalanced": {"title": "Unbalanced load", "technician_needed": false,
       "fix_steps": ["Pause the cycle and redistribute the laundry evenly.", "Avoid washing a single heavy item on its own."]},
     "washer_door_lock": {"title": "Door lock fault", "technician_needed": true,
-      "fix_steps": ["Open the door and check that nothing is caught in the seal.", "Close it firmly until it clicks.", "If LE returns, book a technician."]}
+      "fix_steps": ["Open the door and check that nothing is caught in the seal.", "Close it firmly until it clicks.", "If dC returns, book a technician."]}
   },
   "warranty": {
     "SN-R500-1042": {"device": "router", "status": "active", "expires": "2027-03-14"},
