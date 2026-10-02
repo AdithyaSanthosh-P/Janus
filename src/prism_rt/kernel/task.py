@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config.templates import WATCHDOG_FALLBACK
-from prism_rt.kernel.action_plans import active_actions_view, is_compiled
+from prism_rt.kernel.action_plans import active_actions_view, finished_actions_view, is_compiled
 from prism_rt.kernel.replies import last_finished_goal
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, merged_turns, user_content_pending
 from prism_rt.kernel.replies import salvage_text
@@ -414,7 +414,7 @@ class TaskStateMachine:
             if gid is None and store.config.action_plans_enabled:
                 read_keys.append("session.last_finished_goal")
                 last = last_finished_goal(store)
-                last_view = active_actions_view(store, last.goal_id) if last is not None else []
+                last_view = finished_actions_view(store, last.goal_id) if last is not None else []
                 if last_view:
                     view["last_task"] = last_view
         # Extension (camera-grounded troubleshooting): tell the model a frame

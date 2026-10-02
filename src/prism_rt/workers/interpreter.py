@@ -174,6 +174,17 @@ def _action_plans_block(view: dict) -> str:
             "slot_update with slot_deltas naming the parameter -- not a status "
             "question and not unsupported.\n"
         )
+        results = [a for a in last if a.get("result")]
+        if results:
+            block += (
+                "What it returned: "
+                + "; ".join(f"{a['tool']} -> {a['result']}" for a in results)
+                + ". If the user now asks to do something with one of those "
+                "results (\"add the first one to my cart\", \"book it\", "
+                "\"how far is it from there\"), that is a new_goal whose args "
+                "take the value straight from these results -- never ask for "
+                "a value shown here.\n"
+            )
     active = view.get("active_actions") or []
     if active:
         rendered = "; ".join(f"{a['action']}: {a['tool']} {a['args']}" for a in active)

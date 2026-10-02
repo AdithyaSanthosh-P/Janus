@@ -304,3 +304,41 @@ def test_an_action_that_reads_the_blocked_one_still_waits():
              "add_to_cart": {"latency_ms": 50, "response": {"status": "success"}}}
     _h, actions = _multi_action_run(spec, tools, [PRODUCTS, CART])
     assert _calls(actions) == []
+
+
+# --- 1 Oct audit R08: a follow-up can use the finished task's results -------
+
+SEARCH_P = {"name": "search_products", "parameters": {"type": "object", "properties": {
+    "query": {"type": "string"}}, "required": ["query"]}}
+
+
+def test_a_follow_up_can_act_on_the_results_of_the_task_that_just_finished():
+    """ecommerce_19 (voice): goal 1 searched and answered before "and add one
+    of them to the cart" arrived; the follow-up could not see the results and
+    asked for a product id nobody would give. The model below can only name
+    the product if the prompt actually shows it."""
+    provider = ScriptedProvider()
+
+    def interpret(prompt: str) -> dict:
+        if "add one of them" in prompt:
+            args = {"product_id": "PROD1", "quantity": 1} if "PROD1" in prompt else {"quantity": 1}
+            return {"act": "new_goal", "intent": "add_to_cart", "slot_deltas": [], "commit_intent": True,
+                    "actions": [{"tool": "add_to_cart", "args": args}]}
+        return {"act": "new_goal", "intent": "search_products", "slot_deltas": [],
+                "actions": [{"tool": "search_products", "args": {"query": "tablet"}}]}
+
+    provider.register("interpret", "", interpret)
+    provider.register("extract", "", {"value": None})
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    h = SimHarness(fdb_v3_config(), seed=1, provider=provider, worker_latency_us={k: 10_000 for k in JobKind},
+                   tools={"search_products": {"latency_ms": 50, "response": {"products": [{"product_id": "PROD1", "price": 99.99}]}},
+                          "add_to_cart": {"latency_ms": 50, "response": {"status": "success"}}})
+    h.send(0, [manifest_event([SEARCH_P, CART])])
+    h.send(100_000, [chunk_event("search for a tablet")])
+    actions = [er.action for er in h.send(200_000, [eot_event()]).emit_report.emitted] + _event_driven(h, 6_000_000)
+    h.send(6_000_000, [chunk_event("and add one of them to the cart")])
+    actions += [er.action for er in h.send(6_100_000, [eot_event()]).emit_report.emitted] + _event_driven(h, 40_000_000)
+    assert [c[1:] for c in _calls(actions)] == [
+        ("search_products", {"query": "tablet"}), ("add_to_cart", {"product_id": "PROD1", "quantity": 1})]
+    assert not [a for a in actions if a.action_type == ActionType.CLARIFY]
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []

@@ -37,6 +37,7 @@ from prism_rt.model.types import (
     ActionSpec,
     Binding,
     BindingKind,
+    CallStatus,
     FactStatus,
     Plan,
     PlanStep,
@@ -454,6 +455,29 @@ def active_actions_view(store, goal_id: str | None) -> list[dict]:
             if fact is not None and fact.status != FactStatus.RETRACTED:
                 args[param] = fact.value
         view.append({"action": step.slot_prefix, "tool": step.tool, "args": args})
+    return view
+
+
+_RESULT_VIEW_CHARS = 600
+
+
+def finished_actions_view(store, goal_id: str | None) -> list[dict]:
+    """`active_actions_view` plus each action's own result, compacted -- for
+    the task that just finished, so a follow-up can act on what it found
+    ("add one of them to the cart"). Found by the 1 Oct audit: the follow-up
+    saw only the tools and arguments, and asked for an id the results held."""
+    view = active_actions_view(store, goal_id)
+    if not view:
+        return view
+    for entry in view:
+        call = store.call_ledger.latest_by_step(goal_id, entry["action"])
+        if call is None or call.status != CallStatus.CONSUMED:
+            continue
+        fact = store.facts.get(f"result.{call.call_id}")
+        if fact is None or fact.status == FactStatus.RETRACTED or fact.value is None:
+            continue
+        text = to_canonical_json(fact.value)
+        entry["result"] = text if len(text) <= _RESULT_VIEW_CHARS else text[: _RESULT_VIEW_CHARS - 1] + "\u2026"
     return view
 
 
