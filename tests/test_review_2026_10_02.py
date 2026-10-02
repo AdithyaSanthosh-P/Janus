@@ -222,3 +222,85 @@ def test_a_replan_does_not_repeat_the_same_acknowledgement():
     assert acks == ["I'll add one of those items to your cart."]
     assert [a.body.tool_name for a in actions if a.action_type == ActionType.TOOL_CALL] == ["add_to_cart"]
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+# --- 1 Oct audit R09: independent actions do not wait on a blocked sibling --
+
+TRACK2 = {"name": "track_order", "parameters": {"type": "object", "properties": {
+    "order_id": {"type": "string"}}, "required": ["order_id"]}}
+PRODUCTS = {"name": "search_products", "parameters": {"type": "object", "properties": {
+    "query": {"type": "string"}}, "required": ["query"]}}
+FILTER2 = {"name": "update_search_filter", "parameters": {"type": "object", "properties": {
+    "filter_name": {"type": "string"}, "value": {"type": "string"}}, "required": ["filter_name", "value"]}}
+APT2 = {"name": "search_apartments", "parameters": {"type": "object", "properties": {
+    "city": {"type": "string"}}, "required": ["city"]}}
+
+
+def _multi_action_run(actions_spec, tools, manifest, **overrides):
+    provider = ScriptedProvider()
+    provider.register("interpret", "", {"act": "new_goal", "intent": actions_spec[0]["tool"], "slot_deltas": [],
+                      "actions": actions_spec})
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    provider.register("extract", "", {"value": None})
+    h = SimHarness(fdb_v3_config(**overrides), seed=1, provider=provider, tools=tools,
+                   worker_latency_us={k: 10_000 for k in JobKind})
+    h.send(0, [manifest_event(manifest)])
+    h.send(100_000, [chunk_event("do these things")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + _event_driven(h, 30_000_000)
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+    return h, actions
+
+
+def _calls(actions):
+    return [(a.ts_us, a.body.tool_name, dict(a.body.arguments)) for a in actions if a.action_type == ActionType.TOOL_CALL]
+
+
+BLOCKED_THEN_INDEPENDENT = [{"tool": "track_order", "args": {}},  # no order id said: asks, never answered
+                            {"tool": "search_products", "args": {"query": "mechanical keyboard"}}]
+TOOLS_R09 = {"track_order": {"latency_ms": 50, "response": {"status": "shipped"}},
+             "search_products": {"latency_ms": 50, "response": {"results": [{"id": "K2"}]}}}
+
+
+def test_an_independent_action_runs_while_its_sibling_waits_for_an_answer():
+    _h, actions = _multi_action_run(BLOCKED_THEN_INDEPENDENT, TOOLS_R09, [TRACK2, PRODUCTS])
+    assert [c[1:] for c in _calls(actions)] == [("search_products", {"query": "mechanical keyboard"})]
+
+
+def test_without_the_flag_the_blocked_sibling_starves_it():
+    """Negative control: the live failure (class K)."""
+    _h, actions = _multi_action_run(BLOCKED_THEN_INDEPENDENT, TOOLS_R09, [TRACK2, PRODUCTS],
+                                    parallel_independent_actions=False)
+    assert _calls(actions) == []
+
+
+def test_a_read_after_a_write_still_waits_for_it():
+    """"Update my filter, then search": the search reads state the write changes."""
+    spec = [{"tool": "update_search_filter", "args": {"filter_name": "pets_allowed", "value": "true"}},
+            {"tool": "search_apartments", "args": {"city": "Dallas"}}]
+    tools = {"update_search_filter": {"latency_ms": 400, "response": {"status": "success"}},
+             "search_apartments": {"latency_ms": 50, "response": {"results": []}}}
+    _h, actions = _multi_action_run(spec, tools, [FILTER2, APT2])
+    calls = _calls(actions)
+    assert [c[1] for c in calls] == ["update_search_filter", "search_apartments"]
+    assert calls[1][0] >= calls[0][0] + 400_000  # after the update's result (400 ms tool latency)
+
+
+def test_two_calls_to_the_same_tool_keep_their_order():
+    """FDB pairs same-name calls first-in-first-out: "check orders 12 and 40"."""
+    spec = [{"tool": "track_order", "args": {"order_id": "12"}}, {"tool": "track_order", "args": {"order_id": "40"}}]
+    tools = {"track_order": {"latency_ms": 300, "response": {"status": "shipped"}}}
+    _h, actions = _multi_action_run(spec, tools, [TRACK2])
+    calls = _calls(actions)
+    assert [c[2]["order_id"] for c in calls] == ["12", "40"]
+    assert calls[1][0] >= calls[0][0] + 300_000  # the second waited for the first
+
+
+def test_an_action_that_reads_the_blocked_one_still_waits():
+    """"Find a keyboard and add the cheapest to my cart" with no product said:
+    the cart step reads the search's result, so it cannot run without it."""
+    spec = [{"tool": "search_products", "args": {}},
+            {"tool": "add_to_cart", "args": {}, "refs": [{"param": "product_id", "from": 0, "field": "id", "select": "cheapest"}]}]
+    tools = {"search_products": {"latency_ms": 50, "response": {"results": [{"id": "K2"}]}},
+             "add_to_cart": {"latency_ms": 50, "response": {"status": "success"}}}
+    _h, actions = _multi_action_run(spec, tools, [PRODUCTS, CART])
+    assert _calls(actions) == []

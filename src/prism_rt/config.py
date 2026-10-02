@@ -327,6 +327,15 @@ class Config:
     # older than vad_floor_max_ms is ignored (a lost "stopped" report must
     # not hold the floor forever).
     vad_floor_enabled: bool = False
+    # Plan steps keep the order asked, but a step no longer waits on an
+    # earlier step that is itself waiting for the user to answer a question
+    # -- unless it reads that step's result. Found by the 1 Oct audit: an
+    # action blocked on a question nobody answers (single-turn recordings)
+    # starved a fully specified sibling (class K). A step waiting on the
+    # camera, a tool or a model still holds back the ones after it (a later
+    # read can depend on an earlier one without a ref, e.g. "how do I fix
+    # it" after a diagnosis).
+    parallel_independent_actions: bool = False
     vad_floor_max_ms: int = 15_000
 
     # Day 2 (docs/fdb_v3_implementation_plan.md §5.2): G4 (commit_intent)

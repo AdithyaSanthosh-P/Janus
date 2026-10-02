@@ -204,6 +204,7 @@ class PlanExecutor:
             return []
 
         created: list[str] = []
+        waiting_on_user: set[str] = set()  # steps that just asked the user for a value
         for step in plan.steps:
             latest = store.call_ledger.latest_by_step(gid, step.step_key)
 
@@ -339,7 +340,15 @@ class PlanExecutor:
                 # on the stale call's eventual (irrelevant) result.
                 attempt = latest.attempt + 1
 
-            if not all(self._step_done(store, gid, dep) for dep in step.after):
+            if not all(
+                self._step_done(store, gid, dep)
+                or (
+                    store.config.parallel_independent_actions
+                    and dep in waiting_on_user
+                    and not any(b.step_key == dep for b in step.bindings.values())
+                )
+                for dep in step.after
+            ):
                 continue
 
             if self._commit_last_blocked(store, gid, step, plan, now_us):
@@ -386,6 +395,7 @@ class PlanExecutor:
                 ):
                     continue
                 self._ask_for(store, gid, missing_key, now_us, step_no)
+                waiting_on_user.add(step.step_key)
                 continue
 
             validation = store.catalog.validate_args(step.tool, bind_result.args)
@@ -400,6 +410,7 @@ class PlanExecutor:
                 bad_slot = self._invalid_slot_input(step, gid, validation.errors)
                 if bad_slot is not None:
                     self._ask_for(store, gid, bad_slot, now_us, step_no)
+                    waiting_on_user.add(step.step_key)
                 else:
                     self._fail_goal(
                         store, gid, step, now_us, step_no,

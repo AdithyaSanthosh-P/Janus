@@ -99,6 +99,11 @@ def fdb_v3_config(**overrides) -> Config:
       VoiceBridge.drop_foreign_segments) and would hold its next utterance;
       to be enabled there after a live check.
 
+    - parallel_independent_actions (also in demo_config): a step no longer
+      waits on an earlier one that is waiting for the user's answer, unless
+      it reads that step's result -- an unanswered question no longer starves
+      an independent action (class K).
+
     `**overrides` lets a caller tune settle_ms/settle_ms_incomplete/etc.
     per run without editing this function -- passed straight to
     `dataclasses.replace`.
@@ -131,6 +136,7 @@ def fdb_v3_config(**overrides) -> Config:
         idle_replies_enabled=False,
         merge_split_turns_enabled=True,
         vad_floor_enabled=True,
+        parallel_independent_actions=True,
     )
     return dataclasses.replace(base, **overrides) if overrides else base
 
@@ -176,6 +182,7 @@ def demo_config(**overrides) -> Config:
         fill_unstated_required_enabled=False,
         conversational_replies_enabled=True,
         merge_split_turns_enabled=True,
+        parallel_independent_actions=True,
         watchdog_timeout_ms=0,
     )
     return dataclasses.replace(base, **overrides) if overrides else base
