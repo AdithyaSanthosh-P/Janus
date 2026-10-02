@@ -145,4 +145,7 @@ cd "$REPO"
 python scripts/fdb_v3/write_run_manifest.py --out "$OUT" --fdb-root "$FDB_ROOT" \
   --judge "${USE_LLM:+on}" > "$OUT/manifest.log" 2>&1 || log "manifest failed (non-fatal)"
 
+# 9. A few-thousand-token digest of the run, so nobody has to read the raw logs.
+python "$REPO/scripts/fdb_v3/run_digest.py" "$OUT" --out "$OUT/digest.md" > /dev/null 2>&1 || log "digest failed (non-fatal)"
+
 log "done -> $OUT"
