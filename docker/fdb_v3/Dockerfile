@@ -66,7 +66,10 @@ RUN if [ "$TORCH_LOCAL_WHEELS" = "1" ]; then \
 # for real found that livekit-agents==1.8.3 requires livekit==1.1.18
 # exactly (pip's resolver: "livekit-agents[...] 1.8.3 depends on
 # livekit==1.1.18"), so 1.1.20 is a real, previously-unverified pin
-# error, not an environment issue. Corrected here.
+# error, not an environment issue. Corrected here. The last six were
+# unpinned until 2 Oct (the openai SDK drives hosted speech-to-text and
+# FDB's judge); pinned to the versions this same step resolved in the
+# measured images.
 RUN pip install --no-cache-dir \
         "livekit-agents[openai,google,xai]==1.8.3" \
         "livekit-plugins-ultravox==1.8.3" \
@@ -74,8 +77,8 @@ RUN pip install --no-cache-dir \
         "livekit-plugins-openai==1.8.3" \
         "livekit[crypto]==1.1.18" \
         "nemo_toolkit[asr]==3.0.0" \
-        "openai" \
-        "pydub" "ffmpeg-python" "numpy" "python-dotenv" "gdown"
+        "openai==2.54.0" \
+        "pydub==0.25.1" "ffmpeg-python==0.2.0" "numpy==2.4.6" "python-dotenv==1.2.3" "gdown==6.4.1"
 
 # Local speech stack for the Janus LiveKit worker: faster-whisper (STT) and
 # Kokoro-82M (TTS). A separate layer after the large pip step above, so

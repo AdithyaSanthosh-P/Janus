@@ -38,6 +38,31 @@ def _git(*args: str) -> str:
         return os.environ.get("JANUS_COMMIT", "unknown")
 
 
+_REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_SOURCE_ROOTS = ("src/prism_rt", "config", "scripts/fdb_v3")
+
+
+def _source_digest() -> str:
+    """SHA-256 over the agent's source files (path + content, sorted): names
+    the exact code even when the run directory is a copied tree with no git
+    history (the 30 Sep cloud runs recorded "Janus commit: unknown")."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for root in _SOURCE_ROOTS:
+        base = os.path.join(_REPO, root)
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+            for name in sorted(filenames):
+                if not name.endswith((".py", ".sh")):
+                    continue
+                path = os.path.join(dirpath, name)
+                h.update(os.path.relpath(path, _REPO).encode())
+                with open(path, "rb") as fh:
+                    h.update(fh.read())
+    return h.hexdigest()
+
+
 def _versions() -> dict:
     out = {}
     for name in PACKAGES:
@@ -92,6 +117,7 @@ def main() -> None:
     manifest = {
         "janus_commit": os.environ.get("JANUS_COMMIT") or _git("rev-parse", "HEAD"),
         "janus_dirty": os.environ.get("JANUS_DIRTY", ""),
+        "janus_source_sha256": _source_digest(),
         "fdb_commit": _git("-C", args.fdb_root, "rev-parse", "HEAD"),
         "judge": "on (FDB --use-llm)" if args.judge else "off (exact-match scoring only)",
         "agent": {
@@ -134,6 +160,7 @@ def main() -> None:
         "# Janus x FDB-v3 run",
         "",
         f"- Janus commit: `{manifest['janus_commit']}`  FDB commit: `{manifest['fdb_commit']}`",
+        f"- Janus source SHA-256: `{manifest['janus_source_sha256'][:16]}`",
         f"- Judge: {manifest['judge']}",
         f"- Scenarios: {headline['scenarios']}  passed: {headline['passed']}  failed: {headline['failed']}",
         f"- Strict pass rate: {pr}",
