@@ -17,7 +17,7 @@ Two concrete, ordinary (not contrived) races reproduce a real violation:
 2. A write gets cancelled by a correction, but its real result confirms
    late anyway (`CallStatus.COMPLETED_AFTER_CANCEL`, I-15's own scenario);
    if the user starts a new utterance before that late result arrives,
-   the reconciliation notice ("the earlier booking had already gone
+   the reconciliation notice ("the earlier book flight request had already gone
    through...") still fires while they're mid-sentence.
 
 Fixed with the smallest possible change: `FastResponder.decide` (the only
@@ -224,6 +224,8 @@ def test_reconcile_inform_fires_once_the_floor_closes():
     report = h.send(h.clock.now_us() + 900_000, [eot_event()])
     reconciles = [er.action for er in report.emit_report.emitted if er.action.action_type == ActionType.SPEAK and "gone through" in (er.action.body.text or "")]
     assert len(reconciles) == 1
+    # Names the tool that went through (it said "booking" for any tool before).
+    assert reconciles[0].body.text == "Just so you know — the earlier book flight request had already gone through before I could cancel it."
     assert h.store.floor_state == FloorState.USER_TURN_CLOSED
     assert_clean(h)
 

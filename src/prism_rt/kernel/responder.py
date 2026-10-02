@@ -59,8 +59,9 @@ from prism_rt.model.types import (
 )
 
 _RECONCILE_TEMPLATES = {
-    EffectStatus.CONFIRMED: "Just so you know — the earlier booking had already gone through before I could cancel it.",
-    EffectStatus.UNKNOWN: "I'm not sure whether the earlier booking went through — I couldn't get a result back after cancelling.",
+    # Names the tool: "booking" was said for a filter update too (1 Oct audit).
+    EffectStatus.CONFIRMED: "Just so you know — the earlier {what} request had already gone through before I could cancel it.",
+    EffectStatus.UNKNOWN: "I'm not sure whether the earlier {what} request went through — I couldn't get a result back after cancelling.",
 }
 
 
@@ -650,7 +651,7 @@ class FastResponder:
             actions.append(
                 IntendedAction(
                     action_type=ActionType.SPEAK,
-                    body=SpeakBody(text=template, kind="inform"),
+                    body=SpeakBody(text=template.format(what=call.tool.replace("_", " ")), kind="inform"),
                     read_set=EMPTY_READ_SET,
                     rule_id="responder.reconcile",
                 )
