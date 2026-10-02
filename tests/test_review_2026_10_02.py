@@ -428,3 +428,15 @@ def test_validate_args_rejects_a_blank_required_string():
     result = h.store.catalog.validate_args("calculate_commute", {"origin_address": "  ", "destination_address": "x"})
     assert not result.valid and "blank_required:origin_address" in result.errors
     assert h.store.catalog.validate_args("calculate_commute", {"origin_address": "home", "destination_address": "x"}).valid
+
+
+def test_the_interpreter_prompt_does_not_both_require_and_forbid_suffixed_slots():
+    """1 Oct audit: under the FDB profile (multi-action + action plans) the
+    prompt said to name a repeated parameter "order_id_2" and, further down,
+    never to use a "_2" suffix."""
+    from prism_rt.workers.interpreter import build_prompt
+
+    with_plans = build_prompt({"multi_action_enabled": True, "action_plans_enabled": True, "transcript": "x"})
+    assert "order_id_2" not in with_plans and 'never a "_2" suffix' in with_plans
+    without_plans = build_prompt({"multi_action_enabled": True, "transcript": "x"})
+    assert "order_id_2" in without_plans  # the slot-delta path still needs it

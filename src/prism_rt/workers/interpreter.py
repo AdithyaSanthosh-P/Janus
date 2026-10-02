@@ -321,11 +321,19 @@ def build_prompt(view: dict) -> str:
             "then add it to my cart, and also track order Y\"). List EVERY tool "
             "name the turn asks for, in the order asked, in requested_actions -- "
             "intent should be the *first* one (same value, not a summary). "
-            "Extract slot_deltas for *every* action's parameters, not just the "
-            "first -- if two different actions need the same parameter name "
-            "with two different values (e.g. two order lookups), name the "
-            "second occurrence with a \"_2\" suffix (e.g. \"order_id_2\") so "
-            "they don't collide. A parameter whose value must come from an "
+            + (
+                # With per-action args (below) the same parameter twice is two
+                # actions, never a "_2" slot: telling the model both was a
+                # contradiction in the FDB profile's prompt (1 Oct audit).
+                "Give every action's parameters in its own actions[] entry, not just the first. "
+                if view.get("action_plans_enabled")
+                else "Extract slot_deltas for *every* action's parameters, not just the "
+                "first -- if two different actions need the same parameter name "
+                "with two different values (e.g. two order lookups), name the "
+                "second occurrence with a \"_2\" suffix (e.g. \"order_id_2\") so "
+                "they don't collide. "
+            )
+            + "A parameter whose value must come from an "
             "earlier action's own result (a chained argument, e.g. \"the "
             "cheapest one you just found\") is NOT a slot_delta -- leave it "
             "out; the planner resolves it from the prior step's result.\n"
