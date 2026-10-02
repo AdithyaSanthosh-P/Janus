@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 
 from prism_rt.canonical import canonicalize_spoken_id  # re-exported: tests and reducers import it from here
+from prism_rt.canonical import equivalent_values
 from prism_rt.kernel import action_plans, replies
 from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.perception import PerceptionScheduler
@@ -122,8 +123,20 @@ def _apply_slot_deltas(txn: StoreTxn, goal_id: str, slot_deltas, now_us: int, st
             value = delta.value
             if txn.store.config.normalize_spoken_ids:
                 value = canonicalize_spoken_id(value, delta.name)
+            existing = txn.facts.get(key)
+            # The same value the user already gave, said another way ("1500"
+            # for "$1500"), is not a correction: keep what is written and
+            # invalidate nothing. Only over a user-stated value -- the user
+            # confirming a value the camera saw or the system assumed must
+            # still take over its provenance (M-05, assumed-value settle).
+            restated = (
+                existing is not None
+                and existing.status != FactStatus.RETRACTED
+                and existing.provenance.source == "user"
+                and equivalent_values(existing.value, value)
+            )
             provenance = Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us)
-            if txn.facts.set(key, value, FactStatus.COMMITTED, provenance, rule="interpret_apply.slot_set"):
+            if not restated and txn.facts.set(key, value, FactStatus.COMMITTED, provenance, rule="interpret_apply.slot_set"):
                 changed = True
         # V3: a fresh user statement about a slot name resolves whatever
         # perception conflict was open on it (§9.1's "answer binding" —

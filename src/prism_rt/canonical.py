@@ -123,3 +123,54 @@ def compute_digest(value: Any) -> str:
     """SHA-256 hex digest of the value's canonical JSON encoding."""
     canonical = to_canonical_json(value)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+# An amount as people say it: optional currency sign, thousands separators,
+# optional currency word ("$1,500", "1500 dollars", "1500").
+_AMOUNT_RE = re.compile(
+    r"^\s*[$€£₹]?\s*(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*"
+    r"(?:dollars?|usd|euros?|eur|pounds?|gbp|rupees?|inr|bucks)?\s*$",
+    re.IGNORECASE,
+)
+_TRAILING_PUNCT = " .,!?;:"
+
+
+def _as_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        match = _AMOUNT_RE.match(value)
+        if match:
+            return float(match.group(1).replace(",", ""))
+    return None
+
+
+def _as_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):
+        return value.strip().lower() == "true"
+    return None
+
+
+def equivalent_values(a: Any, b: Any) -> bool:
+    """True when two slot values say the same thing in different surface
+    forms: equal amounts ("$1,500" / "1500" / 1500), the same boolean
+    (True / "true"), or the same text ignoring case, spacing and trailing
+    punctuation. Used so a restatement is not mistaken for a correction
+    (1 Oct audit: "$1500" restated as "1500" cancelled a call that had
+    already gone out and failed the whole goal)."""
+    if type(a) is type(b) and a == b:  # not `1 == True`
+        return True
+    na, nb = _as_number(a), _as_number(b)
+    if na is not None and nb is not None:
+        return na == nb
+    ba, bb = _as_bool(a), _as_bool(b)
+    if ba is not None and bb is not None:
+        return ba == bb
+    if isinstance(a, str) and isinstance(b, str):
+        fold = lambda s: _WHITESPACE_RE.sub(" ", s.strip(_TRAILING_PUNCT)).casefold()  # noqa: E731
+        return fold(a) == fold(b)
+    return False
