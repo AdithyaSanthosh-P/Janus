@@ -12,6 +12,8 @@ exactly like a real FDB tool.
 
 from __future__ import annotations
 
+import pytest
+
 from conftest import FAST_WORKER_LATENCY, chunk_event, drain, eot_event, manifest_event
 
 from prism_rt.config import Config
@@ -168,6 +170,30 @@ def test_incomplete_turn_waits_longer_than_a_complete_one():
     assert complete_delay is not None and incomplete_delay is not None
     assert complete_delay < 1_000_000  # settled at the base settle_ms (300ms)
     assert incomplete_delay >= 1_500_000  # settled only at the extended settle_ms (1500ms)
+
+
+@pytest.mark.parametrize("transcript", [
+    "book a flight to chicago...",  # the transcriber's trailing-off mark
+    "book a flight to chicago\u2026",
+    "book a flight to chicago and my budget is under",
+    "book a flight to chicago for about",
+    "book a flight to chicago, somewhere around",
+    "book a flight to chicago -",
+])
+def test_a_trailing_off_turn_waits_longer(transcript):
+    """1 Oct audit (R02): a turn ending in an ellipsis, a dash, or a word that
+    introduces an amount was settled at the short window -- all 36 transcript
+    chunks ending in "..." in the voice runs were followed by more speech."""
+    config = fdb_v3_config(settle_ms=300, settle_ms_incomplete=1500)
+    delay = _time_to_first_call(config, transcript)
+    assert delay is not None and delay >= 1_500_000
+
+
+@pytest.mark.parametrize("transcript", ["book a flight to chicago.", "book a flight to chicago, thanks!", "is it under 300?"])
+def test_a_finished_turn_keeps_the_short_window(transcript):
+    config = fdb_v3_config(settle_ms=300, settle_ms_incomplete=1500)
+    delay = _time_to_first_call(config, transcript)
+    assert delay is not None and delay < 1_000_000
 
 
 def test_incomplete_turn_flag_off_uses_base_settle_only():

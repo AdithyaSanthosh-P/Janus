@@ -12,6 +12,7 @@ call as of the decide phase.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from config.lexicons import HOLD_CUES, INERT_TOKENS, TRAILING_CONNECTIVES
@@ -70,6 +71,10 @@ def _turn_looks_incomplete(store: SessionStore) -> bool:
     text = " ".join(chunk.text for chunk in turn.chunks).strip()
     if not text:
         return False
+    if _TRAILING_OFF.search(text):
+        # The transcriber writes "..." / a dash when speech trails off; all
+        # 36 such chunks in the 1 Oct audit's voice runs had more to come.
+        return True
     stripped = text.rstrip(" .,!?;:\"'").lower()
     if not stripped:
         return False
@@ -77,7 +82,13 @@ def _turn_looks_incomplete(store: SessionStore) -> bool:
         if stripped.endswith(cue.rstrip(",")):
             return True
     last_word = stripped.split()[-1]
-    return last_word in INERT_TOKENS or last_word in TRAILING_CONNECTIVES
+    return last_word in _TRAILING_FILLERS or last_word in TRAILING_CONNECTIVES
+
+
+# A trailing ellipsis or dash (ASCII or Unicode), ignoring closing quotes/space.
+_TRAILING_OFF = re.compile(r"(?:\.\.\.|\u2026|\s[-\u2013\u2014]|[\u2013\u2014])[\s\"']*$")
+# Hesitation sounds suggest more is coming; "please"/"thanks" end a request.
+_TRAILING_FILLERS = tuple(t for t in INERT_TOKENS if t not in ("please", "thanks", "thank", "you"))
 
 
 def _uses_assumed_value(store: SessionStore, call: CallRecord) -> bool:

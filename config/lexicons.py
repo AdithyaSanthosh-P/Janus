@@ -83,6 +83,10 @@ TRAILING_CONNECTIVES: tuple[str, ...] = (
     "and", "or", "but", "so", "then", "to", "for", "with",
     "the", "a", "an", "of", "my", "your", "his", "her", "its", "our", "their",
     "is", "are", "was", "were", "at", "in", "on", "by", "from",
+    # Words that introduce an amount still to come ("keep it under ...") --
+    # found in the 1 Oct audit's voice runs.
+    "under", "over", "about", "around", "below", "above", "than",
+    "approximately", "roughly", "nearly", "almost", "least", "most",
 )
 
 VISUAL_CUES: tuple[str, ...] = (
