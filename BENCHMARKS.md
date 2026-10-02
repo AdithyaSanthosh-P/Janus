@@ -6,26 +6,27 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 
 | File | One row per | Use it for |
 |---|---|---|
-| `runs.csv` | scored run (73) | score vs time, configuration comparisons |
+| `runs.csv` | scored run (74) | score vs time, configuration comparisons |
 | `recordings.csv` | scenario in each text-replay run (2,226) | per-scenario and per-domain pass rates, text-replay latency |
-| `voice_recordings.csv` | recording in each voice run (370) | per-speaker before/after, turn-ending evidence, latency |
-| `failures.csv` | failing recording in an analysed failure set (102) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
+| `voice_recordings.csv` | recording in each voice run (470) | per-speaker before/after, turn-ending evidence, latency |
+| `failures.csv` | failing recording in an analysed failure set (129) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
 | `other_measurements.csv` | measurement | tests, kernel latency, exploration, speech round trip, reference numbers |
 
-Dates are 2026. Reports, logs and per-room decision logs of the five cloud voice runs are in `docs/runs/` (audio left out).
+Dates are 2026. Reports, logs and per-room decision logs of the six cloud voice runs are in `docs/runs/` (audio left out).
 
-## 1. Where things stand (2 Oct)
+## 1. Where things stand (3 Oct)
 
 | Measure | Value | Run | Note |
 |---|---|---|---|
+| **Voice over LiveKit, all 100, judged, current code** | **73%** (73/100) | `cloud_20261002_182600` | 3 Oct, first full run after the turn-ending fixes; hosted speech-to-text; tool selection 0.947, argument accuracy 0.768, response quality 0.626; turn-taking 99/100; average latency 8.1 s; no FDB client aborts; exact-match scoring gives 68/100 |
 | Text replay, all 100, judged | **77%** (77/100) | `text_text_replay_0930_final` | Tool selection 0.949, argument accuracy 0.803; configuration of the 30 Sep submission |
 | Voice over LiveKit, all 100, exact | **41%** (41/100) | `cloud_20260929_232528` | 29-30 Sep, before the voice fixes below; local Whisper |
 | Voice over LiveKit, all 100, judged | **42%** (42/100) | `cloud_20260929_232528.judged` | Same run, scored with FDB's judge |
 | Voice, 41 recordings the full run mostly failed, judged | **17/41** (41.5%) | `cloud_20260930_174502` | Re-run of the same recordings with fixes and hosted speech-to-text; the full run had 6/41 on them |
 | Voice, 26 recordings, exact | **16/26** (61.5%) | `cloud_20261002_061207` | After the turn-ending fix; the same recordings scored 12/26 on 30 Sep |
 
-There is **no full-100 voice run of the current code**. The sections below say which comparisons are like for like and which are not; the voice-versus-text gap (77% against 41-42%) is the main open question, and section 4 shows most of it is the voice front end rather than the reasoning.
+The 3 Oct run is the first full-100 voice run since the turn-ending fixes. It is one run (hosted models and FDB's mock-tool timing add run-to-run noise of a few recordings), on the code at commit `8020f79` plus a fix to the native setup script that does not touch the agent. The voice-versus-text gap, which was 77% against 41-42% on 30 Sep, is now 77% against 73%. The sections below say which comparisons are like for like and which are not.
 
 For context, the benchmark's public paper reports (judged strict pass@1):
 
@@ -117,6 +118,7 @@ Voice runs stream FDB's recordings through LiveKit to the Janus worker (speech r
 | 2026-09-30 | `cloud_20260930_140536` | exact | 12/64 | 18.8% | 0.363 | 0.240 | 7.1 s | 64 recordings, hosted speech-to-text; 33 rooms were served by a stray demo worker and score 0 (31 valid) |
 | 2026-09-30 | `cloud_20260930_174502` | judged | 17/41 | 41.5% | 0.835 | 0.524 | 6.4 s | 41 recordings (clean re-run of the 29 contaminated ids), hosted speech-to-text, judged |
 | 2026-10-02 | `cloud_20261002_061207` | exact | 16/26 | 61.5% | 0.958 | 0.736 | 6.8 s | 26 recordings (10 split-turn failures, 5 fragile passes, 3 controls), local Whisper, after the turn-ending fix |
+| 2026-10-02 | `cloud_20261002_182600` | judged | 73/100 | 73.0% | 0.947 | 0.768 | 8.1 s | All 100 recordings, judged, current code (commit 8020f79 plus the native setup fix), native path on a clean RTX 3090 box, hosted speech-to-text; first full run after the turn-ending fixes (run 3 Oct IST, box clock 2 Oct UTC) |
 
 Read these with care:
 
@@ -129,21 +131,32 @@ Read these with care:
 
 ### Voice against text, same 100 recordings
 
-| Domain | Text replay, judged (30 Sep final) | Voice, judged (29-30 Sep) | Voice, exact (29-30 Sep) |
+| Domain | Text replay, judged (30 Sep final) | Voice, judged (29-30 Sep) | Voice, exact (29-30 Sep) | **Voice, judged (3 Oct)** |
+|---|---|---|---|---|
+| ecommerce_support | 23/29 | 14/29 | 15/29 | 23/29 |
+| finance_billing | 25/25 | 16/25 | 16/25 | 24/25 |
+| housing_location | 10/26 | 4/26 | 4/26 | 10/26 |
+| travel_identity | 19/20 | 8/20 | 6/20 | 16/20 |
+| **all** | 77/100 | 42/100 | 41/100 | 73/100 |
+
+| Expected tool calls | Text replay, judged | Voice, exact (29-30 Sep) | **Voice, judged (3 Oct)** |
 |---|---|---|---|
-| ecommerce_support | 23/29 | 14/29 | 15/29 |
-| finance_billing | 25/25 | 16/25 | 16/25 |
-| housing_location | 10/26 | 4/26 | 4/26 |
-| travel_identity | 19/20 | 8/20 | 6/20 |
-| **all** | 77/100 | 42/100 | 41/100 |
+| 1 call | 54/66 | 33/66 | 52/66 |
+| 2 calls | 14/18 | 6/18 | 14/18 |
+| 3 calls | 9/16 | 2/16 | 7/16 |
 
-| Expected tool calls | Text replay, judged | Voice, exact (29-30 Sep) |
-|---|---|---|
-| 1 call | 54/66 | 33/66 |
-| 2 calls | 14/18 | 6/18 |
-| 3 calls | 9/16 | 2/16 |
+On 30 Sep the gap was wide at every size: about 32 points for one-call scenarios (82% to 50%) and about 44 for two- and three-call ones. On 3 Oct the one- and two-call scenarios are close to text replay; three-call scenarios are the weakest, and housing (38.5%) is the one domain still far below the others.
 
-The gap is wide at every size: about 32 points for one-call scenarios (82% to 50%) and about 44 for two- and three-call ones (78% to 33%, 56% to 12.5%).
+### Full run after the fixes (3 Oct), per recording against 30 Sep (both judged, same 100 recordings)
+
+| 30 Sep (judged) | 3 Oct (judged) | Change | Recordings |
+|---|---|---|---|
+| fail | pass | fixed | 32 |
+| pass | pass | unchanged pass | 41 |
+| fail | fail | unchanged fail | 26 |
+| pass | fail | **regressed** | 1 |
+
+The 3 Oct run used hosted speech-to-text and the 30 Sep run local Whisper (which fell back to the CPU for its last quarter), so the comparison includes the speech-to-text change as well as the code fixes, as with the 2 Oct run in section 4. The full per-run report, with all 27 failures, is in [`BENCHMARK_FULL100_2026-10-03.md`](BENCHMARK_FULL100_2026-10-03.md).
 
 ## 4. What changed on the voice path, and what it did
 
@@ -208,6 +221,7 @@ Pass rate against how often a recording was split, per run:
 | `cloud_20260930_032600` | 32 | 25 | 16 | 7/16 | 4/16 |
 | `cloud_20260930_174502` | 41 | 65 | 34 | 6/7 | 9/34 |
 | `cloud_20261002_061207` | 24 | 0 | 0 | 16/24 | 0/0 |
+| `cloud_20261002_182600` | 100 | 18 | 17 | 57/83 | 11/17 |
 
 Two of the 26 recordings were client aborts with no wire log, so the turn comparison covers 24. Counted by FDB word timestamps (the 1 Oct audit's definition: a turn closed while the speaker's words continued) the same 26 recordings had 31 premature closes on 30 Sep and none on 2 Oct, and 5 against 26 recordings kept as one turn; the wire-order count above is larger because it also counts a turn closed just before a late transcript arrived. Both are zero after the fix.
 
@@ -215,13 +229,14 @@ The 2 Oct run changed two things at once (the fix, and local instead of hosted s
 
 ## 5. Failures
 
-The failures behind the misses were classified by reading each recording's decision log, wire log and FDB's report. Three sets, in time order; `benchmarks/failures.csv` has one row per recording.
+The failures behind the misses were classified by reading each recording's decision log, wire log and FDB's report. Four sets, in time order; `benchmarks/failures.csv` has one row per recording. The causes of the 3 Oct set (`full100_2026-10-03`) are heuristic (derived from the recording's calls, wire log and reference transcript, marked `HEURISTIC` in the file) and have not yet been confirmed recording by recording in the decision logs.
 
 | Failure set | Recordings | By cause |
 |---|---|---|
 | `ledger_2026-09-30` | 56 | wrong_arg 22, missing_call 15, client_abort 7, extra_call 7, stt_error 5 |
 | `audit_2026-10-01` | 36 | split_turn 10, reasoning 8, label_mismatch 7, schema_gap 6, stt_error 3, value_form 1, infra 1 |
 | `verify_2026-10-02` | 10 | label_mismatch 4, stt_error 3, client_abort 2, value_form 1 |
+| `full100_2026-10-03` | 27 | wrong_arg 12, missing_call 7, split_turn 5, stt_error 3 |
 
 ### Classes
 
@@ -443,4 +458,5 @@ The commit column is the code the run used (`-dirty` means uncommitted changes a
 | 2026-09-30 | `text_text_replay_0930_fixes` | text_replay | full100 | judged | 77/100 | 77.0% | 0.959 | 0.807 | gemini-3.6-flash | 31ae4cb-dirty |
 | 2026-09-30 | `text_text_replay_0930_setting` | text_replay | full100 | judged | 75/100 | 75.0% | 0.963 | 0.795 | gemini-3.6-flash | 838cea7-dirty |
 | 2026-10-02 | `cloud_20261002_061207` | voice_cloud | subset | exact | 16/26 | 61.5% | 0.958 | 0.736 | gemini-3.6-flash | 86e5fc95 |
+| 2026-10-02 | `cloud_20261002_182600` | voice_cloud | full100 | judged | 73/100 | 73.0% | 0.947 | 0.768 | gemini-3.6-flash | 8020f79b |
 | 2026-10-02 | `text_text_replay_1002_valuerules` | text_replay | subset | exact | 11/24 | 45.8% | 0.911 | 0.618 | gemini-3.6-flash | 1405be2-dirty |

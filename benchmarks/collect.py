@@ -40,6 +40,7 @@ ARCHIVES = [
     ("docs/runs/janus_fdbv3_voice_run64_2026-09-30.tgz", "janus_fdbv3_voice_run64_2026-09-30", "cloud_20260930_140536"),
     ("docs/runs/janus_fdbv3_voice_clean41_2026-09-30.tgz", "janus_fdbv3_voice_clean41_2026-09-30", "cloud_20260930_174502"),
     ("docs/runs/janus_fdbv3_voice_verify26_2026-10-02.tgz", "janus_fdbv3_voice_verify26_2026-10-02", "cloud_20261002_061207"),
+    ("docs/runs/janus_fdbv3_voice_full100_2026-10-03.tgz", "janus_fdbv3_voice_full100_2026-10-03", "cloud_20261002_182600"),
 ]
 
 # run id -> (class, phase, description). class: full100 | subset | debug
@@ -80,6 +81,7 @@ LABELS = {
     "cloud_20260930_032600": ("subset", "Cloud", "32 hardest recordings of the full run, after the Whisper GPU fix"),
     "cloud_20260930_140536": ("subset", "Cloud", "64 recordings, hosted speech-to-text; 33 rooms were served by a stray demo worker and score 0 (31 valid)"),
     "cloud_20260930_174502": ("subset", "Cloud", "41 recordings (clean re-run of the 29 contaminated ids), hosted speech-to-text, judged"),
+    "cloud_20261002_182600": ("full100", "Cloud", "All 100 recordings, judged, current code (commit 8020f79 plus the native setup fix), native path on a clean RTX 3090 box, hosted speech-to-text; first full run after the turn-ending fixes (run 3 Oct IST, box clock 2 Oct UTC)"),
     "cloud_20261002_061207": ("subset", "Cloud", "26 recordings (10 split-turn failures, 5 fragile passes, 3 controls), local Whisper, after the turn-ending fix"),
 }
 

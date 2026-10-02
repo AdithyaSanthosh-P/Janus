@@ -152,11 +152,28 @@ def build(run: Path, include_passes: bool = False) -> str:
     tools = _load(run / "tool_calls_report.json") or {}
     results = report.get("scenario_results", [])
     by_id = {r["scenario_id"]: r for r in results}
-    files: dict[str, tuple[dict, Path]] = {}
+    # A scenario can have two speakers (two recordings, same id): keep every result file.
+    files: dict[str, list[tuple[dict, Path]]] = collections.defaultdict(list)
     for d in sorted((run / "data").glob("*/")):
         rf = _load(d / "result_janus.json")
         if rf:
-            files[rf.get("example_id", d.name)] = (rf, d)
+            files[rf.get("example_id", d.name)].append((rf, d))
+    used: set[str] = set()
+
+    def pick(res: dict):
+        """The result file of the recording this scored result is about: for a scenario with two
+        speakers, the one whose emitted tool calls equal the result's actual calls."""
+        cands = [fd for fd in files.get(res["scenario_id"], []) if str(fd[1]) not in used]
+        want = sorted(json.dumps(a.get("actual_args"), sort_keys=True) for a in res.get("checks", {}).get("argument_accuracy", {}).get("details", []))
+        for rf, d in cands:
+            got = sorted(json.dumps((c.get("args") or {}), sort_keys=True) for c in (_lit(rf.get("actual_tool_calls")) or []))
+            if want and got == want:
+                used.add(str(d))
+                return rf, d
+        if cands:
+            used.add(str(cands[0][1]))
+            return cands[0]
+        return {}, None
 
     lines = [f"# Run digest: {run.name}", ""]
     lines.append(f"- Scenarios scored: {report.get('total_scenarios')}  passed: {report.get('passed')}  failed: {report.get('failed')}  strict pass rate: {report.get('overall_pass_rate')}")
@@ -171,7 +188,7 @@ def build(run: Path, include_passes: bool = False) -> str:
             lines.append(f"- {key}: {json.dumps(report[key])}")
     retried = run / "retried.txt"
     lines.append(f"- Recordings re-streamed after a client abort: {len(retried.read_text().split(chr(10))) - 1 if retried.exists() else 0}")
-    missing = [i for i, (rf, _) in files.items() if i not in by_id]
+    missing = [i for i in files if i not in by_id]
     if missing:
         lines.append(f"- Recordings with a result file but no score (client abort or not evaluated): {', '.join(sorted(missing))}")
     lines += ["", "## Agent log: top errors (de-duplicated)"] + [f"- {e}" for e in _agent_log_errors(run / "agent.log")]
@@ -180,7 +197,7 @@ def build(run: Path, include_passes: bool = False) -> str:
     causes: collections.Counter = collections.Counter()
     blocks = []
     for res in sorted(failed, key=lambda r: r["scenario_id"]):
-        rf, d = files.get(res["scenario_id"], ({}, None))
+        rf, d = pick(res)
         room = (rf or {}).get("room_name")
         wire = _wire(run / "decisions" / f"{room}.wire.jsonl") if room else {"heard": "", "spoke": [], "calls": [], "turns": 0}
         cause = _guess_cause(res, wire, rf)

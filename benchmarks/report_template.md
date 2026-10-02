@@ -13,19 +13,20 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
 | `other_measurements.csv` | measurement | tests, kernel latency, exploration, speech round trip, reference numbers |
 
-Dates are 2026. Reports, logs and per-room decision logs of the five cloud voice runs are in `docs/runs/` (audio left out).
+Dates are 2026. Reports, logs and per-room decision logs of the six cloud voice runs are in `docs/runs/` (audio left out).
 
-## 1. Where things stand (2 Oct)
+## 1. Where things stand (3 Oct)
 
 | Measure | Value | Run | Note |
 |---|---|---|---|
+| **Voice over LiveKit, all 100, judged, current code** | **73%** (73/100) | `cloud_20261002_182600` | 3 Oct, first full run after the turn-ending fixes; hosted speech-to-text; tool selection 0.947, argument accuracy 0.768, response quality 0.626; turn-taking 99/100; average latency 8.1 s; no FDB client aborts; exact-match scoring gives 68/100 |
 | Text replay, all 100, judged | **77%** (77/100) | `text_text_replay_0930_final` | Tool selection 0.949, argument accuracy 0.803; configuration of the 30 Sep submission |
 | Voice over LiveKit, all 100, exact | **41%** (41/100) | `cloud_20260929_232528` | 29-30 Sep, before the voice fixes below; local Whisper |
 | Voice over LiveKit, all 100, judged | **42%** (42/100) | `cloud_20260929_232528.judged` | Same run, scored with FDB's judge |
 | Voice, 41 recordings the full run mostly failed, judged | **17/41** (41.5%) | `cloud_20260930_174502` | Re-run of the same recordings with fixes and hosted speech-to-text; the full run had 6/41 on them |
 | Voice, 26 recordings, exact | **16/26** (61.5%) | `cloud_20261002_061207` | After the turn-ending fix; the same recordings scored 12/26 on 30 Sep |
 
-There is **no full-100 voice run of the current code**. The sections below say which comparisons are like for like and which are not; the voice-versus-text gap (77% against 41-42%) is the main open question, and section 4 shows most of it is the voice front end rather than the reasoning.
+The 3 Oct run is the first full-100 voice run since the turn-ending fixes. It is one run (hosted models and FDB's mock-tool timing add run-to-run noise of a few recordings), on the code at commit `8020f79` plus a fix to the native setup script that does not touch the agent. The voice-versus-text gap, which was 77% against 41-42% on 30 Sep, is now 77% against 73%. The sections below say which comparisons are like for like and which are not.
 
 For context, the benchmark's public paper reports (judged strict pass@1):
 
@@ -85,7 +86,13 @@ Read these with care:
 
 <!--table:calls-->
 
-The gap is wide at every size: about 32 points for one-call scenarios (82% to 50%) and about 44 for two- and three-call ones (78% to 33%, 56% to 12.5%).
+On 30 Sep the gap was wide at every size: about 32 points for one-call scenarios (82% to 50%) and about 44 for two- and three-call ones. On 3 Oct the one- and two-call scenarios are close to text replay; three-call scenarios are the weakest, and housing (38.5%) is the one domain still far below the others.
+
+### Full run after the fixes (3 Oct), per recording against 30 Sep (both judged, same 100 recordings)
+
+<!--table:full100_flips-->
+
+The 3 Oct run used hosted speech-to-text and the 30 Sep run local Whisper (which fell back to the CPU for its last quarter), so the comparison includes the speech-to-text change as well as the code fixes, as with the 2 Oct run in section 4. The full per-run report, with all 27 failures, is in [`BENCHMARK_FULL100_2026-10-03.md`](BENCHMARK_FULL100_2026-10-03.md).
 
 ## 4. What changed on the voice path, and what it did
 
@@ -116,7 +123,7 @@ The 2 Oct run changed two things at once (the fix, and local instead of hosted s
 
 ## 5. Failures
 
-The failures behind the misses were classified by reading each recording's decision log, wire log and FDB's report. Three sets, in time order; `benchmarks/failures.csv` has one row per recording.
+The failures behind the misses were classified by reading each recording's decision log, wire log and FDB's report. Four sets, in time order; `benchmarks/failures.csv` has one row per recording. The causes of the 3 Oct set (`full100_2026-10-03`) are heuristic (derived from the recording's calls, wire log and reference transcript, marked `HEURISTIC` in the file) and have not yet been confirmed recording by recording in the decision logs.
 
 <!--table:failure_sets-->
 

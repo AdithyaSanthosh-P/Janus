@@ -93,13 +93,14 @@ def t_domain():
     text = by(REC, "domain", "passed", "text_text_replay_0930_final")
     vx = by(VOICE, "domain", "exact_pass", "cloud_20260929_232528")
     vj = by(VOICE, "domain", "judged_pass", "cloud_20260929_232528")
+    nj = by(VOICE, "domain", "judged_pass", "cloud_20261002_182600")
     body = []
     for dom in ("ecommerce_support", "finance_billing", "housing_location", "travel_identity"):
         f = lambda d: f"{d[dom][0]}/{d[dom][1]}"  # noqa: E731
-        body.append([dom, f(text), f(vj), f(vx)])
+        body.append([dom, f(text), f(vj), f(vx), f(nj)])
     tot = lambda d: f"{sum(v[0] for v in d.values())}/{sum(v[1] for v in d.values())}"  # noqa: E731
-    body.append(["**all**", tot(text), tot(vj), tot(vx)])
-    return md(["Domain", "Text replay, judged (30 Sep final)", "Voice, judged (29-30 Sep)", "Voice, exact (29-30 Sep)"], body)
+    body.append(["**all**", tot(text), tot(vj), tot(vx), tot(nj)])
+    return md(["Domain", "Text replay, judged (30 Sep final)", "Voice, judged (29-30 Sep)", "Voice, exact (29-30 Sep)", "**Voice, judged (3 Oct)**"], body)
 
 
 def t_calls():
@@ -112,8 +113,23 @@ def t_calls():
         return d
     text = by(REC, "num_tools", "passed", "text_text_replay_0930_final")
     vx = by(VOICE, "expected_calls", "exact_pass", "cloud_20260929_232528")
-    body = [[f"{k} call" + ("s" if k != "1" else ""), f"{text[k][0]}/{text[k][1]}", f"{vx[k][0]}/{vx[k][1]}"] for k in ("1", "2", "3")]
-    return md(["Expected tool calls", "Text replay, judged", "Voice, exact (29-30 Sep)"], body)
+    nj = by(VOICE, "expected_calls", "judged_pass", "cloud_20261002_182600")
+    body = [[f"{k} call" + ("s" if k != "1" else ""), f"{text[k][0]}/{text[k][1]}", f"{vx[k][0]}/{vx[k][1]}", f"{nj[k][0]}/{nj[k][1]}"] for k in ("1", "2", "3")]
+    return md(["Expected tool calls", "Text replay, judged", "Voice, exact (29-30 Sep)", "**Voice, judged (3 Oct)**"], body)
+
+
+def t_full100_flips():
+    """Per recording, the 30 Sep full run (judged) against the 3 Oct full run (judged)."""
+    old = {(r["scenario_id"], r["speaker"]): r for r in VOICE if r["run_id"] == "cloud_20260929_232528"}
+    new = [r for r in VOICE if r["run_id"] == "cloud_20261002_182600"]
+    c = collections.Counter()
+    for r in new:
+        o = old.get((r["scenario_id"], r["speaker"]))
+        was = "?" if o is None or o["judged_pass"] == "" else o["judged_pass"]
+        c[(was, r["judged_pass"])] += 1
+    rows = [["fail", "pass", "fixed", c[("0", "1")]], ["pass", "pass", "unchanged pass", c[("1", "1")]],
+            ["fail", "fail", "unchanged fail", c[("0", "0")]], ["pass", "fail", "**regressed**", c[("1", "0")]]]
+    return md(["30 Sep (judged)", "3 Oct (judged)", "Change", "Recordings"], rows)
 
 
 def _previous_verdict(sid, spk):
@@ -169,7 +185,7 @@ def t_turn_replay():
 
 def t_premature_by_run():
     body = []
-    for rid in ("cloud_20260929_232528", "cloud_20260930_032600", "cloud_20260930_174502", "cloud_20261002_061207"):
+    for rid in ("cloud_20260929_232528", "cloud_20260930_032600", "cloud_20260930_174502", "cloud_20261002_061207", "cloud_20261002_182600"):
         rs = [r for r in VOICE if r["run_id"] == rid and r["end_of_turns"] != ""]
         prem = sum(int(r["premature_eots"] or 0) for r in rs)
         split = sum(1 for r in rs if int(r["premature_eots"] or 0) > 0)
@@ -185,7 +201,7 @@ def t_premature_by_run():
 
 def t_failure_sets():
     body = []
-    for fs in ("ledger_2026-09-30", "audit_2026-10-01", "verify_2026-10-02"):
+    for fs in ("ledger_2026-09-30", "audit_2026-10-01", "verify_2026-10-02", "full100_2026-10-03"):
         c = collections.Counter(r["cause_class"] for r in FAIL if r["failure_set"] == fs)
         body.append([f"`{fs}`", sum(c.values()), ", ".join(f"{k} {v}" for k, v in c.most_common())])
     return md(["Failure set", "Recordings", "By cause"], body)
@@ -227,7 +243,7 @@ def t_all_runs():
 
 TABLES = {
     "text_timeline": t_text_timeline, "s3_arms": t_s3_arms, "voice_runs": t_voice_runs, "domain": t_domain, "calls": t_calls,
-    "flips": t_flips, "turn_replay": t_turn_replay, "turn_summary": t_turn_summary, "premature_by_run": t_premature_by_run, "failure_sets": t_failure_sets,
+    "flips": t_flips, "full100_flips": t_full100_flips, "turn_replay": t_turn_replay, "turn_summary": t_turn_summary, "premature_by_run": t_premature_by_run, "failure_sets": t_failure_sets,
     "failure_classes": t_failure_classes, "failure_by_domain": t_failure_by_domain, "tests": t_tests, "all_runs": t_all_runs,
     "kernel_latency": lambda: t_other("kernel_latency", ("metric", "value", "unit")),
     "sim_latency": lambda: t_other("latency_sim", ("metric", "value", "unit")),

@@ -369,3 +369,103 @@ cloud_20261002_061207,travel_21,65e8cf,travel_identity,hard,3,completed,0,,"Miss
 cloud_20261002_061207,travel_21,69a9cf,travel_identity,hard,3,completed,0,,Wrong arguments for: ['search_flights'],search_flights|book_flight|update_identity_doc,search_flights|book_flight|update_identity_doc,3,,7.28,,22.64,6,1,0,14,0,eval-6a05aa4a
 cloud_20261002_061207,travel_23,65e8cf,travel_identity,hard,2,completed,1,,,update_identity_doc|update_identity_doc,update_identity_doc|update_identity_doc,2,,7.44,,22.16,2,1,0,6,0,eval-9435c50b
 cloud_20261002_061207,travel_23,69a9cf,travel_identity,hard,2,completed,1,,,update_identity_doc|update_identity_doc,update_identity_doc|update_identity_doc,2,,7.52,,24.080000000000002,4,1,0,10,0,eval-91fc69b3
+cloud_20261002_182600,ecommerce_01,65e8cf,ecommerce_support,easy,1,completed,1,1,,track_order,track_order,1,True,7.2,8.74,15.280000000000001,2,1,0,2,0,eval-bdb925e5
+cloud_20261002_182600,ecommerce_01,69a9cf,ecommerce_support,easy,1,completed,1,1,,track_order,track_order,1,True,5.84,5.9,18.56,4,1,0,4,0,eval-72cd604f
+cloud_20261002_182600,ecommerce_02,5f4a4d,ecommerce_support,easy,1,completed,1,1,,search_products,search_products,1,True,9.2,8.39,12.56,2,1,0,2,0,eval-bb38b2ce
+cloud_20261002_182600,ecommerce_04,6998ab,ecommerce_support,easy,1,completed,1,1,,track_order,track_order,1,True,6.32,5.93,10.48,1,1,0,2,0,eval-77f2ff72
+cloud_20261002_182600,ecommerce_05,695bd1,ecommerce_support,easy,1,completed,1,1,,search_products,search_products,1,True,19.6,20.0,7.2,8,2,1,6,0,eval-67ec8502
+cloud_20261002_182600,ecommerce_06,66c4f3,ecommerce_support,easy,1,completed,1,1,,add_to_cart,add_to_cart,1,True,11.68,9.54,14.16,2,2,1,2,0,eval-f967216a
+cloud_20261002_182600,ecommerce_07,66f59c,ecommerce_support,easy,1,completed,0,0,Wrong arguments for: ['track_order'],track_order,track_order,1,False,,34.17,17.6,1,1,0,2,0,eval-614982df
+cloud_20261002_182600,ecommerce_08,5ff07b,ecommerce_support,easy,1,completed,0,0,Wrong arguments for: ['search_products'],search_products,search_products,1,True,11.36,9.03,14.72,1,1,0,4,0,eval-361b2ec9
+cloud_20261002_182600,ecommerce_08,61517d,ecommerce_support,easy,1,completed,0,0,Wrong arguments for: ['search_products'],search_products,search_products,1,True,11.12,10.32,12.8,6,2,1,8,0,eval-c56ff999
+cloud_20261002_182600,ecommerce_09,695bd1,ecommerce_support,medium,1,completed,1,1,,search_products,search_products,1,True,9.2,7.49,13.76,6,1,0,4,0,eval-97082c10
+cloud_20261002_182600,ecommerce_10,6998ab,ecommerce_support,medium,2,completed,1,1,,track_order|search_products,track_order|search_products,2,True,8.4,9.02,20.080000000000002,2,1,0,4,0,eval-ab10fa21
+cloud_20261002_182600,ecommerce_11,62a885,ecommerce_support,medium,1,completed,1,1,,add_to_cart,add_to_cart,1,True,7.44,7.09,10.48,1,1,0,2,0,eval-53326666
+cloud_20261002_182600,ecommerce_12,6998ab,ecommerce_support,medium,1,completed,0,0,Wrong arguments for: ['search_products'],search_products,search_products,1,True,7.76,8.62,10.72,1,1,0,4,0,eval-82f86df9
+cloud_20261002_182600,ecommerce_13,5ff07b,ecommerce_support,medium,2,completed,1,1,,add_to_cart|track_order,add_to_cart|track_order,2,True,6.56,6.58,20.32,3,1,0,2,0,eval-3d02aab4
+cloud_20261002_182600,ecommerce_13,61517d,ecommerce_support,medium,2,completed,1,1,,add_to_cart|track_order,add_to_cart|track_order,2,True,8.56,7.85,26.080000000000002,4,2,1,8,0,eval-56c12f52
+cloud_20261002_182600,ecommerce_14,5ff07b,ecommerce_support,medium,1,completed,1,1,,add_to_cart,add_to_cart,1,True,11.68,8.72,19.44,3,2,1,4,0,eval-c8a57bea
+cloud_20261002_182600,ecommerce_14,61517d,ecommerce_support,medium,1,completed,1,1,,add_to_cart,add_to_cart,1,True,11.36,10.53,19.92,4,3,2,10,0,eval-5f87ba46
+cloud_20261002_182600,ecommerce_15,56780a,ecommerce_support,medium,1,completed,1,1,,track_order,track_order,1,True,5.68,5.3,16.8,2,1,0,2,0,eval-d0baddee
+cloud_20261002_182600,ecommerce_15,66c4f3,ecommerce_support,medium,1,completed,1,1,,track_order,track_order,1,True,5.84,5.53,16.32,3,1,0,2,0,eval-abd8ff3d
+cloud_20261002_182600,ecommerce_16,695bd1,ecommerce_support,medium,1,completed,1,1,,search_products,search_products,1,True,5.6,5.13,16.56,2,1,0,2,0,eval-fa7718b9
+cloud_20261002_182600,ecommerce_17,5f4a4d,ecommerce_support,medium,1,completed,1,1,,track_order,track_order,1,True,6.4,6.41,15.120000000000001,2,1,0,2,0,eval-9b162aa6
+cloud_20261002_182600,ecommerce_18,62a885,ecommerce_support,hard,3,completed,1,1,,search_products|add_to_cart|track_order,search_products|add_to_cart|track_order,3,True,4.88,7.11,13.84,2,1,0,2,0,eval-34c3d5e7
+cloud_20261002_182600,ecommerce_19,66f59c,ecommerce_support,hard,2,completed,1,1,,search_products|add_to_cart,search_products|add_to_cart,2,True,8.08,8.0,19.2,3,1,0,2,0,eval-ec0901a0
+cloud_20261002_182600,ecommerce_20,66c4f3,ecommerce_support,hard,2,completed,0,0,Unexpected tools: ['track_order'],search_products|add_to_cart,search_products|add_to_cart|track_order,3,True,27.04,29.87,2.88,2,2,1,4,0,eval-e5a1ed9a
+cloud_20261002_182600,ecommerce_21,65e8cf,ecommerce_support,hard,3,completed,1,1,,track_order|search_products|add_to_cart,track_order|search_products|add_to_cart,3,True,6.56,6.34,24.8,2,1,0,6,0,eval-21a8e03d
+cloud_20261002_182600,ecommerce_21,69a9cf,ecommerce_support,hard,3,completed,1,1,,track_order|search_products|add_to_cart,track_order|search_products|add_to_cart,3,True,6.24,5.84,25.28,5,1,0,6,0,eval-40ea064f
+cloud_20261002_182600,ecommerce_23,5f4a4d,ecommerce_support,hard,2,completed,1,1,,track_order|add_to_cart,track_order|add_to_cart,2,True,5.6,5.3,21.04,5,1,0,2,0,eval-4290d71a
+cloud_20261002_182600,ecommerce_25,65e8cf,ecommerce_support,hard,3,completed,1,1,,track_order|search_products|add_to_cart,track_order|search_products|add_to_cart,3,True,7.76,7.23,19.28,2,1,0,2,0,eval-4a107413
+cloud_20261002_182600,ecommerce_25,69a9cf,ecommerce_support,hard,3,completed,0,0,Missing tools: ['add_to_cart'],track_order|search_products|add_to_cart,track_order|search_products,2,True,12.08,9.46,23.28,8,2,1,4,0,eval-d6da9de0
+cloud_20261002_182600,finance_01,65e8cf,finance_billing,easy,1,completed,1,1,,get_exchange_rate,get_exchange_rate,1,True,5.76,5.31,10.0,2,1,0,2,0,eval-09edcc36
+cloud_20261002_182600,finance_01,69a9cf,finance_billing,easy,1,completed,1,1,,get_exchange_rate,get_exchange_rate,1,True,6.48,5.85,9.84,2,1,0,2,0,eval-af1d8edd
+cloud_20261002_182600,finance_02,6998ab,finance_billing,easy,1,completed,1,1,,get_card_benefits,get_card_benefits,1,True,8.24,7.72,9.28,2,1,0,2,0,eval-65e6c70e
+cloud_20261002_182600,finance_03,5ff07b,finance_billing,easy,1,completed,1,1,,modify_autopay,modify_autopay,1,True,8.16,7.16,12.08,2,1,0,2,0,eval-9b77bc17
+cloud_20261002_182600,finance_03,61517d,finance_billing,easy,1,completed,1,1,,modify_autopay,modify_autopay,1,True,22.72,23.38,1.28,1,1,0,4,0,eval-e0740519
+cloud_20261002_182600,finance_04,62a885,finance_billing,easy,1,completed,1,1,,get_exchange_rate,get_exchange_rate,1,True,2.8,4.37,9.36,2,2,1,4,0,eval-5b53dffc
+cloud_20261002_182600,finance_06,66f59c,finance_billing,easy,1,completed,1,1,,get_card_benefits,get_card_benefits,1,True,6.56,4.55,11.76,2,1,0,2,0,eval-b3ab465c
+cloud_20261002_182600,finance_07,5ff07b,finance_billing,easy,1,completed,1,1,,modify_autopay,modify_autopay,1,True,5.36,5.41,17.04,2,1,0,2,0,eval-cd2e427c
+cloud_20261002_182600,finance_07,61517d,finance_billing,easy,1,completed,1,1,,modify_autopay,modify_autopay,1,True,11.2,10.67,14.16,4,2,1,8,0,eval-c42d46f1
+cloud_20261002_182600,finance_08,65e8cf,finance_billing,easy,1,completed,1,1,,get_exchange_rate,get_exchange_rate,1,True,9.68,10.15,11.36,2,1,0,4,0,eval-5466e910
+cloud_20261002_182600,finance_08,69a9cf,finance_billing,easy,1,completed,1,1,,get_exchange_rate,get_exchange_rate,1,True,11.84,7.76,13.6,4,1,0,2,0,eval-8739f4e7
+cloud_20261002_182600,finance_10,66c4f3,finance_billing,medium,2,completed,1,1,,get_card_benefits|get_exchange_rate,get_card_benefits|get_exchange_rate,2,True,11.12,8.79,16.080000000000002,4,2,1,4,0,eval-0343c550
+cloud_20261002_182600,finance_11,695bd1,finance_billing,medium,1,completed,1,1,,modify_autopay,modify_autopay,1,True,5.12,6.68,10.16,1,1,0,2,0,eval-d07cfe25
+cloud_20261002_182600,finance_12,65e8cf,finance_billing,medium,1,completed,1,1,,get_exchange_rate,get_exchange_rate,1,True,8.72,6.66,12.72,1,1,0,2,0,eval-cf858b3b
+cloud_20261002_182600,finance_12,69a9cf,finance_billing,medium,1,completed,1,1,,get_exchange_rate,get_exchange_rate,1,True,5.52,5.22,14.8,2,1,0,2,0,eval-af51c968
+cloud_20261002_182600,finance_14,5f4a4d,finance_billing,medium,2,completed,1,1,,get_exchange_rate|get_exchange_rate,get_exchange_rate|get_exchange_rate,2,True,5.6,5.12,14.88,3,1,0,2,0,eval-9906a2ee
+cloud_20261002_182600,finance_15,66c4f3,finance_billing,medium,1,completed,1,1,,modify_autopay,modify_autopay,1,True,5.28,5.32,12.56,2,1,0,2,0,eval-e41e4194
+cloud_20261002_182600,finance_16,62a885,finance_billing,medium,1,completed,1,1,,get_exchange_rate,get_exchange_rate,1,True,15.04,15.75,5.84,2,2,1,4,0,eval-8cea67df
+cloud_20261002_182600,finance_17,6998ab,finance_billing,medium,1,completed,1,1,,get_card_benefits,get_card_benefits,1,True,6.8,6.06,13.6,1,1,0,2,0,eval-454b7515
+cloud_20261002_182600,finance_18,6998ab,finance_billing,hard,3,completed,0,0,"Missing tools: ['get_exchange_rate', 'modify_autopay']",get_exchange_rate|modify_autopay|get_card_benefits,get_card_benefits,1,True,7.68,7.71,19.44,1,1,0,2,0,eval-20cf5ccf
+cloud_20261002_182600,finance_19,66f59c,finance_billing,hard,1,completed,1,1,,get_exchange_rate,get_exchange_rate,1,True,10.56,8.16,14.56,2,1,0,2,0,eval-50eba914
+cloud_20261002_182600,finance_20,66c4f3,finance_billing,hard,2,completed,1,1,,get_exchange_rate|modify_autopay,get_exchange_rate|modify_autopay,2,True,8.64,8.39,21.68,1,1,0,2,0,eval-66b9e0af
+cloud_20261002_182600,finance_21,5e3c1f,finance_billing,hard,2,completed,1,1,,get_card_benefits|get_exchange_rate,get_card_benefits|get_exchange_rate,2,True,6.16,5.83,16.96,2,1,0,2,0,eval-450fb481
+cloud_20261002_182600,finance_22,5f4a4d,finance_billing,hard,2,completed,1,1,,modify_autopay|modify_autopay,modify_autopay|modify_autopay,2,True,6.32,5.77,19.6,5,1,0,2,0,eval-d5215dcb
+cloud_20261002_182600,finance_23,66f59c,finance_billing,hard,1,completed,1,1,,modify_autopay,modify_autopay,1,True,6.56,6.18,17.92,1,1,0,2,0,eval-a039d1ab
+cloud_20261002_182600,housing_01,62a885,housing_location,easy,1,completed,1,1,,search_apartments,search_apartments,1,True,11.36,10.75,10.4,1,1,0,2,0,eval-b5047525
+cloud_20261002_182600,housing_02,5f4a4d,housing_location,easy,1,completed,1,1,,calculate_commute,calculate_commute,1,True,6.4,5.55,14.32,3,1,0,2,0,eval-635066d4
+cloud_20261002_182600,housing_03,5f4a4d,housing_location,easy,1,completed,0,1,Wrong arguments for: ['update_search_filter'],update_search_filter,update_search_filter,1,True,7.92,7.19,17.68,2,1,0,4,0,eval-712d4434
+cloud_20261002_182600,housing_04,695bd1,housing_location,easy,1,completed,1,1,,search_apartments,search_apartments,1,True,23.28,23.5,1.84,6,1,0,12,0,eval-be6ca35a
+cloud_20261002_182600,housing_05,5ff07b,housing_location,easy,1,completed,0,0,Wrong arguments for: ['search_apartments'],search_apartments,search_apartments,1,True,4.48,6.64,18.48,4,1,0,2,0,eval-4677b822
+cloud_20261002_182600,housing_05,61517d,housing_location,easy,1,completed,0,0,Wrong arguments for: ['search_apartments'],search_apartments,search_apartments,1,True,6.16,6.98,19.76,4,1,0,4,0,eval-ee9e6007
+cloud_20261002_182600,housing_06,5f4a4d,housing_location,easy,1,completed,0,1,Wrong arguments for: ['calculate_commute'],calculate_commute,calculate_commute,1,True,4.16,5.25,14.72,2,1,0,2,0,eval-03675915
+cloud_20261002_182600,housing_08,66f59c,housing_location,easy,1,completed,0,0,Wrong arguments for: ['update_search_filter'],update_search_filter,update_search_filter,1,True,5.84,5.3,13.36,3,1,0,2,0,eval-47fda397
+cloud_20261002_182600,housing_09,695bd1,housing_location,medium,1,completed,1,1,,search_apartments,search_apartments,1,True,3.52,5.57,15.280000000000001,4,1,0,2,0,eval-f4ee5db2
+cloud_20261002_182600,housing_10,66f59c,housing_location,medium,2,completed,0,1,Wrong arguments for: ['calculate_commute'],calculate_commute|update_search_filter,calculate_commute|update_search_filter,2,True,7.04,6.68,16.96,2,1,0,2,0,eval-5f55807e
+cloud_20261002_182600,housing_11,62a885,housing_location,medium,1,completed,0,0,Missing tools: ['search_apartments'],search_apartments,,0,True,6.72,,10.96,3,1,0,2,0,eval-6a9fb0db
+cloud_20261002_182600,housing_13,5f4a4d,housing_location,medium,2,completed,0,0,"Missing tools: ['update_search_filter', 'update_search_filter']",update_search_filter|update_search_filter,,0,True,3.52,,17.28,4,1,0,4,0,eval-7c618baf
+cloud_20261002_182600,housing_14,5ff07b,housing_location,medium,1,completed,0,0,Wrong arguments for: ['search_apartments'],search_apartments,search_apartments,1,True,6.32,6.25,18.16,1,1,0,2,0,eval-f895dab1
+cloud_20261002_182600,housing_14,61517d,housing_location,medium,1,completed,0,0,Wrong arguments for: ['search_apartments'],search_apartments,search_apartments,1,True,7.12,5.67,20.56,3,1,0,6,0,eval-bec97e46
+cloud_20261002_182600,housing_15,5ff07b,housing_location,medium,1,completed,0,0,Wrong arguments for: ['search_apartments'],search_apartments,search_apartments,1,True,6.08,6.22,18.400000000000002,2,1,0,2,0,eval-f0a9fce7
+cloud_20261002_182600,housing_15,61517d,housing_location,medium,1,completed,0,0,Wrong arguments for: ['search_apartments'],search_apartments,search_apartments,1,True,18.88,13.08,19.36,4,2,1,6,0,eval-ac8290d2
+cloud_20261002_182600,housing_17,65e8cf,housing_location,medium,1,completed,1,1,,calculate_commute,calculate_commute,1,True,8.48,22.11,15.68,3,2,1,2,0,eval-76256a43
+cloud_20261002_182600,housing_17,69a9cf,housing_location,medium,1,completed,1,1,,calculate_commute,calculate_commute,1,True,8.24,7.28,16.240000000000002,5,1,0,2,0,eval-7316821f
+cloud_20261002_182600,housing_18,66c4f3,housing_location,hard,2,completed,0,0,"Wrong arguments for: ['search_apartments', 'calculate_commute']",search_apartments|calculate_commute,search_apartments|calculate_commute,2,True,8.48,8.17,17.04,2,1,0,2,0,eval-455e8823
+cloud_20261002_182600,housing_19,62a885,housing_location,hard,1,completed,1,1,,calculate_commute,calculate_commute,1,True,6.56,6.26,13.36,2,1,0,2,0,eval-42c4de73
+cloud_20261002_182600,housing_20,62a885,housing_location,hard,3,completed,0,0,Missing tools: ['update_search_filter'],search_apartments|calculate_commute|update_search_filter,search_apartments|calculate_commute,2,True,5.36,6.16,17.28,2,1,0,2,0,eval-c79af5f6
+cloud_20261002_182600,housing_21,66c4f3,housing_location,hard,2,completed,0,0,"Missing tools: ['search_apartments', 'calculate_commute']",search_apartments|calculate_commute,,0,True,8.88,,19.28,2,1,0,2,0,eval-02c5b480
+cloud_20261002_182600,housing_22,695bd1,housing_location,hard,3,completed,0,0,Wrong arguments for: ['update_search_filter'],update_search_filter|search_apartments|calculate_commute,update_search_filter|search_apartments|calculate_commute,3,True,5.76,5.37,19.52,5,1,0,2,0,eval-a5df447b
+cloud_20261002_182600,housing_24,65e8cf,housing_location,hard,3,completed,0,0,Missing tools: ['update_search_filter'],update_search_filter|search_apartments|calculate_commute,search_apartments|calculate_commute,2,True,5.04,7.37,25.52,4,1,0,2,0,eval-5972414a
+cloud_20261002_182600,housing_24,69a9cf,housing_location,hard,3,completed,0,0,Missing tools: ['update_search_filter'],update_search_filter|search_apartments|calculate_commute,search_apartments|calculate_commute,2,True,9.92,8.8,28.0,7,1,0,4,0,eval-b0a58750
+cloud_20261002_182600,housing_25,66f59c,housing_location,hard,3,completed,0,0,"Missing tools: ['update_search_filter', 'update_search_filter']",update_search_filter|update_search_filter|search_apartments,search_apartments,1,True,-5.28,8.25,20.32,3,2,1,4,0,eval-6aaa63fb
+cloud_20261002_182600,travel_01,62a885,travel_identity,easy,1,completed,1,1,,search_flights,search_flights,1,True,5.52,5.47,6.48,1,1,0,2,0,eval-94aafde6
+cloud_20261002_182600,travel_02,5e3c1f,travel_identity,easy,1,completed,0,0,Wrong arguments for: ['update_identity_doc'],update_identity_doc,update_identity_doc,1,True,5.12,5.02,13.200000000000001,2,1,0,2,0,eval-5e1d57f8
+cloud_20261002_182600,travel_03,5ff07b,travel_identity,easy,1,completed,1,1,,search_flights,search_flights,1,True,4.96,4.65,12.88,4,1,0,2,0,eval-d24f3699
+cloud_20261002_182600,travel_03,61517d,travel_identity,easy,1,completed,1,1,,search_flights,search_flights,1,True,7.76,8.18,12.4,2,1,0,2,0,eval-0ca2c13f
+cloud_20261002_182600,travel_05,6998ab,travel_identity,easy,1,completed,1,1,,search_flights,search_flights,1,True,3.92,5.35,10.08,2,1,0,4,0,eval-3c2297fb
+cloud_20261002_182600,travel_07,5ff07b,travel_identity,easy,1,completed,0,0,Wrong arguments for: ['update_identity_doc'],update_identity_doc,update_identity_doc,1,True,5.2,5.05,14.48,2,1,0,2,0,eval-43631938
+cloud_20261002_182600,travel_07,61517d,travel_identity,easy,1,completed,1,1,,update_identity_doc,update_identity_doc,1,True,6.64,4.68,11.92,3,1,0,4,0,eval-3f6a75dc
+cloud_20261002_182600,travel_08,695bd1,travel_identity,easy,1,completed,1,1,,search_flights,search_flights,1,True,4.32,4.56,10.88,3,1,0,2,0,eval-d6a2c406
+cloud_20261002_182600,travel_10,5f4a4d,travel_identity,medium,1,completed,1,1,,search_flights,search_flights,1,True,13.92,15.77,7.68,3,2,1,4,0,eval-ac223d26
+cloud_20261002_182600,travel_11,66c4f3,travel_identity,medium,2,completed,1,1,,search_flights|book_flight,search_flights|book_flight,2,True,5.36,5.31,10.64,1,1,0,2,0,eval-81a36c60
+cloud_20261002_182600,travel_14,66c4f3,travel_identity,medium,1,completed,1,1,,search_flights,search_flights,1,True,5.68,5.28,11.28,1,1,0,2,0,eval-41bfce8b
+cloud_20261002_182600,travel_16,66f59c,travel_identity,medium,1,completed,0,1,Wrong arguments for: ['search_flights'],search_flights,search_flights,1,True,5.84,5.57,14.32,3,1,0,2,0,eval-34943f69
+cloud_20261002_182600,travel_18,66f59c,travel_identity,hard,3,completed,1,1,,search_flights|book_flight|update_identity_doc,search_flights|book_flight|update_identity_doc,3,True,6.56,6.41,20.8,3,1,0,2,0,eval-3a64df6f
+cloud_20261002_182600,travel_19,695bd1,travel_identity,hard,1,completed,1,1,,search_flights,search_flights,1,True,5.76,5.31,17.6,5,1,0,4,0,eval-4c80177e
+cloud_20261002_182600,travel_20,62a885,travel_identity,hard,3,completed,0,0,Wrong arguments for: ['update_identity_doc'],search_flights|book_flight|update_identity_doc,search_flights|book_flight|update_identity_doc,3,True,7.2,6.73,16.56,1,1,0,2,0,eval-09174442
+cloud_20261002_182600,travel_21,65e8cf,travel_identity,hard,3,completed,0,0,Missing tools: ['update_identity_doc'],search_flights|book_flight|update_identity_doc,search_flights|book_flight,2,True,11.68,10.71,19.6,4,1,0,2,0,eval-3e1cbcf4
+cloud_20261002_182600,travel_21,69a9cf,travel_identity,hard,3,completed,0,1,Wrong arguments for: ['search_flights'],search_flights|book_flight|update_identity_doc,search_flights|book_flight|update_identity_doc,3,True,9.68,7.93,22.64,6,2,1,4,0,eval-35ed73ea
+cloud_20261002_182600,travel_23,65e8cf,travel_identity,hard,2,completed,1,1,,update_identity_doc|update_identity_doc,update_identity_doc|update_identity_doc,2,True,6.8,6.31,22.16,2,1,0,2,0,eval-5d7ddd75
+cloud_20261002_182600,travel_23,69a9cf,travel_identity,hard,2,completed,1,1,,update_identity_doc|update_identity_doc,update_identity_doc|update_identity_doc,2,True,5.84,5.72,24.080000000000002,4,1,0,4,0,eval-9d445d37
+cloud_20261002_182600,travel_24,695bd1,travel_identity,hard,3,completed,1,1,,search_flights|book_flight|update_identity_doc,search_flights|book_flight|update_identity_doc,3,True,7.76,7.09,25.6,5,1,0,4,0,eval-2349e3fb

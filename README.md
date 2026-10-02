@@ -214,6 +214,7 @@ All numbers below are FDB-v3's own runner and evaluators, unmodified, at the pin
 | Setting | Strict pass rate (Pass@1) | Tool selection | Argument accuracy | Response quality |
 |---|---|---|---|---|
 | **Janus, text replay** (reasoning & safety core), all 100 scenarios, Gemini 3.6 Flash | **77.0 %** | 0.959 | 0.807 | 0.840 |
+| **Janus, voice over LiveKit, all 100 recordings, current code, hosted speech-to-text, cloud RTX 3090, native path (3 Oct)** | **73.0 %** (68 / 100 exact-match) | 0.947 | 0.768 | 0.626 | judged; turn-taking 99 / 100; first word 8.1 s mean; no client aborts; [report](BENCHMARK_FULL100_2026-10-03.md) |
 | Janus, **voice** over LiveKit, all 100 recordings, cloud RTX 3090, native path (29–30 Sep, before the fixes below) | 42.0 % | 0.844 | 0.611 | 0.597 |
 | Janus, **voice**, 32-recording rerun of that run's hardest recordings, after the speech-to-text GPU fix | 11 / 32 (was 8 / 32) | | | exact-match; turn-taking 32 / 32 (was 72 %); first word 7.8 s mean |
 | Janus, **voice**, current code with hosted speech-to-text, on recordings the full run failed (30 Sep) | 13 / 31 (the same recordings: 4 / 30 in the full run) | | | judged; turn-taking 64 / 64 |
@@ -231,7 +232,7 @@ Notes on the table:
   - The voice bridge restarted its end-of-turn timer whenever a transcript arrived. Hosted transcription lands about a second after its segment, usually after the user had resumed, so turns were closed mid-sentence (86 early closes across 52 of 72 recordings). End-of-turn now follows the user's silence, waits for outstanding transcripts, and the kernel is told when the user is speaking. On 26 recordings re-run on 2 Oct: 0 early closes (31 before) and 16 passes (12 before).
   - Spoken codes ("F A S T nine nine") were not joined into identifiers.
   
-  Eight recordings were also lost to the benchmark client itself aborting after the stream; our decision logs show correct tool calls in six of them. The full voice run has not yet been repeated with these fixes; [`BENCHMARKS.md`](BENCHMARKS.md) lists every run, which comparisons are like for like, and what each failure was.
+  Eight recordings were also lost to the benchmark client itself aborting after the stream; our decision logs show correct tool calls in six of them. The full voice run was repeated with these fixes on 3 Oct (the first row above: 32 recordings fixed, 1 regressed, against 30 Sep; part of the gain is the move to hosted speech-to-text); [`BENCHMARKS.md`](BENCHMARKS.md) lists every run, which comparisons are like for like, and what each failure was.
 - **Turn-taking and latency** on the post-fix rerun: the agent responded in all 32 recordings; mean time to its first word was 7.8 s (median 6.7 s). Published first-word means (paper Table 6): GPT-Realtime 6.36 s, Gemini Live 3.1 3.95 s, the cascaded pipeline 8.78 s. Part of ours is deliberate: a turn closes after 1.5 s of silence, and a call waits a settle window so a correction can still land.
 - By domain (text replay): finance 100 %, travel 95 %, e-commerce 83 %, **housing 35 %**. Housing is the weakest domain for every published system too; ours fails mostly on argument values in long, constraint-heavy requests.
 - **Self-correction** ("…no wait, make it Friday") is the category the paper finds hardest for every system (Table 3, Pass@1 per category: GPT-Realtime 0.588, Gemini Live 3.1 0.353, the cascaded Whisper pipeline 0.176). It is what the kernel is built for: **0.824** in text replay, and **0.412** on the voice run above, against 0.176 for the published cascaded pipeline, the same family as ours.
@@ -268,7 +269,7 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 
 ## Limitations
 
-- **The full-100 voice run (42 %) predates the fixes above.** It has not been repeated on all 100; on the recordings it failed, the current code passes 13 of 31 (the same recordings: 4 of 30 before), and 16 of 26 after the turn-ending fix (12 of 26 before; that run used local speech-to-text, so it is not like for like with the hosted-transcription runs). The organizers' re-run measures the current code.
+- **The 3 Oct full-100 voice run (73 %) is a single run.** Hosted models and the benchmark's mock-tool timing add run-to-run noise of a few recordings either way, and it also changed speech-to-text from local to hosted, so the gain over the 30 Sep run (42 %) is not all from the code fixes. Housing (38.5 %) and three-call scenarios (43.8 %) remain the weak spots. The Docker image was rebuilt from scratch, but this run used the native path; `./reproduce.sh` has not been run with a GPU end to end. The organizers' re-run measures the current code.
 - **Our voice runs used the native path** (`scripts/fdb_v3/native_run.sh`, the same inner script `./reproduce.sh` runs in its container) on a cloud GPU without Docker; the Docker wrapper itself is verified in its parts.
 - **Speech-to-text still mishears some names** (e.g. a city). Hosted transcription is the default for that reason; the local faster-whisper option mishears more.
 - **Housing (35 %)** is the weakest domain; argument values in long constraint-heavy requests are the main loss.
