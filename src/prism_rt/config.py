@@ -246,6 +246,12 @@ class Config:
     # model didn't provide one. Also gates the prompt guidance that tells
     # the model `ack_phrase` exists at all (`workers/interpreter.py`).
     echo_ack_enabled: bool = False
+    # A goal that opens with a question ("what colour is the light?") gets no
+    # generic "Got it, working on it." first -- the question is the
+    # acknowledgement (found 2 Oct, device-care demo). An ACK that says
+    # something (echo / content) is still spoken. Off in the FDB profile:
+    # there the early speech counts toward first-word latency.
+    no_generic_ack_before_question: bool = False
 
     # S3 (docs-personal/private-docs/s3_plan_2026-09-28.md, win_plan §6.3):
     # per-action interpretation compiled straight into a Plan. The

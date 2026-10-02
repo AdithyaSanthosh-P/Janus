@@ -183,6 +183,7 @@ def demo_config(**overrides) -> Config:
         speculative_interpretation_enabled=True,
         echo_ack_enabled=True,
         action_plans_enabled=True,
+        no_generic_ack_before_question=True,
         fill_unstated_required_enabled=False,
         conversational_replies_enabled=True,
         merge_split_turns_enabled=True,

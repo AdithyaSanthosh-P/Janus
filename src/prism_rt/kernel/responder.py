@@ -196,6 +196,12 @@ class FastResponder:
                 break
         grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
         text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
+        goal = store.goals.get(goal_id)
+        if (
+            text == ACK_DEFAULT and store.config.no_generic_ack_before_question
+            and goal is not None and goal.task_state == TaskState.CLARIFYING
+        ):
+            return []  # the question that follows is the acknowledgement
         unsupported = store.facts.get(f"goal.{goal_id}.unsupported")
         if unsupported is not None and unsupported.status != FactStatus.RETRACTED and unsupported.value:
             text = f"{text} I can't do \"{unsupported.value}\" here, though."

@@ -150,6 +150,32 @@ def main() -> None:
             [("okay. open an urgent ticket and book a technician for Friday afternoon", 0, True),
              ("no wait, make the technician Saturday morning", 600_000, True)],
         ]
+    # The camera keeps sending frames, about one a second, like the voice
+    # worker's sampler (voice/camera.py): a single frame at the start goes
+    # stale (> 5 s) and the agent would ask for what it could have looked at.
+    frame = {"n": 1, "at": 20_000}
+
+    def send(ts: int, events: list):
+        if ts - frame["at"] >= 1_000_000:
+            frame["n"] += 1
+            frame["at"] = ts
+            events = [{"type": "video_frame", "payload": {"frame_id": f"cam-{frame['n']}"}}] + events
+        return h.send(ts, events) if events else h.advance(ts)
+
+    def show(report) -> bool:
+        spoke = False
+        for er in report.emit_report.emitted:
+            a = er.action
+            if a.action_type in (ActionType.SPEAK, ActionType.CLARIFY, ActionType.FINAL):
+                print(f"  AGENT     {a.body.text}")
+                spoke = True
+            elif a.action_type == ActionType.TOOL_CALL:
+                print(f"            [tool {a.body.tool_name}({dict(a.body.arguments)})]")
+                spoke = True
+            elif a.action_type == ActionType.CANCEL:
+                print("            [cancelled superseded work]")
+        return spoke
+
     t = h.clock.now_us() + 200_000
     for n, chunks in enumerate(turns, start=1):
         if args.turn and n != args.turn:
@@ -158,24 +184,15 @@ def main() -> None:
         for text, gap, end in chunks:
             t += gap
             print(f"  USER      {text}")
-            h.send(t, [{"type": "text_chunk", "payload": {"text": text}}])
+            show(send(t, [{"type": "text_chunk", "payload": {"text": text}}]))
             if end:
                 t += 1_100_000
-                h.send(t, [{"type": "end_of_turn", "payload": {}}])
+                show(send(t, [{"type": "end_of_turn", "payload": {}}]))
         quiet_since, limit = t, t + 60_000_000
         while t < limit:
             t += 20_000
-            report = h.advance(t)
-            for er in report.emit_report.emitted:
-                a = er.action
-                if a.action_type in (ActionType.SPEAK, ActionType.CLARIFY, ActionType.FINAL):
-                    print(f"  AGENT     {a.body.text}")
-                    quiet_since = t
-                elif a.action_type == ActionType.TOOL_CALL:
-                    print(f"            [tool {a.body.tool_name}({dict(a.body.arguments)})]")
-                    quiet_since = t
-                elif a.action_type == ActionType.CANCEL:
-                    print("            [cancelled superseded work]")
+            if show(send(t, [])):
+                quiet_since = t
             if t - quiet_since > 20_000_000 and not h.store.call_ledger.non_terminal():
                 break
         t += 500_000

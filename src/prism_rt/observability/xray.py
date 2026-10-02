@@ -127,8 +127,17 @@ def build_rows(decisions: Iterable[dict], wire: Iterable[dict] = ()) -> list[dic
                 rows.append({"t": t, "lane": "AGENT", "cls": "cancel", "text": f"cancels {body.get('call_id') or 'in-flight work'}", "tag": "cancel"})
 
     hold: dict | None = None
+    pending: dict[str, dict] = {}  # call_id -> its "pending write" row
     for rec in decisions:
         t = int(rec.get("now_us", 0))
+        # A write waiting at the CommitGate (settle window, go-ahead): drawn
+        # once, so a correction that withdraws it before it is sent shows.
+        for gr in rec.get("gate_rejections") or []:
+            cid = gr.get("call_id")
+            if cid and cid not in pending and cid not in calls:
+                row = {"t": t, "lane": "TOOLS", "cls": "call", "text": f"{gr.get('tool')} waiting to commit", "tag": "pending"}
+                pending[cid] = row
+                rows.append(row)
         for change in rec.get("fact_changes", []):
             note = _UNDERSTOOD.get(change.get("rule"))
             if note and change.get("new_status") != "retracted":
@@ -140,6 +149,9 @@ def build_rows(decisions: Iterable[dict], wire: Iterable[dict] = ()) -> list[dic
                 if cid in calls:
                     calls[cid]["struck"] = True
                     calls[cid]["tag"] = "invalidated"
+                elif cid in pending:
+                    pending[cid]["struck"] = True
+                    pending[cid]["tag"] = "withdrawn, never sent"
             what = ", ".join(k for k in inv.get("changed_keys", []) if k.startswith(("slot.", "goal.")))[:120]
             rows.append({"t": t, "lane": "KERNEL", "cls": "invalidate",
                          "text": f"a fact changed{(' (' + what + ')') if what else ''}: {len(dead)} piece(s) of work invalidated, same step"})
@@ -157,6 +169,11 @@ def build_rows(decisions: Iterable[dict], wire: Iterable[dict] = ()) -> list[dic
         else:
             hold = None
 
+    for cid, row in pending.items():
+        if cid not in calls and not row.get("struck"):
+            # Held, then never sent: a correction or a change of mind withdrew it.
+            row["struck"] = True
+            row["tag"] = "never sent"
     for row in rows:
         h = row.get("hold")
         if h:

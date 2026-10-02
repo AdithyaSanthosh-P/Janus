@@ -167,13 +167,13 @@ def build(args) -> Presentation:
     s = slides[7]
     title(s, "Results on Full-Duplex-Bench v3")
     set_text(body_box(s, 0.9, 5.05, 10.6, 1.6), [
-        "Text replay feeds ground-truth transcripts: it measures the reasoning and safety core, not speech or latency. Voice row: 26 of 100 recordings, earlier build.",
-        "Housing is weakest (23%), as for every published system. The organizers' re-run of ./reproduce.sh is what scores.",
+        "Text replay feeds ground-truth transcripts: it measures the reasoning and safety core, not speech or latency. Voice row: all 100 recordings on 30 Sep, before the turn-ending fixes (26 re-run on 2 Oct: 16 pass, was 12).",
+        "Housing is weakest (35% text), as for every published system. The organizers' re-run of ./reproduce.sh is what scores.",
     ], size=14)
     table(s, 0.9, 1.6, 10.6, [
         ["System (FDB-v3, gpt-4o judge)", "Pass@1", "Tool sel.", "Arg acc.", "Resp. qual."],
-        ["Janus, text replay, 100 scenarios", "73.0%", "0.953", "0.760", "0.830"],
-        ["Janus, voice over LiveKit (sample)", "57.7%", "0.97", "0.68", "n/a"],
+        ["Janus, text replay, 100 scenarios", "77.0%", "0.959", "0.807", "0.840"],
+        ["Janus, voice over LiveKit, 100 (30 Sep)", "42.0%", "0.844", "0.611", "0.597"],
         ["GPT-Realtime (paper)", "60.0%", "0.876", "0.680", "0.792"],
         ["Gemini Live 3.1 (paper)", "54.0%", "0.817", "0.588", "0.718"],
         ["Cascaded Whisper→GPT-4o→TTS (paper)", "45.0%", "0.803", "0.562", "0.600"],
@@ -181,30 +181,31 @@ def build(args) -> Presentation:
 
     # 6. extension --------------------------------------------------------------------
     s = slides[6]
-    title(s, "Extension: camera-grounded device care")
-    set_text(body_box(s, 0.9, 1.6, 10.6, 4.9), [
-        "Point a phone camera at a router or washer and talk: “what does this blinking light mean?”",
-        "Vision reads the frame (orange, INTERNET); tools give the meaning and the fix steps.",
-        "“Book a technician Thursday … no wait, Friday afternoon” → exactly one booking, for Friday.",
-        "Same kernel, different profile: declared write tools need the user's go-ahead and wait out the settle window.",
-        "Runs end to end over LiveKit in a browser (mic + camera); also audio-only via error codes.",
-    ], size=21)
+    title(s, "Extension: Samsung-style home care")
+    s.shapes.add_picture(str(ROOT / "docs" / "xray" / "withdraw_one_of_two_writes.png"), Inches(0.5), Inches(1.5), width=Inches(7.3))
+    set_text(body_box(s, 8.0, 1.5, 3.9, 5.0), [
+        "Router read from the camera; a Samsung washer (codes 4C, 5C, UB, dC) through a SmartThings-shaped status.",
+        "“Stop the wash … wait, just pause it”: the pending stop is never sent; pause and the booking go through once.",
+        "“Resume” while 4C shows: the washer refuses, and the agent says so.",
+        "Effect ledger per session: committed, withdrawn, refused, duplicates (0).",
+        "Real: speech, camera, Gemini, the kernel. Simulated: the device and Samsung Care services.",
+    ], size=14)
 
     # 7. rigour / stack / limits -----------------------------------------------------------
     s = slides[5]
     title(s, "Stack, rigour and honest limits")
     set_text(body_box(s, 0.9, 1.6, 10.6, 4.9), [
         "Stack: LiveKit Agents · Silero VAD · faster-whisper large-v3-turbo · Kokoro-82M · Gemini 3.6 Flash (hosted) · Python 3.11, Docker.",
-        "418 deterministic tests (stepped clock, scripted model), TraceChecker on every run, adversarial explorer over 19 race scenarios.",
+        "587 deterministic tests (stepped clock, scripted model), TraceChecker on every run, adversarial explorer over 19 race scenarios.",
         "One-command reproduction: pinned FDB commit, sha256-checked data, weights baked into the image.",
-        "Limits: voice-path number is from a partial, earlier run; housing 23%; hosted model is not bit-reproducible; a write with no go-ahead stays blocked rather than asking.",
+        "Limits: the full voice run predates the turn-ending fixes; housing 35%; the hosted model is not bit-reproducible; the extension's device backend is simulated.",
     ], size=20)
 
     # 8. what's next -----------------------------------------------------------------------------
     s = slides[8]
     title(s, "What's next")
     set_text(body_box(s, 0.9, 1.6, 10.6, 4.9), [
-        "Ask “shall I go ahead?” instead of waiting when a write lacks the user's go-ahead.",
+        "A live SmartThings adapter behind the same tool manifest (the demo's device backend is simulated).",
         "Measure the full 100-recording voice path on organizer-class hardware and close the housing gap.",
         "Samsung worklet: one safe action layer for any device manifest, so a phone, TV or appliance gets interruption-safe voice control from its tool list alone.",
         "On-device speech and a small local decision model behind the same kernel.",

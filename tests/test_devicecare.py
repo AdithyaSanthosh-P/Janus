@@ -255,6 +255,22 @@ def test_camera_without_the_value_falls_through_to_asking():
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
 
 
+def test_a_goal_that_opens_with_a_question_gets_no_generic_ack_first():
+    """2 Oct: "Got it, working on it." was spoken just before "what should
+    led color be?". In the demo profile the question is the acknowledgement;
+    the FDB profile keeps the early ACK (first-word latency)."""
+    provider = ScriptedProvider()
+    _router_goal_without_visual_reference(provider)
+    h = harness(provider, DeviceCareToolset())
+    h.send(100_000, [chunk_event("my router, I'm going to show it to you, what is wrong with it")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted]
+    actions += drain(h, 4_000_000, stop_on_final=False)
+    spoken = [a for a in actions if a.action_type in (ActionType.SPEAK, ActionType.CLARIFY)]
+    assert spoken and spoken[0].action_type == ActionType.CLARIFY
+    assert not [a for a in spoken if a.body.text == "Got it, working on it."]
+    assert fdb_v3_config().no_generic_ack_before_question is False
+
+
 def test_camera_is_not_consulted_without_a_live_frame_or_for_a_write():
     provider = ScriptedProvider()
     _router_goal_without_visual_reference(provider)

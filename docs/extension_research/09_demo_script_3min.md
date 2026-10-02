@@ -63,9 +63,9 @@ waits while a "shall I go ahead?" question is open.
 | Ledger summary at the end of a voice session | **Built** (`voice/agent.py`, demo mode, logged at shutdown; `entry.py` `meta["on_session"]` hook, tested); **NOT VERIFIED** in a real voice session |
 | Full voice plus camera session in the Playground with this script | **NOT VERIFIED** (needs a person, headphones and a camera) |
 | A second `control_appliance` call after one went through | **Fixed** (`repeatable` manifest flag); tested, and verified live in the washer story |
-| Router story flakiness | 3 of 4 live text runs correct; in one the model did not flag the camera, the agent asked for the colour, and turns 2–3 got no reply. Not reproduced; open |
+| Router story flakiness | Before 2 Oct late: 3 of 4 live text runs correct; in one the model did not flag the camera and the agent asked for the colour. Cause: the text demo sent one frame at the start, so by turn 1 it was older than the 5 s "look before asking" window (a live camera sends about one per second). Turns 2–3 were then appended to the goal waiting on that question and blocked behind it. Fixed in the demo (a frame per second); after the fix 6 of 6 live runs correct |
 
 ## Remaining work
 
 1. One rehearsal in the Playground with camera and headphones (`JANUS_MODE=demo`, `scripts/make_demo_token.py`), then record.
-2. If the router story's silent run recurs, capture its decision log (`JANUS_DECISION_LOG_DIR`) and investigate.
+2. Known, not changed: a new request made while the agent's question is still unanswered is appended to that goal and waits behind the question (FDB follow-ups rely on the append). The live camera avoids the question in the demo.

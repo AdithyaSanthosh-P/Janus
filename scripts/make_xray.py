@@ -12,6 +12,11 @@ with `prism_rt.observability.xray`:
   2. correct_a_running_lookup -- the user changes an answer while the first
      lookup is still in flight: that call is invalidated in the same step the
      correction arrives (struck through) and re-run with the new value.
+  3. withdraw_one_of_two_writes -- "stop the wash and book a technician for
+     Friday afternoon", then, while both writes wait out the settle window,
+     "wait, don't stop it, just pause it": the pending stop is withdrawn
+     before it is sent, the booking goes through once (simulated SmartThings
+     washer; the effect-ledger summary is the subtitle).
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from prism_rt.devicecare import DeviceCareToolset  # noqa: E402
 from prism_rt.model.types import ActionType, JobKind  # noqa: E402
+from prism_rt.observability.effects import effect_summary, format_effect_summary  # noqa: E402
 from prism_rt.observability.xray import build_rows, render  # noqa: E402
 from prism_rt.profiles import demo_config  # noqa: E402
 from prism_rt.sim.harness import SimHarness  # noqa: E402
@@ -115,9 +121,43 @@ def correct_a_running_lookup() -> str:
     return s.html("Correcting a lookup that is already running", "The orange lookup is invalidated the moment the user says red.")
 
 
+def withdraw_one_of_two_writes() -> str:
+    def stop_and_book(command):
+        return {"act": "new_goal", "intent": "control_appliance", "commit_intent": True,
+                "slot_deltas": [{"name": "device_type", "scope": "goal", "op": "set", "value": "washer"},
+                                {"name": "command", "scope": "goal", "op": "set", "value": command},
+                                {"name": "date", "scope": "goal", "op": "set", "value": "Friday"},
+                                {"name": "time_slot", "scope": "goal", "op": "set", "value": "afternoon"}],
+                "ack_phrase": f"I'll {command} the washer and book a technician for Friday afternoon.",
+                "actions": [{"tool": "control_appliance", "args": {"device_type": "washer", "command": command}},
+                            {"tool": "book_technician", "args": {"date": "Friday", "time_slot": "afternoon"}}]}
+
+    p = ScriptedProvider()
+    p.register("interpret", "pause it", {"act": "slot_update",
+               "slot_deltas": [{"name": "command", "scope": "goal", "op": "set", "value": "pause"}],
+               "actions": [{"tool": "control_appliance", "args": {"device_type": "washer", "command": "pause"}}]})
+    p.register("interpret", "stop the wash", stop_and_book("stop"))
+    p.register("compose", "control_appliance", {"text": "The washer is paused, and a technician is booked for Friday afternoon.", "claims": []})
+    tk = DeviceCareToolset()
+    tk.current_issue = "washer_no_water"
+    tk.status["washer"]["machine_state"] = "run"
+    s = Session(p, tk)
+    s.send(100_000, [{"type": "text_chunk", "payload": {"text": "stop the wash and book a technician for Friday afternoon"}}])
+    s.send(200_000, [{"type": "end_of_turn", "payload": {}}])
+    s.run(1_000_000)
+    s.send(1_050_000, [{"type": "text_chunk", "payload": {"text": "wait, don't stop it, just pause it"}}])
+    s.send(1_150_000, [{"type": "end_of_turn", "payload": {}}])
+    s.run(14_000_000)
+    assert tk.commands == [{"device": "washer", "command": "pause"}] and len(tk.bookings) == 1, (tk.commands, tk.bookings)
+    summary = effect_summary(s.h.store)
+    assert summary["withdrawn_before_sending"] == 1 and summary["duplicates"] == 0, summary
+    return s.html("Withdrawing one of two pending writes", format_effect_summary(summary) + " (simulated SmartThings washer).")
+
+
 if __name__ == "__main__":
     out = ROOT / "docs" / "xray"
     out.mkdir(parents=True, exist_ok=True)
-    for name, fn in (("correct_before_booking", correct_before_booking), ("correct_a_running_lookup", correct_a_running_lookup)):
+    for name, fn in (("correct_before_booking", correct_before_booking), ("correct_a_running_lookup", correct_a_running_lookup),
+                     ("withdraw_one_of_two_writes", withdraw_one_of_two_writes)):
         (out / f"{name}.html").write_text(fn(), encoding="utf-8")
         print("wrote", out / f"{name}.html")
