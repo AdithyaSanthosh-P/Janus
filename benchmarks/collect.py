@@ -43,6 +43,7 @@ ARCHIVES = [
     ("docs/runs/janus_fdbv3_voice_full100_2026-10-03.tgz", "janus_fdbv3_voice_full100_2026-10-03", "cloud_20261002_182600"),
     ("docs/runs/janus_fdbv3_voice_full100b_2026-10-03.tgz", "janus_fdbv3_voice_full100b_2026-10-03", "cloud_20261003_121822"),
     ("docs/runs/janus_fdbv3_voice_retest32_2026-10-03.tgz", "janus_fdbv3_voice_retest32_2026-10-03", "cloud_20261003_143517"),
+    ("docs/runs/janus_fdbv3_voice_full100c_2026-10-03.tgz", "janus_fdbv3_voice_full100c_2026-10-03", "cloud_20261003_180457"),
 ]
 
 # run id -> (class, phase, description). class: full100 | subset | debug
@@ -86,6 +87,8 @@ LABELS = {
     "cloud_20261002_182600": ("full100", "Cloud", "All 100 recordings, judged, current code (commit 8020f79 plus the native setup fix), native path on a clean RTX 3090 box, hosted speech-to-text; first full run after the turn-ending fixes (run 3 Oct IST, box clock 2 Oct UTC)"),
     "cloud_20261003_121822": ("full100", "Cloud", "All 100 recordings, judged, commit 054c305 (fix pass of 3 Oct), same box and providers as cloud_20261002_182600: 65/100. Hosted speech-to-text was slower that day; 19 turns closed while their last segment was still being transcribed (3 in the 73% run), splitting requests. Fixed in a8d1fcd"),
     "cloud_20261003_143517": ("subset", "Cloud", "Re-test of the 23 ids (32 recordings) hit by the early turn close, commit a8d1fcd (the bridge waits for a running transcription): 24/32, against 15/32 in cloud_20261003_121822 and 23/32 in cloud_20261002_182600; no turn closed before its transcript"),
+    "cloud_20261003_180457": ("full100", "Cloud", "All 100 recordings, judged, commit e296c85 (bridge waits for running transcriptions, review-pass fixes), same box and providers: 74/100, no turn closed before its transcript, response quality 0.72, turn-taking 100/100. Against the 73% run: 4 recordings better, 3 worse; against the 65% run: 10 better, 1 worse"),
+    "text_textreplay_finance_typenoun": ("subset", "3 Oct", "Finance domain (25 recordings) after the <noun>_type rule (b922183): 25/25, every card and bill type in its bare form"),
     "text_textreplay_fix_1003": ("full100", "3 Oct", "Full 100 after the kernel fixes of the 3 Oct fix pass (clarify livelock, null slot delta), judged"),
     "text_textreplay_review_1003": ("full100", "3 Oct", "Full 100 on the code after the review pass (ae03f71), judged: gate before the second voice run. The model alternates \"travel\" and \"travel card\" for card_type between runs (finance_06/10 flip)"),
     "text_textreplay_dash_1003": ("subset", "3 Oct", "The three recordings that dictate codes with \"dash\", after the identifier-joiner rule"),
