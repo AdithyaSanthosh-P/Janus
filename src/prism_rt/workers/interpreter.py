@@ -443,7 +443,11 @@ def build_prompt(view: dict) -> str:
             "to the user before any of it runs (e.g. \"I'll search "
             "flights to Dubai for April 10th and book the cheapest one "
             "for Casey Lee.\"). Never claim anything is already done, "
-            "booked, or confirmed -- only what you're about to do. Null "
+            "booked, or confirmed -- only what you're about to do. Name only "
+            "what the tools' parameters can express: a requirement no "
+            "parameter takes (a window seat when no tool has a seat "
+            "parameter) must not appear in ack_phrase as if it were applied; "
+            "put it in unsupported instead. Null "
             "if there's nothing to acknowledge yet (a clarifying "
             "question, backchannel, etc.).\n"
         )

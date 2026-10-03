@@ -71,9 +71,9 @@ def _join_spoken_identifier(value: str):
     """For an identifier parameter only: "F A S T nine nine" -> "FAST99",
     "P.O. 999" -> "PO999", "one, two, three, ABC" -> "123ABC",
     "DL. five five five" -> "DL555", "E77-2211" -> "E772211",
-    "D... Dash L-5-5-5" -> "DL555". Found in the 30 Sep voice runs: Whisper
-    writes a spoken code as letters, digit words and separators (the 3 Oct
-    run, travel_07: a spoken "dash" written as a word). Every piece must be a single character, a digit word,
+    "M... Dash Q-3-3-8" -> "MQ338". Found in the 30 Sep voice runs: Whisper
+    writes a spoken code as letters, digit words and separators, including a
+    spoken "dash" written as a word. Every piece must be a single character, a digit word,
     all upper case or contain a digit, so a phrase ("the one from last
     week") is never glued together. None when the value doesn't look like a spoken code."""
     tokens = [t for t in _SPOKEN_ID_SPLIT.split(value) if t and t.lower() not in _SPOKEN_SEPARATORS]

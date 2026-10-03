@@ -15,8 +15,8 @@ from prism_rt.canonical import canonicalize_spoken_id
     ("E77-2211", "E772211"),
     ("ABC one two three", "ABC123"),
     ("A-B-C-1-2-3", "ABC123"),
-    ("D... Dash L-5-5-5", "DL555"),  # 3 Oct voice run, travel_07
-    ("P dash five dash two", "P52"),
+    ("M... Dash Q-3-3-8", "MQ338"),  # a transcriber writing a spoken "dash" as a word
+    ("K dash nine dash four", "K94"),
 ])
 def test_spoken_code_is_joined_for_an_identifier_parameter(spoken, code):
     assert canonicalize_spoken_id(spoken, "order_id") == code
