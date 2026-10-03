@@ -137,3 +137,34 @@ def test_two_steps_missing_values_do_not_spin_the_kernel():
     assert h.store.facts.get(f"goal.{gid}.clarify_target").ver - start < 20  # was one rewrite pair per step, forever
     clarifies = [a for a in actions if a.action_type == ActionType.CLARIFY]
     assert len(clarifies) == 1 and "city" in clarifies[0].body.text  # the first step's question
+
+
+def test_a_question_no_step_needs_any_more_gives_way():
+    """The question already asked stands only while a step of the current
+    plan still reads its slot; one left over from a dropped step must not
+    block the question the plan actually needs."""
+    from prism_rt.kernel.executor import PlanExecutor
+    from prism_rt.model.types import FactStatus, Provenance
+
+    provider = ScriptedProvider()
+    provider.register("extract", "three bedroom", {"value": None})
+    provider.register("interpret", "three bedroom", {"act": "new_goal", "intent": "search_apartments", "slot_deltas": [],
+                                                     "actions": [{"tool": "search_apartments", "args": {"bedrooms": 3, "max_price": 2000}}]})
+    h = SimHarness(fdb_v3_config(), seed=1, provider=provider, tools={}, worker_latency_us=LATENCY)
+    h.send(0, [manifest_event([APT])])
+    h.send(100_000, [chunk_event("a three bedroom place under two thousand")])
+    h.send(150_000, [eot_event()])
+    gid = h.store.facts.get("goal.active").value
+    key = f"goal.{gid}.clarify_target"
+    city = f"slot.{gid}.a0.city"
+    executor = PlanExecutor()
+    h.store._guard.active = True  # as inside a kernel step
+    try:
+        h.store.facts.set(key, f"slot.{gid}.a7.origin_address", FactStatus.COMMITTED,
+                          Provenance(source="system", step_no=0, ts_us=0), rule="test")
+        executor._ask_for(h.store, gid, city, 200_000, 99)
+        assert h.store.facts.get(key).value == city  # the leftover question gave way
+        executor._ask_for(h.store, gid, f"slot.{gid}.a7.origin_address", 200_000, 99)
+        assert h.store.facts.get(key).value == city  # and the needed one now stands
+    finally:
+        h.store._guard.active = False

@@ -952,8 +952,11 @@ class PlanExecutor:
             # 3 Oct voice run, housing_21 (search missing a city, commute
             # missing an origin) spun about 3,000 kernel steps a second for
             # a minute. The earlier question stands until its value arrives.
+            # Only while a step of the current plan still reads it, though: a
+            # re-plan that dropped that step must not leave the goal asking a
+            # question nobody needs. (A retry confirmation is not a slot.)
             asked = store.facts.get(current.value) if isinstance(current.value, str) else None
-            if asked is None or asked.status == FactStatus.RETRACTED:
+            if (asked is None or asked.status == FactStatus.RETRACTED) and self._still_needed(store, goal_id, current.value):
                 return
         store.facts.set(
             f"goal.{goal_id}.clarify_target",
@@ -968,6 +971,24 @@ class PlanExecutor:
         # next step. Found in the 30 Sep voice rerun: nothing else woke the
         # kernel, and the goal sat silent until the 15 s stall salvage.
         store.timers.schedule(f"clarify_wake:{goal_id}", now_us + 1)
+
+    @staticmethod
+    def _still_needed(store, goal_id: str, target) -> bool:
+        """Whether a clarify target is still something the plan waits on: a
+        retry confirmation always is; a slot key only while a step of the
+        current plan binds it."""
+        if not isinstance(target, str):
+            return False
+        if target.startswith("retry:"):
+            return True
+        plan = store.plans.current(goal_id)
+        if plan is None:
+            return False
+        return any(
+            binding.kind == BindingKind.FACT and (binding.fact_key or "").replace("$G", goal_id) == target
+            for step in plan.steps
+            for binding in step.bindings.values()
+        )
 
     def _write_lineage_confirmed_elsewhere(self, store, goal_id: str, step, fingerprint: str) -> bool:
         """True iff `CommitGate`'s G6 ("no existing effect with the same
