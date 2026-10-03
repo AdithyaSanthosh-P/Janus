@@ -942,8 +942,19 @@ class PlanExecutor:
         if target_key is None:
             return
         current = store.facts.get(f"goal.{goal_id}.clarify_target")
-        if current is not None and current.status != FactStatus.RETRACTED and current.value == target_key:
-            return  # already asking about this
+        if current is not None and current.status != FactStatus.RETRACTED:
+            if current.value == target_key:
+                return  # already asking about this
+            # Another step is still waiting on the question already asked
+            # (Config.parallel_independent_actions lets several steps block
+            # on the user at once). Retargeting would flip the fact on every
+            # pass, and each flip schedules the wake below: found in the
+            # 3 Oct voice run, housing_21 (search missing a city, commute
+            # missing an origin) spun about 3,000 kernel steps a second for
+            # a minute. The earlier question stands until its value arrives.
+            asked = store.facts.get(current.value) if isinstance(current.value, str) else None
+            if asked is None or asked.status == FactStatus.RETRACTED:
+                return
         store.facts.set(
             f"goal.{goal_id}.clarify_target",
             target_key,

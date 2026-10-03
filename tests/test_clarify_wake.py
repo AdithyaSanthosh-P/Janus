@@ -21,10 +21,10 @@ APT = {"name": "search_apartments", "parameters": {"type": "object", "properties
 LATENCY = {k: 10_000 for k in (JobKind.INTERPRET, JobKind.PLAN, JobKind.COMPOSE, JobKind.EXTRACT, JobKind.BIND)}
 
 
-def _event_driven(h, until_us: int) -> list:
+def _event_driven(h, until_us: int, max_steps: int = 100_000) -> list:
     """Advance like production: to the next due timer or worker result only."""
     actions = []
-    while True:
+    for _ in range(max_steps):
         due = [h.store.timers.next_due_us()]
         due += [due_us for due_us, _kind, _view in h.runner._pending.values()]  # worker results
         due += [entry[0] for entry in h.mock_tools._scheduled.values()]  # tool results
@@ -33,6 +33,7 @@ def _event_driven(h, until_us: int) -> list:
             return actions
         report = h.send(max(min(due), h.clock.now_us()))
         actions += [er.action for er in report.emit_report.emitted]
+    raise AssertionError(f"kernel still busy after {max_steps} steps")
 
 
 def _run(extract_value):
@@ -106,3 +107,33 @@ def test_a_failed_reextraction_still_lets_the_question_be_asked():
     assert clarifies and "city" in clarifies[0].body.text
     extracts = [j for j in h.store.jobs.all() if j.kind == JobKind.EXTRACT] if hasattr(h.store.jobs, "all") else []
     assert len(extracts) <= 1  # tried once, not re-dispatched in a loop
+
+
+COMMUTE = {"name": "calculate_commute", "parameters": {"type": "object", "properties": {
+    "origin_address": {"type": "string"}, "destination_address": {"type": "string"},
+    "mode": {"type": "string", "default": "driving"}},
+    "required": ["origin_address", "destination_address"]}}
+
+
+def test_two_steps_missing_values_do_not_spin_the_kernel():
+    """3 Oct voice run, housing_21: the search lacked a city and the commute an
+    origin; with both steps blocked on the user, each pass retargeted the
+    goal's question to one then the other, and every flip scheduled an
+    immediate wake -- 184,885 kernel steps in one minute. The first question
+    asked stands until it is answered."""
+    provider = ScriptedProvider()
+    provider.register("extract", "three bedroom", {"value": None})
+    provider.register("interpret", "three bedroom", {"act": "new_goal", "intent": "search_apartments", "slot_deltas": [],
+                                                     "actions": [{"tool": "search_apartments", "args": {"bedrooms": 3, "max_price": 2000}},
+                                                                 {"tool": "calculate_commute",
+                                                                  "args": {"destination_address": "the train station", "mode": "walking"}}]})
+    h = SimHarness(fdb_v3_config(), seed=1, provider=provider, tools={}, worker_latency_us=LATENCY)
+    h.send(0, [manifest_event([APT, COMMUTE])])
+    h.send(100_000, [chunk_event("a three bedroom place under two thousand, and walking time to the train station")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted]
+    start = h.store.facts.get(f"goal.{h.store.facts.get('goal.active').value}.clarify_target").ver
+    actions += _event_driven(h, 5_000_000, max_steps=200)
+    gid = h.store.facts.get("goal.active").value
+    assert h.store.facts.get(f"goal.{gid}.clarify_target").ver - start < 20  # was one rewrite pair per step, forever
+    clarifies = [a for a in actions if a.action_type == ActionType.CLARIFY]
+    assert len(clarifies) == 1 and "city" in clarifies[0].body.text  # the first step's question
