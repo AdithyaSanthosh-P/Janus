@@ -181,8 +181,12 @@ class _ReportsRecognition(stt.STT):
         language: NotGivenOr[str] = NOT_GIVEN,
         conn_options: APIConnectOptions,
     ) -> stt.SpeechEvent:
-        await self._notify(True)
+        # The start report is inside the try: the bridge counts the
+        # recognition before its first await, so a cancellation during the
+        # report must still reach the finish report, or the count would stay
+        # up and every later turn would wait out the cap.
         try:
+            await self._notify(True)
             return await self._transcribe_segment(buffer, language=language, conn_options=conn_options)
         finally:
             await self._notify(False)
