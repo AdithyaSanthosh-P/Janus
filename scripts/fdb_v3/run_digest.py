@@ -162,12 +162,18 @@ def build(run: Path, include_passes: bool = False) -> str:
 
     def pick(res: dict):
         """The result file of the recording this scored result is about: for a scenario with two
-        speakers, the one whose emitted tool calls equal the result's actual calls."""
+        speakers, the one whose emitted tool calls equal the result's actual calls (by arguments when
+        the arguments were checked, else by tool names: a tool-selection failure has no argument
+        details, and the first file was picked, possibly the other speaker's)."""
         cands = [fd for fd in files.get(res["scenario_id"], []) if str(fd[1]) not in used]
-        want = sorted(json.dumps(a.get("actual_args"), sort_keys=True) for a in res.get("checks", {}).get("argument_accuracy", {}).get("details", []))
+        checks = res.get("checks", {})
+        want = sorted(json.dumps(a.get("actual_args"), sort_keys=True) for a in checks.get("argument_accuracy", {}).get("details", []))
+        want_tools = sorted(checks.get("tool_selection", {}).get("actual") or [])
         for rf, d in cands:
-            got = sorted(json.dumps((c.get("args") or {}), sort_keys=True) for c in (_lit(rf.get("actual_tool_calls")) or []))
-            if want and got == want:
+            calls = _lit(rf.get("actual_tool_calls")) or []
+            got = sorted(json.dumps((c.get("args") or {}), sort_keys=True) for c in calls)
+            got_tools = sorted(c.get("function") for c in calls)
+            if (want and got == want) or (not want and "tool_selection" in checks and got_tools == want_tools):
                 used.add(str(d))
                 return rf, d
         if cands:
