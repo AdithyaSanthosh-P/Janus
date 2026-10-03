@@ -37,3 +37,21 @@ def test_parameters_without_snake_case_examples_are_untouched():
 def test_enum_matching_still_applies():
     prop = {"type": "string", "enum": ["Driver_License", "passport"], "description": "e.g. 'id_card'"}
     assert coerce_to_schema("driver's license", prop) == "Driver_License"
+
+
+CARD_TYPE = {"type": "string", "description": "The card type, e.g. 'platinum' or 'gold'"}
+BILL_TYPE = {"type": "string", "description": "Type of bill, e.g. 'credit_card' or 'utilities'"}
+
+
+@pytest.mark.parametrize("value, name, prop, written", [
+    ("travel card", "card_type", CARD_TYPE, "travel"),        # 3 Oct runs: both forms, flipping between runs
+    ("Platinum Card", "card_type", CARD_TYPE, "Platinum"),
+    ("travel", "card_type", CARD_TYPE, "travel"),
+    ("credit card bill", "bill_type", BILL_TYPE, "credit_card"),
+    ("credit card", "bill_type", BILL_TYPE, "credit_card"),
+    ("card", "card_type", CARD_TYPE, "card"),                 # one word: nothing to drop
+    ("travel card", "card_name", CARD_TYPE, "travel card"),   # not a <noun>_type parameter
+    ("travel card", None, CARD_TYPE, "travel card"),          # callers that pass no name are unchanged
+])
+def test_a_type_value_does_not_repeat_the_noun(value, name, prop, written):
+    assert coerce_to_schema(value, prop, name) == written

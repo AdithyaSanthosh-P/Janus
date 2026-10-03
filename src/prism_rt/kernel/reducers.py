@@ -640,7 +640,7 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
             if value is None or (isinstance(value, str) and not value.strip()):
                 _record_bind_failure(txn, job, now_us, step_no, event_id=env.event_id)
                 return
-            values[param] = coerce_to_schema(value, props.get(param) or {})
+            values[param] = coerce_to_schema(value, props.get(param) or {}, param)
         write_bind_facts(txn, job.goal_id, job.target, values, job.read_set, rule="reducers.bind_result", now_us=now_us, step_no=step_no, event_id=env.event_id)
 
 

@@ -122,7 +122,22 @@ def _snake_case_like_examples(value: str, prop: dict) -> str:
     return "_".join(w for w in re.split(r"[\s-]+", lowered) if w)
 
 
-def coerce_to_schema(value, prop: dict):
+def _drop_repeated_type_noun(value: str, name: str | None) -> str:
+    """For a `<noun>_type` parameter, a value ending in that noun repeats
+    it: "travel card" for `card_type` is the type "travel" (FDB's own
+    descriptions show bare examples: 'platinum', 'gold'). The model wrote
+    both forms in the 3 Oct runs, flipping recordings between runs. Only a
+    multi-word value whose last word is the noun is changed."""
+    if not name or not name.endswith("_type"):
+        return value
+    noun = name[: -len("_type")].rsplit("_", 1)[-1].lower()
+    words = value.strip().split()
+    if noun and len(words) > 1 and words[-1].lower().rstrip(".") == noun:
+        return " ".join(words[:-1])
+    return value
+
+
+def coerce_to_schema(value, prop: dict, name: str | None = None):
     """Coerces a spoken value to the parameter's declared JSON type before
     it is written, so `ToolCatalog.validate_args` (G8) never rejects a value
     the user plainly stated: a number for a string parameter becomes "2500"
@@ -145,7 +160,7 @@ def coerce_to_schema(value, prop: dict):
             # of digits) is left exactly as said.
             if amount and (amount.group(1) or amount.group(4) or amount.group(5)):
                 return amount.group(2).replace(",", "") + (amount.group(3) or "")
-            value = _snake_case_like_examples(value, prop)
+            value = _snake_case_like_examples(_drop_repeated_type_noun(value, name), prop)
     elif kind in ("integer", "number") and not isinstance(value, bool):
         if isinstance(value, str):
             parsed = _parse_number(value)
@@ -234,7 +249,7 @@ def coerce_slot_value(store, goal_id: str, slot_key: str, value):
             if binding.kind == BindingKind.FACT and binding.fact_key in (slot_key, template):
                 prop = _tool_props(store, step.tool)[0].get(param)
                 if isinstance(prop, dict):
-                    return coerce_to_schema(value, prop)
+                    return coerce_to_schema(value, prop, param)
     return value
 
 
@@ -287,7 +302,7 @@ def _build_steps(txn, goal_id: str, actions, first_index: int, now_us: int, step
             assumed = param in action.assumed
             if assumed and (not config.fill_unstated_required_enabled or _schema_type(prop) not in _ASSUMABLE_TYPES):
                 continue  # an assumed free-text value is dropped -- still asked
-            value = coerce_to_schema(raw, prop)
+            value = coerce_to_schema(raw, prop, param)
             if config.normalize_spoken_ids:
                 value = canonicalize_spoken_id(value, param)
             txn.facts.set(
@@ -422,7 +437,7 @@ def coerce_deltas(store, goal_id: str, deltas) -> list[SlotDelta]:
         if step is not None and delta.op == SlotOp.SET:
             prop = _tool_props(store, step.tool)[0].get(scoped.group(2))
             if isinstance(prop, dict):
-                delta = dataclasses.replace(delta, value=coerce_to_schema(delta.value, prop))
+                delta = dataclasses.replace(delta, value=coerce_to_schema(delta.value, prop, scoped.group(2)))
         out.append(delta)
     return out
 

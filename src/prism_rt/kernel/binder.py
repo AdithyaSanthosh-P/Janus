@@ -121,7 +121,7 @@ class BindScheduler:
             found = _bfs_find_field(result.value, field)
             if not found.found or found.ambiguous or found.value is None:
                 return None
-            values[param] = coerce_to_schema(found.value, props.get(param) or {})
+            values[param] = coerce_to_schema(found.value, props.get(param) or {}, param)
         return values
 
     def _dispatch(self, store, goal_id: str, step, late: dict, sources: list[str], read_set) -> DispatchRequest:
