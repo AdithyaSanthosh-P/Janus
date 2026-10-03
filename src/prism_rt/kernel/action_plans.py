@@ -98,6 +98,30 @@ def _parse_number(text: str):
     return int(number) if number.is_integer() else number
 
 
+# A parameter whose description shows its values as snake_case words
+# ("Type of document, e.g. 'passport' or 'id_card'") takes them in that form.
+_SNAKE_EXAMPLE = re.compile(r"'[a-z]+(?:_[a-z]+)+'")
+_CATEGORY_PHRASE = re.compile(r"^[A-Za-z][A-Za-z'\u2019 -]*$")
+
+
+def _snake_case_like_examples(value: str, prop: dict) -> str:
+    """"driver's license" -> "driver_license", "Credit Card" -> "credit_card",
+    for a parameter whose own description gives snake_case example values.
+    Found in the 3 Oct voice runs: the model wrote the spoken form of the
+    document type in three recordings. Only a short phrase of letters is
+    touched (never a name with digits, an ID or a sentence)."""
+    text = value.strip()
+    if (
+        not _SNAKE_EXAMPLE.search(prop.get("description") or "")
+        or not _CATEGORY_PHRASE.match(text)
+        or len(text.split()) > 4
+    ):
+        return value
+    lowered = re.sub(r"['\u2019]s\b", "", text.lower())  # possessive: "driver's" -> "driver"
+    lowered = re.sub(r"['\u2019]", "", lowered)
+    return "_".join(w for w in re.split(r"[\s-]+", lowered) if w)
+
+
 def coerce_to_schema(value, prop: dict):
     """Coerces a spoken value to the parameter's declared JSON type before
     it is written, so `ToolCatalog.validate_args` (G8) never rejects a value
@@ -121,6 +145,7 @@ def coerce_to_schema(value, prop: dict):
             # of digits) is left exactly as said.
             if amount and (amount.group(1) or amount.group(4) or amount.group(5)):
                 return amount.group(2).replace(",", "") + (amount.group(3) or "")
+            value = _snake_case_like_examples(value, prop)
     elif kind in ("integer", "number") and not isinstance(value, bool):
         if isinstance(value, str):
             parsed = _parse_number(value)
