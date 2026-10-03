@@ -87,6 +87,7 @@ LABELS = {
     "cloud_20261003_121822": ("full100", "Cloud", "All 100 recordings, judged, commit 054c305 (fix pass of 3 Oct), same box and providers as cloud_20261002_182600: 65/100. Hosted speech-to-text was slower that day; 19 turns closed while their last segment was still being transcribed (3 in the 73% run), splitting requests. Fixed in a8d1fcd"),
     "cloud_20261003_143517": ("subset", "Cloud", "Re-test of the 23 ids (32 recordings) hit by the early turn close, commit a8d1fcd (the bridge waits for a running transcription): 24/32, against 15/32 in cloud_20261003_121822 and 23/32 in cloud_20261002_182600; no turn closed before its transcript"),
     "text_textreplay_fix_1003": ("full100", "3 Oct", "Full 100 after the kernel fixes of the 3 Oct fix pass (clarify livelock, null slot delta), judged"),
+    "text_textreplay_review_1003": ("full100", "3 Oct", "Full 100 on the code after the review pass (ae03f71), judged: gate before the second voice run. The model alternates \"travel\" and \"travel card\" for card_type between runs (finance_06/10 flip)"),
     "text_textreplay_dash_1003": ("subset", "3 Oct", "The three recordings that dictate codes with \"dash\", after the identifier-joiner rule"),
     "text_textreplay_pets_1003": ("debug", "3 Oct", "Pet-wording prompt line on housing_05/14/15; Gemini was slow, several scenarios hit the 15 s stall salvage"),
     "text_textreplay_pets_base_1003": ("debug", "3 Oct", "Same three ids without the pet-wording line (the A/B baseline); same slowness"),

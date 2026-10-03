@@ -6,8 +6,8 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 
 | File | One row per | Use it for |
 |---|---|---|
-| `runs.csv` | scored run (80) | score vs time, configuration comparisons |
-| `recordings.csv` | scenario in each text-replay run (2,344) | per-scenario and per-domain pass rates, text-replay latency |
+| `runs.csv` | scored run (81) | score vs time, configuration comparisons |
+| `recordings.csv` | scenario in each text-replay run (2,444) | per-scenario and per-domain pass rates, text-replay latency |
 | `voice_recordings.csv` | recording in each voice run (602) | per-speaker before/after, turn-ending evidence, latency |
 | `failures.csv` | failing recording in an analysed failure set (129) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
@@ -63,6 +63,7 @@ These are reference numbers only: different hardware, models and run dates, and 
 | 2026-09-30 | `text_text_replay_0930_setting` | judged | 75/100 | 75.0% | 0.963 | 0.795 | Tried: 'update a setting' prompt rule (reverted: 75% vs 77%) |
 | 2026-09-30 | `text_text_replay_0930_final` | judged | 77/100 | 77.0% | 0.949 | 0.803 | Configuration of the 30 Sep submission |
 | 2026-09-30 | `text_text_replay_0930_fixes` | judged | 77/100 | 77.0% | 0.959 | 0.807 | Identifier-style value rule + spoken-ID joiner |
+| 2026-10-03 | `text_textreplay_review_1003` | judged | 77/100 | 77.0% | 0.914 | 0.798 | Full 100 on the code after the review pass (ae03f71), judged: gate before the second voice run. The model alternates "travel" and "travel card" for card_type between runs (finance_06/10 flip) |
 | 2026-10-03 | `text_textreplay_fix_1003` | judged | 79/100 | 79.0% | 0.924 | 0.802 | Full 100 after the kernel fixes of the 3 Oct fix pass (clarify livelock, null slot delta), judged |
 
 What moved the score, in order:
@@ -469,3 +470,4 @@ The commit column is the code the run used (`-dirty` means uncommitted changes a
 | 2026-10-03 | `text_textreplay_fix_1003` | text_replay | full100 | judged | 79/100 | 79.0% | 0.924 | 0.802 | gemini-3.6-flash | 02ce797-dirty |
 | 2026-10-03 | `text_textreplay_pets_1003` | text_replay | debug | judged | 0/6 | 0.0% | 0.667 | 0.000 | gemini-3.6-flash | 6ddb2c9-dirty |
 | 2026-10-03 | `text_textreplay_pets_base_1003` | text_replay | debug | judged | 0/6 | 0.0% | 0.667 | 0.000 | gemini-3.6-flash | 6ddb2c9-dirty |
+| 2026-10-03 | `text_textreplay_review_1003` | text_replay | full100 | judged | 77/100 | 77.0% | 0.914 | 0.798 | gemini-3.6-flash | 830a672-dirty |
