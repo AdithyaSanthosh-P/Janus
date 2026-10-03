@@ -171,14 +171,14 @@ async def test_manifest_is_emitted_with_ts_us():
 # 30 Sep: Whisper's silence hallucinations ("you", "Hmm.") closed turns of
 # their own after a single-request recording had finished.
 
-@pytest.mark.parametrize("text", ["you", "You.", "Hmm.", "Um...", "Thank you.", "mmm", "you you"])
+@pytest.mark.parametrize("text", ["you", "You.", "Hmm.", "Um...", "Thank you.", "mmm", "you you", "Mhm.", "Mm-hmm.", "Uh-huh."])
 def test_filler_only_segments_are_recognised(text):
     from prism_rt.adapters.voice_bridge import is_filler_segment
 
     assert is_filler_segment(text)
 
 
-@pytest.mark.parametrize("text", ["", "   ", "you know", "Hmm, like I've been thinking", "Oh, and book it", "B O B"])
+@pytest.mark.parametrize("text", ["", "   ", "you know", "Hmm, like I've been thinking", "Oh, and book it", "B O B", "Mhm, and book it", "Uh-huh, track order ABC"])
 def test_segments_with_content_are_not_filler(text):
     from prism_rt.adapters.voice_bridge import is_filler_segment
 
