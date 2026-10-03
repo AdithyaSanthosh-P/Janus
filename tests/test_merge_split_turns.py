@@ -90,3 +90,40 @@ def test_merge_replay_identity():
         return [(a.action_type.value, getattr(a.body, "text", None)) for a in actions]
 
     assert once() == once()
+
+
+def test_null_value_does_not_replace_a_chained_ref():
+    """3 Oct voice run, ecommerce_25: the request split after "search for cat
+    food"; the second half ("and add three of whatever you find") came back
+    as an addition with the ref to the search and also product_id=null. The
+    null was stored as a user-stated value, replaced the ref, and the agent
+    asked "what should product id be?"."""
+    products = {"name": "search_products", "mutability": "read_only", "parameters": {"type": "object", "properties": {
+        "query": {"type": "string"}}, "required": ["query"]}}
+    cart = {"name": "add_to_cart", "parameters": {"type": "object", "properties": {
+        "product_id": {"type": "string"}, "quantity": {"type": "integer"}}, "required": ["product_id", "quantity"]}}
+    first = {"act": "new_goal", "intent": "track_order", "commit_intent": True, "slot_deltas": [], "actions": [
+        {"tool": "track_order", "args": {"order_id": "CAT"}}, {"tool": "search_products", "args": {"query": "cat food"}}]}
+    second = {"act": "addition", "intent": "add_to_cart", "commit_intent": True, "slot_deltas": [
+        {"name": "product_id", "scope": "goal", "op": "set", "value": None},
+        {"name": "quantity", "scope": "goal", "op": "set", "value": 3}], "actions": [
+        {"tool": "track_order", "args": {"order_id": "CAT"}}, {"tool": "search_products", "args": {"query": "cat food"}},
+        {"tool": "add_to_cart", "args": {"quantity": 3},
+         "refs": [{"param": "product_id", "from": 1, "field": None, "select": "whatever you find"}]}]}
+    provider = ScriptedProvider()
+    provider.register("interpret", "", lambda prompt: second if "add three" in prompt else first)
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    provider.register("bind", "add_to_cart", {"args": {"product_id": "PROD1"}})
+    tools = {"track_order": {"latency_ms": 200, "response": {"status": "shipped"}},
+             "search_products": {"latency_ms": 200, "response": {"products": [{"product_id": "PROD1", "price": 9.99}]}},
+             "add_to_cart": {"latency_ms": 200, "response": {"ok": True}}}
+    h = SimHarness(config(merge_split_turns_enabled=False), seed=1, provider=provider, tools=tools,
+                   worker_latency_us=SLOW_INTERPRET)
+    h.send(0, [manifest_event([ORDER, products, cart])])
+    actions = []
+    for ts, event in ((100_000, chunk_event("track order CAT, then search for cat food")), (150_000, eot_event()),
+                      (200_000, chunk_event("and add three of whatever you find to my cart")), (250_000, eot_event())):
+        actions += [er.action for er in h.send(ts, [event]).emit_report.emitted]
+    actions += drain(h, 5_000_000)
+    assert ("add_to_cart", {"product_id": "PROD1", "quantity": 3}) in tool_calls(actions)
+    assert not [a for a in actions if a.action_type == ActionType.CLARIFY]

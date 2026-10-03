@@ -79,6 +79,11 @@ def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnI
         if not (isinstance(raw.get("unsupported"), str) or raw.get("status_question") is True):
             raise
         act = InterpretAct.UNCLEAR
+    # A "set" with no value states nothing. Applied, it became a user fact
+    # holding None, which then replaced the action's chained ref as if the
+    # user had said the value outright -- found in the 3 Oct voice run,
+    # ecommerce_25: "add three of whatever you find" came back with the ref
+    # to the search and also product_id=null, and the agent asked for the id.
     slot_deltas = tuple(
         SlotDelta(
             name=delta["name"],
@@ -87,6 +92,10 @@ def parse_interpretation(raw: dict, *, turn_id: str, input_digest: str) -> TurnI
             value=delta.get("value"),
         )
         for delta in raw.get("slot_deltas") or ()
+        if not (
+            SlotOp(delta.get("op", "set")) == SlotOp.SET
+            and (delta.get("value") is None or (isinstance(delta.get("value"), str) and not delta.get("value").strip()))
+        )
     )
     visual_candidates = tuple(
         VisualCandidate(name=c["name"], description=c.get("description", ""))
