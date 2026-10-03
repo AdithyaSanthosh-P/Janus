@@ -15,13 +15,15 @@ from prism_rt.canonical import canonicalize_spoken_id
     ("E77-2211", "E772211"),
     ("ABC one two three", "ABC123"),
     ("A-B-C-1-2-3", "ABC123"),
+    ("D... Dash L-5-5-5", "DL555"),  # 3 Oct voice run, travel_07
+    ("P dash five dash two", "P52"),
 ])
 def test_spoken_code_is_joined_for_an_identifier_parameter(spoken, code):
     assert canonicalize_spoken_id(spoken, "order_id") == code
     assert canonicalize_spoken_id(spoken, "slot.g-0001.a0.doc_number") == code
 
 
-@pytest.mark.parametrize("value", ["the one from last week", "my order", "XYZ88"])
+@pytest.mark.parametrize("value", ["the one from last week", "my order", "XYZ88", "dash", "the dash cam"])
 def test_phrases_and_compact_codes_are_untouched(value):
     assert canonicalize_spoken_id(value, "order_id") == value
 

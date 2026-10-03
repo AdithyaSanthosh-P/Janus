@@ -60,6 +60,8 @@ _SPOKEN_ID_SPLIT = re.compile(r"[\s\-.,]+")
 
 
 _ID_PARAM = re.compile(r"(?:^|_)(?:id|number|code|ref)$")
+# Separators said as words when dictating a code ("D dash L dash five").
+_SPOKEN_SEPARATORS = {"dash", "hyphen"}
 _DIGIT_WORDS = {
     w: str(i) for i, w in enumerate("zero one two three four five six seven eight nine".split())
 } | {"oh": "0"}
@@ -68,12 +70,13 @@ _DIGIT_WORDS = {
 def _join_spoken_identifier(value: str):
     """For an identifier parameter only: "F A S T nine nine" -> "FAST99",
     "P.O. 999" -> "PO999", "one, two, three, ABC" -> "123ABC",
-    "DL. five five five" -> "DL555", "E77-2211" -> "E772211". Found in the
-    30 Sep voice runs: Whisper writes a spoken code as letters, digit words
-    and separators. Every piece must be a single character, a digit word,
+    "DL. five five five" -> "DL555", "E77-2211" -> "E772211",
+    "D... Dash L-5-5-5" -> "DL555". Found in the 30 Sep voice runs: Whisper
+    writes a spoken code as letters, digit words and separators (the 3 Oct
+    run, travel_07: a spoken "dash" written as a word). Every piece must be a single character, a digit word,
     all upper case or contain a digit, so a phrase ("the one from last
     week") is never glued together. None when the value doesn't look like a spoken code."""
-    tokens = [t for t in _SPOKEN_ID_SPLIT.split(value) if t]
+    tokens = [t for t in _SPOKEN_ID_SPLIT.split(value) if t and t.lower() not in _SPOKEN_SEPARATORS]
     if len(tokens) < 2:
         return None
     pieces = []
