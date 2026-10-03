@@ -6,8 +6,8 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 
 | File | One row per | Use it for |
 |---|---|---|
-| `runs.csv` | scored run (83) | score vs time, configuration comparisons |
-| `recordings.csv` | scenario in each text-replay run (2,469) | per-scenario and per-domain pass rates, text-replay latency |
+| `runs.csv` | scored run (84) | score vs time, configuration comparisons |
+| `recordings.csv` | scenario in each text-replay run (2,489) | per-scenario and per-domain pass rates, text-replay latency |
 | `voice_recordings.csv` | recording in each voice run (702) | per-speaker before/after, turn-ending evidence, latency |
 | `failures.csv` | failing recording in an analysed failure set (129) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
@@ -474,3 +474,4 @@ The commit column is the code the run used (`-dirty` means uncommitted changes a
 | 2026-10-03 | `text_textreplay_pets_base_1003` | text_replay | debug | judged | 0/6 | 0.0% | 0.667 | 0.000 | gemini-3.6-flash | 6ddb2c9-dirty |
 | 2026-10-03 | `text_textreplay_review_1003` | text_replay | full100 | judged | 77/100 | 77.0% | 0.914 | 0.798 | gemini-3.6-flash | 830a672-dirty |
 | 2026-10-04 | `text_textreplay_finance_typenoun` | text_replay | subset | judged | 25/25 | 100.0% | 1.000 | 1.000 | gemini-3.6-flash | e296c85-dirty |
+| 2026-10-04 | `text_textreplay_travel_typenoun` | text_replay | subset | judged | 19/20 | 95.0% | 1.000 | 0.950 | gemini-3.6-flash | c6d789a-dirty |
