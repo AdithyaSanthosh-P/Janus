@@ -167,13 +167,13 @@ def build(args) -> Presentation:
     s = slides[7]
     title(s, "Results on Full-Duplex-Bench v3")
     set_text(body_box(s, 0.9, 5.05, 10.6, 1.6), [
-        "Text replay feeds ground-truth transcripts: it measures the reasoning and safety core, not speech or latency. Voice row: all 100 recordings on 30 Sep, before the turn-ending fixes (26 re-run on 2 Oct: 16 pass, was 12).",
+        "Text replay feeds ground-truth transcripts: it measures the reasoning and safety core, not speech or latency. Voice row: all 100 recordings on the final code (3 Oct); three full voice runs that day scored 73, 65 and 74.",
         "Housing is weakest (35% text), as for every published system. The organizers' re-run of ./reproduce.sh is what scores.",
     ], size=14)
     table(s, 0.9, 1.6, 10.6, [
         ["System (FDB-v3, gpt-4o judge)", "Pass@1", "Tool sel.", "Arg acc.", "Resp. qual."],
         ["Janus, text replay, 100 scenarios", "77.0%", "0.959", "0.807", "0.840"],
-        ["Janus, voice over LiveKit, 100 (30 Sep)", "42.0%", "0.844", "0.611", "0.597"],
+        ["Janus, voice over LiveKit, 100 (3 Oct, final)", "74.0%", "0.959", "0.780", "0.720"],
         ["GPT-Realtime (paper)", "60.0%", "0.876", "0.680", "0.792"],
         ["Gemini Live 3.1 (paper)", "54.0%", "0.817", "0.588", "0.718"],
         ["Cascaded Whisper→GPT-4o→TTS (paper)", "45.0%", "0.803", "0.562", "0.600"],
@@ -196,7 +196,7 @@ def build(args) -> Presentation:
     title(s, "Stack, rigour and honest limits")
     set_text(body_box(s, 0.9, 1.6, 10.6, 4.9), [
         "Stack: LiveKit Agents · Silero VAD · faster-whisper large-v3-turbo · Kokoro-82M · Gemini 3.6 Flash (hosted) · Python 3.11, Docker.",
-        "587 deterministic tests (stepped clock, scripted model), TraceChecker on every run, adversarial explorer over 19 race scenarios.",
+        "622 deterministic tests (stepped clock, scripted model), TraceChecker on every run, adversarial explorer over 19 race scenarios.",
         "One-command reproduction: pinned FDB commit, sha256-checked data, weights baked into the image.",
         "Limits: the full voice run predates the turn-ending fixes; housing 35%; the hosted model is not bit-reproducible; the extension's device backend is simulated.",
     ], size=20)
