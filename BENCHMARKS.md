@@ -6,9 +6,9 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 
 | File | One row per | Use it for |
 |---|---|---|
-| `runs.csv` | scored run (74) | score vs time, configuration comparisons |
-| `recordings.csv` | scenario in each text-replay run (2,226) | per-scenario and per-domain pass rates, text-replay latency |
-| `voice_recordings.csv` | recording in each voice run (470) | per-speaker before/after, turn-ending evidence, latency |
+| `runs.csv` | scored run (80) | score vs time, configuration comparisons |
+| `recordings.csv` | scenario in each text-replay run (2,344) | per-scenario and per-domain pass rates, text-replay latency |
+| `voice_recordings.csv` | recording in each voice run (602) | per-speaker before/after, turn-ending evidence, latency |
 | `failures.csv` | failing recording in an analysed failure set (129) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
 | `other_measurements.csv` | measurement | tests, kernel latency, exploration, speech round trip, reference numbers |
@@ -63,6 +63,7 @@ These are reference numbers only: different hardware, models and run dates, and 
 | 2026-09-30 | `text_text_replay_0930_setting` | judged | 75/100 | 75.0% | 0.963 | 0.795 | Tried: 'update a setting' prompt rule (reverted: 75% vs 77%) |
 | 2026-09-30 | `text_text_replay_0930_final` | judged | 77/100 | 77.0% | 0.949 | 0.803 | Configuration of the 30 Sep submission |
 | 2026-09-30 | `text_text_replay_0930_fixes` | judged | 77/100 | 77.0% | 0.959 | 0.807 | Identifier-style value rule + spoken-ID joiner |
+| 2026-10-03 | `text_textreplay_fix_1003` | judged | 79/100 | 79.0% | 0.924 | 0.802 | Full 100 after the kernel fixes of the 3 Oct fix pass (clarify livelock, null slot delta), judged |
 
 What moved the score, in order:
 
@@ -119,6 +120,8 @@ Voice runs stream FDB's recordings through LiveKit to the Janus worker (speech r
 | 2026-09-30 | `cloud_20260930_174502` | judged | 17/41 | 41.5% | 0.835 | 0.524 | 6.4 s | 41 recordings (clean re-run of the 29 contaminated ids), hosted speech-to-text, judged |
 | 2026-10-02 | `cloud_20261002_061207` | exact | 16/26 | 61.5% | 0.958 | 0.736 | 6.8 s | 26 recordings (10 split-turn failures, 5 fragile passes, 3 controls), local Whisper, after the turn-ending fix |
 | 2026-10-02 | `cloud_20261002_182600` | judged | 73/100 | 73.0% | 0.947 | 0.768 | 8.1 s | All 100 recordings, judged, current code (commit 8020f79 plus the native setup fix), native path on a clean RTX 3090 box, hosted speech-to-text; first full run after the turn-ending fixes (run 3 Oct IST, box clock 2 Oct UTC) |
+| 2026-10-03 | `cloud_20261003_121822` | judged | 65/100 | 65.0% | 0.917 | 0.704 | 9.0 s | All 100 recordings, judged, commit 054c305 (fix pass of 3 Oct), same box and providers as cloud_20261002_182600: 65/100. Hosted speech-to-text was slower that day; 19 turns closed while their last segment was still being transcribed (3 in the 73% run), splitting requests. Fixed in a8d1fcd |
+| 2026-10-03 | `cloud_20261003_143517` | judged | 24/32 | 75.0% | 0.963 | 0.807 | 7.1 s | Re-test of the 23 ids (32 recordings) hit by the early turn close, commit a8d1fcd (the bridge waits for a running transcription): 24/32, against 15/32 in cloud_20261003_121822 and 23/32 in cloud_20261002_182600; no turn closed before its transcript |
 
 Read these with care:
 
@@ -460,3 +463,9 @@ The commit column is the code the run used (`-dirty` means uncommitted changes a
 | 2026-10-02 | `cloud_20261002_061207` | voice_cloud | subset | exact | 16/26 | 61.5% | 0.958 | 0.736 | gemini-3.6-flash | 86e5fc95 |
 | 2026-10-02 | `cloud_20261002_182600` | voice_cloud | full100 | judged | 73/100 | 73.0% | 0.947 | 0.768 | gemini-3.6-flash | 8020f79b |
 | 2026-10-02 | `text_text_replay_1002_valuerules` | text_replay | subset | exact | 11/24 | 45.8% | 0.911 | 0.618 | gemini-3.6-flash | 1405be2-dirty |
+| 2026-10-03 | `cloud_20261003_121822` | voice_cloud | full100 | judged | 65/100 | 65.0% | 0.917 | 0.704 | gemini-3.6-flash | 054c305a |
+| 2026-10-03 | `cloud_20261003_143517` | voice_cloud | subset | judged | 24/32 | 75.0% | 0.963 | 0.807 | gemini-3.6-flash | a8d1fcdb |
+| 2026-10-03 | `text_textreplay_dash_1003` | text_replay | subset | judged | 6/6 | 100.0% | 1.000 | 1.000 | gemini-3.6-flash | 2752bc8-dirty |
+| 2026-10-03 | `text_textreplay_fix_1003` | text_replay | full100 | judged | 79/100 | 79.0% | 0.924 | 0.802 | gemini-3.6-flash | 02ce797-dirty |
+| 2026-10-03 | `text_textreplay_pets_1003` | text_replay | debug | judged | 0/6 | 0.0% | 0.667 | 0.000 | gemini-3.6-flash | 6ddb2c9-dirty |
+| 2026-10-03 | `text_textreplay_pets_base_1003` | text_replay | debug | judged | 0/6 | 0.0% | 0.667 | 0.000 | gemini-3.6-flash | 6ddb2c9-dirty |
