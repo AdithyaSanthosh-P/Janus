@@ -92,6 +92,13 @@ class VoiceBridge:
     # before the turn closes without it (a transcription that failed or
     # timed out must not hold the turn open forever).
     t_stt_wait_ms: int = 4000
+    # With a recognizer that reports its work (`on_recognition`), a
+    # transcription still running is waited for up to this long after the
+    # last speech end, instead of t_stt_wait_ms -- and once it finishes, its
+    # text gets t_text_grace_ms to arrive. Hosts that never report keep the
+    # t_stt_wait_ms rule unchanged.
+    t_stt_running_cap_ms: int = 15000
+    t_text_grace_ms: int = 500
     # Send `user_speech` events (active while the user speaks or their words
     # are still being transcribed) so the kernel can hold calls and speech
     # before any text exists (Config.vad_floor_enabled decides whether it
@@ -113,6 +120,8 @@ class VoiceBridge:
     _user_speaking: bool = field(default=False, init=False, repr=False)
     _vad_seen: bool = field(default=False, init=False, repr=False)
     _pending_segments: int = field(default=0, init=False, repr=False)
+    _recognizing: int = field(default=0, init=False, repr=False)
+    _recognition_done_at: "float | None" = field(default=None, init=False, repr=False)
     _last_speech_end: "float | None" = field(default=None, init=False, repr=False)
     _last_final_at: "float | None" = field(default=None, init=False, repr=False)
     _words_since_eot: bool = field(default=False, init=False, repr=False)
@@ -217,6 +226,24 @@ class VoiceBridge:
         await self._report_activity()
         self._schedule_eot()
 
+    async def on_recognition(self, running: bool) -> None:
+        """The recognizer started (True) or finished (False) transcribing a
+        segment. Exact, unlike `_pending_segments`, which infers outstanding
+        transcripts from VAD stops: LiveKit's session VAD and the
+        transcriber's VAD are separate streams that split speech differently,
+        and a fixed wait gave up on slow transcriptions. Found in the 3 Oct
+        voice run: 19 of 100 turns closed while a long segment was still
+        being transcribed (hosted transcription took 4-10 s), splitting the
+        request; the late half was then read as a correction or a new
+        request (a passport update lost to the licence update after it)."""
+        if running:
+            self._recognizing += 1
+        else:
+            self._recognizing = max(0, self._recognizing - 1)
+            self._recognition_done_at = self._loop_now()
+        await self._report_activity()
+        self._schedule_eot()
+
     def on_agent_speaking_changed(self, speaking: bool) -> None:
         """Wired to the TTS/session's own speaking-state signal so
         `on_speech_start` can tell a barge-in from ordinary silence."""
@@ -251,21 +278,39 @@ class VoiceBridge:
         self._cancel_eot_timer()
         if self._stopped or self._user_speaking:
             return
+        waiting_until = self._transcripts_awaited_until()
         if not self._words_since_eot:
-            if self._pending_segments > 0 and self._last_speech_end is not None:
+            if waiting_until is not None:
                 # Nothing to close yet, but a transcript is awaited: stop
-                # waiting for it after t_stt_wait_ms all the same.
-                self._eot_task = asyncio.create_task(
-                    self._give_up_at(self._last_speech_end + self.t_stt_wait_ms / 1000)
-                )
+                # waiting for it at the cap all the same.
+                self._eot_task = asyncio.create_task(self._give_up_at(waiting_until))
             return
         silence_from = self._last_speech_end if self._vad_seen else self._last_final_at
         if silence_from is None:
             return
         deadline = silence_from + self.t_eot_ms / 1000
-        if self._pending_segments > 0 and self._last_speech_end is not None:
-            deadline = max(deadline, self._last_speech_end + self.t_stt_wait_ms / 1000)
+        if waiting_until is not None:
+            deadline = max(deadline, waiting_until)
         self._eot_task = asyncio.create_task(self._eot_at(deadline))
+
+    def _transcripts_awaited_until(self) -> "float | None":
+        """Until when an outstanding transcript is waited for, or None if
+        none is outstanding: while the recognizer reports a transcription
+        running, up to t_stt_running_cap_ms after the last speech end; else,
+        for a segment whose text hasn't arrived, t_stt_wait_ms after the last
+        speech end; and t_text_grace_ms after a reported finish whose text
+        hasn't arrived yet (the transcript event follows the finish)."""
+        if self._recognizing > 0:
+            since = self._last_speech_end if self._last_speech_end is not None else self._loop_now()
+            return since + self.t_stt_running_cap_ms / 1000
+        until = None
+        if self._pending_segments > 0 and self._last_speech_end is not None:
+            until = self._last_speech_end + self.t_stt_wait_ms / 1000
+        done = self._recognition_done_at
+        if done is not None and (self._last_final_at is None or self._last_final_at < done):
+            grace = done + self.t_text_grace_ms / 1000
+            until = grace if until is None else max(until, grace)
+        return until
 
     def _cancel_eot_timer(self) -> None:
         if self._eot_task is not None and not self._eot_task.done():
@@ -297,7 +342,7 @@ class VoiceBridge:
         the floor released before the words that took it."""
         if not self.report_user_activity or self._stopped:
             return
-        active = self._user_speaking or self._pending_segments > 0
+        active = self._user_speaking or self._pending_segments > 0 or self._recognizing > 0
         if active == self._activity_reported:
             return
         self._activity_reported = active

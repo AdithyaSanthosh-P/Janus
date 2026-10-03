@@ -156,7 +156,39 @@ def _to_mono_16k(buffer) -> np.ndarray:
     return pcm.astype(np.float32) / 32768.0
 
 
-class FasterWhisperSTT(stt.STT):
+class _ReportsRecognition(stt.STT):
+    """Tells the voice bridge when a segment's transcription starts and ends
+    (`on_recognition`, set by voice/agent.py to `VoiceBridge.on_recognition`).
+    The bridge used to infer an outstanding transcript from VAD stops alone,
+    and gave up after a fixed wait: found in the 3 Oct voice run, hosted
+    transcription of a long segment took over 4 s, the turn closed without
+    its last sentence in 19 of 100 recordings, and the request was split."""
+
+    on_recognition = None  # Callable[[bool], Awaitable[None]] | None
+
+    async def _notify(self, running: bool) -> None:
+        if self.on_recognition is None:
+            return
+        try:
+            await self.on_recognition(running)
+        except Exception:  # noqa: BLE001 - reporting must never break recognition
+            logger.debug("janus.voice.speech: recognition report failed", exc_info=True)
+
+    async def _recognize_impl(
+        self,
+        buffer,
+        *,
+        language: NotGivenOr[str] = NOT_GIVEN,
+        conn_options: APIConnectOptions,
+    ) -> stt.SpeechEvent:
+        await self._notify(True)
+        try:
+            return await self._transcribe_segment(buffer, language=language, conn_options=conn_options)
+        finally:
+            await self._notify(False)
+
+
+class FasterWhisperSTT(_ReportsRecognition):
     """Non-streaming: LiveKit's `stt.StreamAdapter` hands each VAD-delimited
     speech segment to `_recognize_impl` and emits it as one final transcript,
     which is exactly the append-only chunk Janus's turn model expects."""
@@ -168,7 +200,7 @@ class FasterWhisperSTT(stt.STT):
         self._beam_size = beam_size
         self._hotwords = hotwords
 
-    async def _recognize_impl(
+    async def _transcribe_segment(
         self,
         buffer,
         *,
@@ -234,7 +266,7 @@ def _wav_bytes(audio: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
-class OpenAITranscribeSTT(stt.STT):
+class OpenAITranscribeSTT(_ReportsRecognition):
     """Same contract as FasterWhisperSTT (one VAD-delimited segment in, one
     final transcript out, never raises), backed by OpenAI's transcription
     API. The client reads OPENAI_API_KEY and OPENAI_BASE_URL from the
@@ -249,7 +281,7 @@ class OpenAITranscribeSTT(stt.STT):
         self._model = model or os.environ.get("JANUS_STT_MODEL") or OPENAI_STT_MODEL
         self._language = language
 
-    async def _recognize_impl(
+    async def _transcribe_segment(
         self,
         buffer,
         *,

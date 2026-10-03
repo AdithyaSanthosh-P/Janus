@@ -442,3 +442,73 @@ async def test_words_while_the_agent_is_silent_stop_nothing():
     bridge.stop_speaking = lambda: stops.append(True)
     await bridge.on_segment_final("book it for Friday")
     assert stops == []
+
+
+async def test_a_running_transcription_is_waited_for_past_the_fixed_wait():
+    """3 Oct voice run (19 of 100 recordings): hosted transcription of a
+    long segment took more than t_stt_wait_ms, the turn closed without its
+    last sentence, and the request was split in two. A transcription the
+    recognizer reports as running holds the turn open (up to its cap)."""
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.t_stt_wait_ms = 60
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("update my passport to P1122")
+    await bridge.on_speech_start()
+    await bridge.on_recognition(True)  # the long last segment is being transcribed
+    await bridge.on_speech_end()
+    await asyncio.sleep(0.12)  # well past t_stt_wait_ms
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk"]
+    await bridge.on_recognition(False)
+    await bridge.on_segment_final("and my licence to DL9090")
+    await asyncio.sleep(0.005)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk", "end_of_turn"]
+
+
+async def test_a_running_transcription_is_waited_for_only_up_to_its_cap():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.t_stt_running_cap_ms = 80
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("cancel my order")
+    await bridge.on_recognition(True)  # never finishes
+    await asyncio.sleep(0.04)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk"]
+    await asyncio.sleep(0.07)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["end_of_turn"]
+
+
+async def test_a_finished_transcription_s_text_gets_a_grace_before_the_turn_closes():
+    """The transcript event follows the recognizer's finish; with the VAD
+    count already at zero (the session and the transcriber split speech
+    differently), the turn must not close in between."""
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.t_text_grace_ms = 60
+    await bridge.on_speech_start()
+    await bridge.on_segment_final("search flights to")  # counted before its own VAD stop
+    await bridge.on_recognition(True)
+    await bridge.on_speech_end()
+    await asyncio.sleep(0.03)  # silence past t_eot, transcription still running
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk"]
+    await bridge.on_recognition(False)
+    await asyncio.sleep(0.02)  # inside the grace: the text is still on its way
+    assert await _drain_nowait(events) == []
+    await bridge.on_segment_final("Chicago")
+    await asyncio.sleep(0.005)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk", "end_of_turn"]
+
+
+async def test_running_transcription_keeps_the_user_active_for_the_kernel():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.report_user_activity = True
+    await bridge.on_speech_start()
+    await bridge.on_segment_final("book a flight")
+    await bridge.on_recognition(True)
+    await bridge.on_speech_end()
+    kinds = [(e["type"], e["payload"].get("active")) for e in await _drain_nowait(events)]
+    assert ("user_speech", False) not in kinds
+    await bridge.on_recognition(False)
+    await bridge.on_segment_final("to Denver")
+    await asyncio.sleep(0.03)
+    kinds = [(e["type"], e["payload"].get("active")) for e in await _drain_nowait(events)]
+    assert ("user_speech", False) in kinds and ("end_of_turn", None) in kinds

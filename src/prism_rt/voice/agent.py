@@ -277,6 +277,9 @@ async def entrypoint(ctx: JobContext) -> None:
         report_user_activity=True,
         stop_speaking=stop_speaking,
     )
+    # The recognizer reports each transcription's start and finish, so the
+    # turn never closes while one is still running (VoiceBridge.on_recognition).
+    recognizer.on_recognition = bridge.on_recognition
 
     # gemini-3.6-flash, thinking off (28 Sep): same judge-scored full-100 as
     # flash-lite (73%) but 3-call scenarios 50% -> 69% and it follows the
