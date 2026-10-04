@@ -28,13 +28,18 @@ else
 fi
 
 cd "$REPO_DIR"
-CURRENT_COMMIT="$(git rev-parse HEAD)"
+# A checkout made by an earlier run is owned by another user (root inside the
+# container, the host user outside): git refuses it as "dubious ownership"
+# unless told this exact directory is safe. Found on a second ./reproduce.sh
+# run in the same checkout. Per command (-c), so no global git config changes.
+fdb_git() { git -c "safe.directory=$PWD" "$@"; }
+CURRENT_COMMIT="$(fdb_git rev-parse HEAD)"
 if [ "$CURRENT_COMMIT" != "$FDB_COMMIT" ]; then
     echo "Checking out pinned commit $FDB_COMMIT (was $CURRENT_COMMIT) ..."
-    git fetch origin "$FDB_COMMIT" || true
-    git checkout "$FDB_COMMIT"
+    fdb_git fetch origin "$FDB_COMMIT" || true
+    fdb_git checkout "$FDB_COMMIT"
 fi
-echo "FDB at commit: $(git rev-parse HEAD)"
+echo "FDB at commit: $(fdb_git rev-parse HEAD)"
 
 DATA_DIR="$REPO_DIR/v3/fdb_v3_data_released"
 ZIP_PATH="$DEST_ROOT/fdb_v3_data_released.zip"
