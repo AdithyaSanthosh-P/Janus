@@ -32,8 +32,8 @@ Environment:
                           saves VRAM, but was flaky over long runs -- see _SHARED)
   JANUS_AGENT_NAME        LiveKit agent name (demo mode default "janus-demo": explicit dispatch
                           only, so a demo worker never takes benchmark rooms; "" = automatic)
-  JANUS_STT               "local" (faster-whisper on the GPU, default) or "openai" (hosted
-                          transcription, needs OPENAI_API_KEY; OPENAI_BASE_URL is honoured)
+  JANUS_STT               "openai" (hosted transcription, the default; needs OPENAI_API_KEY;
+                          OPENAI_BASE_URL is honoured) or "local" (faster-whisper on the GPU)
   JANUS_STT_MODEL         override the hosted transcription model (default: speech.OPENAI_STT_MODEL)
   JANUS_WHISPER_HOTWORDS  1 = prime the recognizer with the tool vocabulary (off by default;
                           not yet A/B-tested on the benchmark)
@@ -100,6 +100,11 @@ def _load_dotenv(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
+# Before any setting below is read: a JANUS_* value in .env (JANUS_STT,
+# JANUS_MODE, ...) used to be ignored because .env was loaded after them.
+_load_dotenv(REPO_ROOT / ".env")
+
+
 def _int_env(name: str, default: int) -> int:
     raw = os.environ.get(name)
     return int(raw) if raw not in (None, "") else default
@@ -149,7 +154,7 @@ MODE = os.environ.get("JANUS_MODE", "fdb").strip().lower()
 # Speech-to-text: "local" (faster-whisper on the GPU, the default) or "openai"
 # (hosted transcription, speech.OPENAI_STT_MODEL; needs OPENAI_API_KEY, and
 # honours OPENAI_BASE_URL so the key can sit behind a relay).
-STT_BACKEND = os.environ.get("JANUS_STT", "local").strip().lower()
+STT_BACKEND = os.environ.get("JANUS_STT", "openai").strip().lower()
 if STT_BACKEND not in ("local", "openai"):
     raise SystemExit(f"JANUS_STT must be 'local' or 'openai', not {STT_BACKEND!r}")
 if MODE not in ("fdb", "demo"):
@@ -190,8 +195,6 @@ def _shared_models() -> dict:
 def prewarm(proc: JobProcess) -> None:
     proc.userdata.update(_shared_models())
 
-
-_load_dotenv(REPO_ROOT / ".env")
 
 server = AgentServer(
     setup_fnc=prewarm,
