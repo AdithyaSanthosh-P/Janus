@@ -1,10 +1,10 @@
 # Janus
 
+**Built for the Samsung R&D Language AI Team by Team AICA**
+
 A full-duplex, interruptible voice agent built around one idea: **no model ever acts on its own.** Language models only propose; a single synchronous kernel decides what actually happens, so a user can change their mind mid-sentence and the agent neither books twice nor claims something it did not do.
 
 Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptible Real-Time Agents**, and evaluated on **Full-Duplex-Bench v3 (FDB-v3)** over LiveKit.
-
-**Demo video:** [Google Drive](https://drive.google.com/drive/folders/1voRXefVFo-aI9aMh7W6LHp6Px0K2_CcE?usp=drive_link) · **Slide deck:** [Google Slides](https://docs.google.com/presentation/d/16pbvTmVLDricxOrwYgVnJDcXBt5EJ9KR/edit?usp=sharing&ouid=117062392495455542034&rtpof=true&sd=true)
 
 | | |
 |---|---|
@@ -13,7 +13,7 @@ Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptib
 | **Speech & vision** | OpenAI `gpt-4o-mini-transcribe` (or local `faster-whisper`), Silero VAD, Kokoro-82M TTS, 1 fps video sampler |
 | **Core architecture** | Single-writer synchronous kernel ($\le 5\text{ ms}$/step) with read-set invalidation & G1–G11 CommitGate |
 | **Use-case extension** | Camera-grounded appliance & device diagnostics with Samsung SmartThings-style error handling ([§ Extension](#extension-camera-grounded-device-care)) |
-| **Submission materials** | [Demo video](https://drive.google.com/drive/folders/1voRXefVFo-aI9aMh7W6LHp6Px0K2_CcE?usp=drive_link) · [Slide deck](https://docs.google.com/presentation/d/16pbvTmVLDricxOrwYgVnJDcXBt5EJ9KR/edit?usp=sharing&ouid=117062392495455542034&rtpof=true&sd=true) · [`LangAI3.0_AI_Disclosure.docx`](LangAI3.0_AI_Disclosure.docx) |
+| **AI disclosure** | [`LangAI3.0_AI_Disclosure.docx`](LangAI3.0_AI_Disclosure.docx) |
 | **Reproduction** | One command: [`./reproduce.sh`](#reproduce-the-benchmark-one-command) (pinned Docker build with SHA-256 data verification) |
 | **Verification** | 622 deterministic unit tests on a stepped clock with invariant trace-checking & 19-race adversarial explorer |
 
@@ -49,19 +49,19 @@ What it does, in order:
 5. Writes `results/<timestamp>/`: `pass_rate_report.json`, `tool_calls_report.json`, latency report, per-room decision logs, `agent.log`, `manifest.json` (commit, package versions, the full profile, seeds, judge on/off), `PROVIDER.txt`, `SUMMARY.md`.
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph SETUP["Setup · first run only"]
         direction TB
-        A["reproduce.sh"] --> B["Docker build<br/>CUDA 12 · Python 3.11"]
-        B --> C["FDB-v3 @ 3e799c4<br/>data, SHA-256 verified"]
-        C --> D["Speech models<br/>pinned HF revisions"]
+        A["reproduce.sh"] --> B["Docker build · CUDA 12 / Python 3.11"]
+        B --> C["FDB-v3 @ 3e799c4 · SHA-256 verified"]
+        C --> D["Speech models · pinned HF revisions"]
     end
     subgraph RUN["Run · inside container"]
         direction TB
-        E["Environment check<br/>keys · GPU · Docker"] --> F["Janus LiveKit worker<br/>+ warm-up"]
-        F --> G["FDB's own runner<br/>100 recordings, real time"]
-        G --> H["FDB's own evaluators<br/>pass rate · tool calls · latency"]
-        H --> I[("results/&lt;timestamp&gt;/")]
+        E["Environment check · keys, GPU & Docker"] --> F["Janus LiveKit worker + warm-up"]
+        F --> G["FDB's official runner · 100 recordings"]
+        G --> H["FDB's official evaluators · pass rate & latency"]
+        H --> I[("results/<timestamp>/")]
     end
     SETUP ==> RUN
 ```
@@ -76,46 +76,54 @@ Seeds and randomness: the model call uses temperature 0 and the kernel is determ
 
 ```mermaid
 flowchart TB
-    U(["User<br/>voice & camera"]) <-->|"audio / video · WebRTC"| ROOM[["LiveKit room"]]
+    U(["User · Voice & Camera"])
+    ROOM[["LiveKit WebRTC Room"]]
+    U <-->|"audio / video"| ROOM
+
+    subgraph EARS["1. Ears · Local Perception"]
+        direction TB
+        VAD["Silero VAD"]
+        ASR["STT: gpt-4o-mini-transcribe"]
+        CAM["Camera: 1 fps JPEG sampler"]
+        VAD --> ASR
+        VAD --> CAM
+    end
     ROOM --> VAD
 
-    subgraph EARS["Ears · local"]
-        direction LR
-        VAD["Silero VAD"] --> ASR["STT<br/>gpt-4o-mini-transcribe"]
-        VAD --> CAM["Camera sampler<br/>1 fps JPEG"]
-    end
-
-    ASR -->|words| MAILBOX
-    CAM -->|frame_id| MAILBOX
-
-    subgraph KERNEL["Janus Kernel · single writer, ≤5 ms"]
-        direction LR
-        MAILBOX["Mailbox<br/>ordered events"]
-        ENGINE{{"Step Engine<br/>8 phases · sync"}}
-        STORE[("Session Store<br/>facts · effect ledger")]
+    subgraph KERNEL["2. Janus Synchronous Kernel · ≤5 ms"]
+        direction TB
+        MAILBOX["Ordered Event Mailbox"]
+        ENGINE{{"8-Phase Step Engine<br/>Order → Apply → Invalidate<br/>Decide → Emit → Commit"}}
+        STORE[("Versioned Session Store<br/>facts · effect ledger · floor")]
         MAILBOX --> ENGINE
         ENGINE <--> STORE
     end
+    ASR -->|words| MAILBOX
+    CAM -->|frame_id| MAILBOX
 
-    subgraph WORKERS["Async Workers · propose only"]
-        direction LR
-        POOL["Worker Pool<br/>Interpreter · Planner<br/>Composer · Vision"]
-        LLM(["Gemini 3.6 Flash<br/>hosted API"])
+    subgraph WORKERS["3. Async Workers · Propose Only"]
+        direction TB
+        POOL["Worker Subsystems<br/>Interpreter · Planner · Composer · Vision"]
+        LLM(["Gemini 3.6 Flash (Hosted API)"])
         POOL <--> LLM
     end
+    ENGINE -.->|"frozen snapshot"| POOL
+    POOL -.->|"proposals (with read sets)"| MAILBOX
 
-    ENGINE -.->|"frozen state"| POOL
-    POOL -.->|"proposals (read sets)"| MAILBOX
-
-    GATE{"CommitGate<br/>G1–G11 · settle"}
-    ENGINE ==>|"admitted writes"| GATE
-    GATE ==>|"effect ledger"| TOOLS[("Tools<br/>FDB-v3 & Care APIs")]
+    subgraph SAFETY["4. Admission & Tool Ecosystem"]
+        direction TB
+        GATE{"CommitGate<br/>G1–G11 & settle window"}
+        TOOLS[("Tool Backend<br/>FDB-v3 APIs & Device Care")]
+        GATE ==>|"admitted writes"| TOOLS
+    end
+    ENGINE ==>|"proposed writes"| GATE
     TOOLS -.->|results| MAILBOX
 
-    ENGINE -->|"answer text"| TTS
-    subgraph MOUTH["Mouth · local"]
+    subgraph MOUTH["5. Mouth · Local TTS"]
+        direction TB
         TTS["Kokoro-82M"]
     end
+    ENGINE -->|"spoken text"| TTS
     TTS -->|audio| ROOM
 ```
 
@@ -215,21 +223,17 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TB
-    subgraph STEP["One Kernel Step · ≤5 ms synchronous cycle"]
+    subgraph STEP["One Kernel Step · ≤5 ms, No Awaiting"]
         direction TB
-        subgraph ROW1["Phases 1–4 · Ingestion & Decision"]
-            direction LR
-            P1["1. ORDER<br/>causal sorting"] --> P2["2. APPLY<br/>event reducers"]
-            P2 --> P3["3. INVALIDATE<br/>stale read sets"]
-            P3 --> P4["4. DECIDE<br/>CommitGate & tasks"]
-        end
-        subgraph ROW2["Phases 5–8 · Execution & Persistence"]
-            direction LR
-            P5["5. EMIT<br/>actions to wire"] --> P6["6. COMMIT<br/>session change set"]
-            P6 --> P7["7. DISPATCH<br/>worker jobs"]
-            P7 --> P8["8. LOG<br/>decision trace"]
-        end
-        ROW1 --> ROW2
+        P1["1. ORDER · Sort batch by causal sequence"]
+        P2["2. APPLY · Reduce event batch into session store"]
+        P3["3. INVALIDATE · Invalidate stale read sets & cancel"]
+        P4["4. DECIDE · CommitGate, TaskStateMachine, responder"]
+        P5["5. EMIT · Emit wire actions (re-verify read sets)"]
+        P6["6. COMMIT · Persist transaction change set"]
+        P7["7. DISPATCH · Submit async worker proposals"]
+        P8["8. LOG · Append decision log trace & metrics"]
+        P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8
     end
 ```
 
