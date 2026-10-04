@@ -92,6 +92,8 @@ LABELS = {
     "text_textreplay_finance_typenoun": ("subset", "3 Oct", "Finance domain (25 recordings) after the <noun>_type rule (b922183): 25/25, every card and bill type in its bare form"),
     "text_textreplay_fix_1003": ("full100", "3 Oct", "Full 100 after the kernel fixes of the 3 Oct fix pass (clarify livelock, null slot delta), judged"),
     "text_textreplay_review_1003": ("full100", "3 Oct", "Full 100 on the code after the review pass (ae03f71), judged: gate before the second voice run. The model alternates \"travel\" and \"travel card\" for card_type between runs (finance_06/10 flip)"),
+    "text_textreplay_cond_1004": ("subset", "4 Oct", "The four conditional scenarios after the conditional-branch fix (8a8122d), stall salvage 45 s: every branch matches the tool results; 0/4 against labels that expect both branches or a branch the result rules out"),
+    "text_textreplay_cond_rule_1004": ("full100", "4 Oct", "Full 100 with the conditional-branch fix and the filter-update rule (4be3f70), stall salvage 45 s, judged: 76/100. Against review_1003: finance_06/10 pass, finance_20/travel_20 differ from their labels (conditional), housing_18 variance; housing_13/20/24/25 now call update_search_filter"),
     "text_textreplay_dash_1003": ("subset", "3 Oct", "The three recordings that dictate codes with \"dash\", after the identifier-joiner rule"),
     "text_textreplay_pets_1003": ("debug", "3 Oct", "Pet-wording prompt line on housing_05/14/15; Gemini was slow, several scenarios hit the 15 s stall salvage"),
     "text_textreplay_pets_base_1003": ("debug", "3 Oct", "Same three ids without the pet-wording line (the A/B baseline); same slowness"),

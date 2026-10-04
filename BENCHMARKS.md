@@ -6,8 +6,8 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 
 | File | One row per | Use it for |
 |---|---|---|
-| `runs.csv` | scored run (84) | score vs time, configuration comparisons |
-| `recordings.csv` | scenario in each text-replay run (2,489) | per-scenario and per-domain pass rates, text-replay latency |
+| `runs.csv` | scored run (86) | score vs time, configuration comparisons |
+| `recordings.csv` | scenario in each text-replay run (2,593) | per-scenario and per-domain pass rates, text-replay latency |
 | `voice_recordings.csv` | recording in each voice run (702) | per-speaker before/after, turn-ending evidence, latency |
 | `failures.csv` | failing recording in an analysed failure set (155) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
@@ -65,6 +65,7 @@ These are reference numbers only: different hardware, models and run dates, and 
 | 2026-09-30 | `text_text_replay_0930_fixes` | judged | 77/100 | 77.0% | 0.959 | 0.807 | Identifier-style value rule + spoken-ID joiner |
 | 2026-10-03 | `text_textreplay_review_1003` | judged | 77/100 | 77.0% | 0.914 | 0.798 | Full 100 on the code after the review pass (ae03f71), judged: gate before the second voice run. The model alternates "travel" and "travel card" for card_type between runs (finance_06/10 flip) |
 | 2026-10-03 | `text_textreplay_fix_1003` | judged | 79/100 | 79.0% | 0.924 | 0.802 | Full 100 after the kernel fixes of the 3 Oct fix pass (clarify livelock, null slot delta), judged |
+| 2026-10-04 | `text_textreplay_cond_rule_1004` | judged | 76/100 | 76.0% | 0.970 | 0.813 | Full 100 with the conditional-branch fix and the filter-update rule (4be3f70), stall salvage 45 s, judged: 76/100. Against review_1003: finance_06/10 pass, finance_20/travel_20 differ from their labels (conditional), housing_18 variance; housing_13/20/24/25 now call update_search_filter |
 
 What moved the score, in order:
 
@@ -484,5 +485,7 @@ The commit column is the code the run used (`-dirty` means uncommitted changes a
 | 2026-10-03 | `text_textreplay_pets_1003` | text_replay | debug | judged | 0/6 | 0.0% | 0.667 | 0.000 | gemini-3.6-flash | 6ddb2c9-dirty |
 | 2026-10-03 | `text_textreplay_pets_base_1003` | text_replay | debug | judged | 0/6 | 0.0% | 0.667 | 0.000 | gemini-3.6-flash | 6ddb2c9-dirty |
 | 2026-10-03 | `text_textreplay_review_1003` | text_replay | full100 | judged | 77/100 | 77.0% | 0.914 | 0.798 | gemini-3.6-flash | 830a672-dirty |
+| 2026-10-04 | `text_textreplay_cond_1004` | text_replay | subset | judged | 0/4 | 0.0% | 0.659 | 0.500 | gemini-3.6-flash | 6f3b5af-dirty |
+| 2026-10-04 | `text_textreplay_cond_rule_1004` | text_replay | full100 | judged | 76/100 | 76.0% | 0.970 | 0.813 | gemini-3.6-flash | 8a8122d-dirty |
 | 2026-10-04 | `text_textreplay_finance_typenoun` | text_replay | subset | judged | 25/25 | 100.0% | 1.000 | 1.000 | gemini-3.6-flash | e296c85-dirty |
 | 2026-10-04 | `text_textreplay_travel_typenoun` | text_replay | subset | judged | 19/20 | 95.0% | 1.000 | 0.950 | gemini-3.6-flash | c6d789a-dirty |

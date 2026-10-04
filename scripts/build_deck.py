@@ -196,7 +196,7 @@ def build(args) -> Presentation:
     title(s, "Stack, rigour and honest limits")
     set_text(body_box(s, 0.9, 1.6, 10.6, 4.9), [
         "Stack: LiveKit Agents · Silero VAD · faster-whisper large-v3-turbo · Kokoro-82M · Gemini 3.6 Flash (hosted) · Python 3.11, Docker.",
-        "622 deterministic tests (stepped clock, scripted model), TraceChecker on every run, adversarial explorer over 19 race scenarios.",
+        "635 deterministic tests (stepped clock, scripted model), TraceChecker on every run, adversarial explorer over 19 race scenarios.",
         "One-command reproduction: pinned FDB commit, sha256-checked data, weights baked into the image.",
         "Limits: Janus follows the published tool contract, not labels that disagree with it (e.g. an undeclared pets_allowed); housing 35%; the hosted model is not bit-reproducible; the extension's device backend is simulated.",
     ], size=20)
