@@ -205,7 +205,7 @@ python scripts/make_demo_token.py
 #    hear itself.
 ```
 
-Tested without a network in `tests/test_devicecare.py`; the camera pump was checked against LiveKit Cloud with a synthetic video track.
+A step-by-step guide for running it on a laptop (no GPU needed), with the lines to say, is [`docs/demo_guide.md`](docs/demo_guide.md); the router image the camera reads is `demo/router_panel.png`. Tested without a network in `tests/test_devicecare.py`; the camera pump was checked against LiveKit Cloud with a synthetic video track.
 
 ## Results
 
@@ -311,7 +311,7 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 | `src/prism_rt/devicecare/` | The extension's tools and knowledge base |
 | `src/prism_rt/observability/` | Decision log, watchdog, metrics, kernel X-ray |
 | `src/prism_rt/sim/` | Deterministic harness, `TraceChecker`, adversarial explorer |
-| `docs/` | Architecture (`prompt 2.txt`), measurements, integration notes, [version history](docs/history.md) |
+| `docs/` | [Architecture walkthrough](docs/architecture_walkthrough.md), design rationale (`prompt 2.txt`), measurements, integration notes, [demo guide](docs/demo_guide.md), [version history](docs/history.md) |
 | `BENCHMARKS.md`, `benchmarks/` | Every benchmark run, the failures behind the misses, and the CSVs they come from |
 | `currentStatus.md`, `CLAUDE.md` | Live project state and working rules |
 
