@@ -9,7 +9,7 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 | `runs.csv` | scored run (84) | score vs time, configuration comparisons |
 | `recordings.csv` | scenario in each text-replay run (2,489) | per-scenario and per-domain pass rates, text-replay latency |
 | `voice_recordings.csv` | recording in each voice run (702) | per-speaker before/after, turn-ending evidence, latency |
-| `failures.csv` | failing recording in an analysed failure set (129) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
+| `failures.csv` | failing recording in an analysed failure set (155) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
 | `other_measurements.csv` | measurement | tests, kernel latency, exploration, speech round trip, reference numbers |
 
@@ -234,7 +234,7 @@ The 2 Oct run changed two things at once (the fix, and local instead of hosted s
 
 ## 5. Failures
 
-The failures behind the misses were classified by reading each recording's decision log, wire log and FDB's report. Four sets, in time order; `benchmarks/failures.csv` has one row per recording. The causes of the 3 Oct set (`full100_2026-10-03`) are heuristic (derived from the recording's calls, wire log and reference transcript, marked `HEURISTIC` in the file) and have not yet been confirmed recording by recording in the decision logs.
+The failures behind the misses were classified by reading each recording's decision log, wire log and FDB's report. Five sets, in time order; `benchmarks/failures.csv` has one row per recording. The causes of the 3 Oct morning set (`full100_2026-10-03`) are heuristic (derived from the recording's calls, wire log and reference transcript, marked `HEURISTIC` in the file); those of the final run (`final_2026-10-03`, 74 / 100) were each confirmed in the recording's decision log.
 
 | Failure set | Recordings | By cause |
 |---|---|---|
@@ -242,11 +242,22 @@ The failures behind the misses were classified by reading each recording's decis
 | `audit_2026-10-01` | 36 | split_turn 10, reasoning 8, label_mismatch 7, schema_gap 6, stt_error 3, value_form 1, infra 1 |
 | `verify_2026-10-02` | 10 | label_mismatch 4, stt_error 3, client_abort 2, value_form 1 |
 | `full100_2026-10-03` | 27 | wrong_arg 12, missing_call 7, split_turn 5, stt_error 3 |
+| `final_2026-10-03` | 26 | undeclared_arg 7, filter_fold 4, stt_error 3, label_wording 2, value_form 2, value_type 2, label_vs_audio 2, required_omitted 2, conditional 1, value_not_said 1 |
 
 ### Classes
 
 | Taxonomy | Class | Definition | Recordings | Status |
 |---|---|---|---|---|
+| `final_2026-10-03` | undeclared_arg | Label expects an argument the published tool does not declare (pets_allowed, category) | 7 | Not fitted: Janus sends declared parameters only (README, Benchmark labels) |
+| `final_2026-10-03` | value_type | Label types update_search_filter.value as bool/int; the tool declares str | 2 | Not fitted: the declared type is sent |
+| `final_2026-10-03` | required_omitted | Label leaves out an argument the tool requires (bedrooms, max_price, city) | 2 | Not fitted: unstated counts/budgets assumed aloud, an unstated city asked for |
+| `final_2026-10-03` | value_not_said | Label holds a value the user never says (a city) | 1 | Not fitted: the agent asks |
+| `final_2026-10-03` | label_vs_audio | Label disagrees with the recording (1800 vs eight hundred; a passport number) | 2 | Not fitted: what was said is used |
+| `final_2026-10-03` | label_wording | Label wording stricter than what was said ("keyboards") | 2 | Not fitted |
+| `final_2026-10-03` | conditional | Conditional request: label expects a branch the tool result rules out | 1 | 4 Oct: only the branch the result supports runs; travel_20 and finance_20, which passed by running every branch, now differ from their labels too |
+| `final_2026-10-03` | filter_fold | A request to change a saved filter answered with a search instead of the filter tool | 4 | 4 Oct: interpreter rule (see BENCHMARKS.md section 5) |
+| `final_2026-10-03` | stt_error | Speech-to-text misheard an identifier or a city | 3 | Open |
+| `final_2026-10-03` | value_form | Model wording of a type value (travel card, drivers_license) | 2 | travel card fixed by the type-noun rule (b922183); drivers_license open |
 | `audit_2026-10-01` | split_turn | Turn ended mid-sentence by the voice bridge; the first half was acted on alone | 10 | Turn splitting fixed 1 Oct; on 2 Oct 6 of 10 of these recordings pass, 4 fail for other reasons (label wording, a client abort) |
 | `audit_2026-10-01` | reasoning | Interpretation error that also fails in text replay (filter update folded into a search, conditionals, typed values) | 9 | Open; several are label-schema questions |
 | `audit_2026-10-01` | label_mismatch | Label disagrees with the audio or is stricter than the judge ("keyboards" vs "keyboard", city never spoken) | 7 | Mostly not recoverable honestly |
@@ -278,7 +289,7 @@ The failures behind the misses were classified by reading each recording's decis
 Reading across the sets:
 
 - **Split turns were the single largest recoverable cause** (10 of the 36 distinct judged failures on the 30 Sep code, and a contributing cause in 30 of the 36). On 2 Oct 6 of those 10 recordings pass; the other 4 no longer split but fail on label wording (3) or a client abort (1).
-- **Label and schema questions are a floor, not a bug list.** Seven failures have labels that disagree with the audio or are stricter than the judge, and six need `pets_allowed`, which the declared schema lacks. Passing them would mean fitting labels rather than following the tool definition, so they are left alone on purpose.
+- **Label and schema questions are a floor, not a bug list.** On the final run, 17 of the 26 failures are recordings whose label disagrees with the published tool definition (an undeclared argument such as `pets_allowed`, a value typed against the declared `str`, a required argument left out), with the recording itself, or with the condition the user set. Passing them would mean fitting labels rather than following the tool definition and the user, so they are left alone on purpose. Organizer guidance (4 Oct 2026): conforming to the open dataset's labels is not required, and such issues are to be documented; the README's [Benchmark labels](README.md#benchmark-labels-and-the-published-tools) section lists each one.
 - **Housing carries most of the remaining reasoning failures** (a filter update folded into a search, values typed as strings where the label has numbers).
 - **Infrastructure noise is real:** client aborts (7 recordings on 30 Sep, 2 on 2 Oct), a stray worker taking rooms, and a Whisper CPU fallback each cost points that were not about the agent.
 

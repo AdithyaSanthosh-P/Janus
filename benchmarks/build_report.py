@@ -201,7 +201,7 @@ def t_premature_by_run():
 
 def t_failure_sets():
     body = []
-    for fs in ("ledger_2026-09-30", "audit_2026-10-01", "verify_2026-10-02", "full100_2026-10-03"):
+    for fs in ("ledger_2026-09-30", "audit_2026-10-01", "verify_2026-10-02", "full100_2026-10-03", "final_2026-10-03"):
         c = collections.Counter(r["cause_class"] for r in FAIL if r["failure_set"] == fs)
         body.append([f"`{fs}`", sum(c.values()), ", ".join(f"{k} {v}" for k, v in c.most_common())])
     return md(["Failure set", "Recordings", "By cause"], body)

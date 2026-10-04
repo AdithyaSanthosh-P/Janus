@@ -123,7 +123,7 @@ The 2 Oct run changed two things at once (the fix, and local instead of hosted s
 
 ## 5. Failures
 
-The failures behind the misses were classified by reading each recording's decision log, wire log and FDB's report. Four sets, in time order; `benchmarks/failures.csv` has one row per recording. The causes of the 3 Oct set (`full100_2026-10-03`) are heuristic (derived from the recording's calls, wire log and reference transcript, marked `HEURISTIC` in the file) and have not yet been confirmed recording by recording in the decision logs.
+The failures behind the misses were classified by reading each recording's decision log, wire log and FDB's report. Five sets, in time order; `benchmarks/failures.csv` has one row per recording. The causes of the 3 Oct morning set (`full100_2026-10-03`) are heuristic (derived from the recording's calls, wire log and reference transcript, marked `HEURISTIC` in the file); those of the final run (`final_2026-10-03`, 74 / 100) were each confirmed in the recording's decision log.
 
 <!--table:failure_sets-->
 
@@ -138,7 +138,7 @@ The failures behind the misses were classified by reading each recording's decis
 Reading across the sets:
 
 - **Split turns were the single largest recoverable cause** (10 of the 36 distinct judged failures on the 30 Sep code, and a contributing cause in 30 of the 36). On 2 Oct 6 of those 10 recordings pass; the other 4 no longer split but fail on label wording (3) or a client abort (1).
-- **Label and schema questions are a floor, not a bug list.** Seven failures have labels that disagree with the audio or are stricter than the judge, and six need `pets_allowed`, which the declared schema lacks. Passing them would mean fitting labels rather than following the tool definition, so they are left alone on purpose.
+- **Label and schema questions are a floor, not a bug list.** On the final run, 17 of the 26 failures are recordings whose label disagrees with the published tool definition (an undeclared argument such as `pets_allowed`, a value typed against the declared `str`, a required argument left out), with the recording itself, or with the condition the user set. Passing them would mean fitting labels rather than following the tool definition and the user, so they are left alone on purpose. Organizer guidance (4 Oct 2026): conforming to the open dataset's labels is not required, and such issues are to be documented; the README's [Benchmark labels](README.md#benchmark-labels-and-the-published-tools) section lists each one.
 - **Housing carries most of the remaining reasoning failures** (a filter update folded into a search, values typed as strings where the label has numbers).
 - **Infrastructure noise is real:** client aborts (7 recordings on 30 Sep, 2 on 2 Oct), a stray worker taking rooms, and a Whisper CPU fallback each cost points that were not about the agent.
 

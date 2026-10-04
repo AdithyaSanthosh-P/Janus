@@ -106,6 +106,16 @@ if os.path.exists(fail_path):
 split_status = (f"Turn splitting fixed 1 Oct; on 2 Oct {split_outcome['pass']} of {sum(split_outcome.values())} of these recordings pass, "
                 f"{split_outcome['fail']} fail for other reasons (label wording, a client abort)")
 C = [
+    ("final_2026-10-03", "undeclared_arg", "Label expects an argument the published tool does not declare (pets_allowed, category)", 7, "Not fitted: Janus sends declared parameters only (README, Benchmark labels)"),
+    ("final_2026-10-03", "value_type", "Label types update_search_filter.value as bool/int; the tool declares str", 2, "Not fitted: the declared type is sent"),
+    ("final_2026-10-03", "required_omitted", "Label leaves out an argument the tool requires (bedrooms, max_price, city)", 2, "Not fitted: unstated counts/budgets assumed aloud, an unstated city asked for"),
+    ("final_2026-10-03", "value_not_said", "Label holds a value the user never says (a city)", 1, "Not fitted: the agent asks"),
+    ("final_2026-10-03", "label_vs_audio", "Label disagrees with the recording (1800 vs eight hundred; a passport number)", 2, "Not fitted: what was said is used"),
+    ("final_2026-10-03", "label_wording", 'Label wording stricter than what was said ("keyboards")', 2, "Not fitted"),
+    ("final_2026-10-03", "conditional", "Conditional request: label expects a branch the tool result rules out", 1, "4 Oct: only the branch the result supports runs; travel_20 and finance_20, which passed by running every branch, now differ from their labels too"),
+    ("final_2026-10-03", "filter_fold", "A request to change a saved filter answered with a search instead of the filter tool", 4, "4 Oct: interpreter rule (see BENCHMARKS.md section 5)"),
+    ("final_2026-10-03", "stt_error", "Speech-to-text misheard an identifier or a city", 3, "Open"),
+    ("final_2026-10-03", "value_form", "Model wording of a type value (travel card, drivers_license)", 2, "travel card fixed by the type-noun rule (b922183); drivers_license open"),
     ("audit_2026-10-01", "split_turn", "Turn ended mid-sentence by the voice bridge; the first half was acted on alone", 10, split_status),
     ("audit_2026-10-01", "reasoning", "Interpretation error that also fails in text replay (filter update folded into a search, conditionals, typed values)", 9, "Open; several are label-schema questions"),
     ("audit_2026-10-01", "label_mismatch", 'Label disagrees with the audio or is stricter than the judge ("keyboards" vs "keyboard", city never spoken)', 7, "Mostly not recoverable honestly"),

@@ -18,7 +18,7 @@ Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptib
 
 ## Contents
 
-1. [Reproduce the benchmark](#reproduce-the-benchmark-one-command) · 2. [Architecture](#architecture) · 3. [How an interruption flows](#how-an-interruption-flows) · 4. [Extension: device care](#extension-camera-grounded-device-care) · 5. [Results](#results) · 6. [Keys](#keys) · 7. [Tests](#tests) · 8. [Limitations](#limitations) · 9. [Repo map](#repo-map) · 10. [Citations](#citations)
+1. [Reproduce the benchmark](#reproduce-the-benchmark-one-command) · 2. [Architecture](#architecture) · 3. [How an interruption flows](#how-an-interruption-flows) · 4. [Extension: device care](#extension-camera-grounded-device-care) · 5. [Results](#results) · 6. [Benchmark labels](#benchmark-labels-and-the-published-tools) · 7. [Keys](#keys) · 8. [Tests](#tests) · 9. [Limitations](#limitations) · 10. [Repo map](#repo-map) · 11. [Citations](#citations)
 
 ## Reproduce the benchmark (one command)
 
@@ -241,6 +241,23 @@ Notes on the table:
 - **Self-correction** ("…no wait, make it Friday") is the category the paper finds hardest for every system (Table 3, Pass@1 per category: GPT-Realtime 0.588, Gemini Live 3.1 0.353, the cascaded Whisper pipeline 0.176). It is what the kernel is built for: **0.824** in text replay, and **0.765** on the final voice run (0.412 on the 30 Sep run), against 0.176 for the published cascaded pipeline, the same family as ours.
 - The organizers' own re-run is what scores. `./reproduce.sh` produces the voice-path number on their hardware.
 
+## Benchmark labels and the published tools
+
+FDB-v3 scores each tool call against a gold label. In some recordings the label disagrees with the published tool definitions (the function signatures FDB's own agent exposes, `v3/lk_agent_tool.py` at the pinned commit), with the recording itself, or with the condition the user stated. **Janus follows the published tool contract and what the user actually said; it does not fit the labels.** Organizer guidance (4 Oct 2026): conforming to the open dataset's labels is not required, and such issues are to be documented. This section is that record. On the final voice run (74 / 100), 17 of the 26 failures are in this table.
+
+| Issue | The label expects | The published tool / the recording | What Janus does | Recordings (final voice run) |
+|---|---|---|---|---|
+| Argument the tool does not declare | `search_apartments(…, pets_allowed=True)` | `search_apartments(city, bedrooms, max_price)`: no pet parameter | Calls the tool with its declared parameters and says the pet filter is not available | housing_05, housing_14, housing_15 (both speakers each) |
+| Argument the tool does not declare, word the user did not say | `search_products(query="gift", category="electronics")` | `search_products(query, max_price)`: no category; "gift" is not in the recording | `search_products(query="electronics")` | ecommerce_12 |
+| Value of a different type | `update_search_filter(filter_name="pets_allowed", value=True)`; `value=3000` | `value: str` | Sends the declared type: `"true"`, `"3000"` | housing_08, housing_22 |
+| Required argument left out of the label | `search_apartments(city="Dallas")`, `search_apartments(bedrooms=3)` | `city`, `bedrooms` and `max_price` are all required, with no defaults | An unstated count or budget gets the least restrictive value, said aloud ("assuming one bedroom"); the judge counts it as an extra argument. An unstated city is asked for | housing_05, housing_15, housing_20, housing_22; housing_21 (no city: asks) |
+| Value the user never said | `city="Austin"` | No city in the recording | Asks which city | housing_11 |
+| Label disagrees with the recording | `max_price=1800`; `doc_number="P9-9-9-90011"` | The user says "eight hundred"; "P-8-8-9-9-0-0-1-1" | Uses what was said | housing_18, travel_02 |
+| Label wording | `query="mechanical keyboards"` | The user asks for "a mechanical keyboard" | `query="mechanical keyboard"` | ecommerce_08 (both speakers) |
+| Conditional request | Both branches (travel_20); the branch the tool result rules out (ecommerce_20: add to cart at $99.99 under "if you find one under $50"); a change the user made conditional on their own judgment (finance_20: "if the rate looks good to me") | The condition the user set, and the tool's real result | Runs only the branch the result supports and says what it skipped and why (since 4 Oct; before that it ran every branch, so travel_20 and finance_20 passed) | ecommerce_20, travel_20, finance_20 |
+
+Matching these labels would mean sending arguments the tool does not declare, typing values against the declared type, inventing values the user did not say, or carrying out an action the user ruled out. The other nine misses on the final run are ours: a request to change a saved filter ("raise my max price to 3000") answered with a search instead of `update_search_filter` (4: housing_13, housing_24 on both speakers, housing_25; those labels also leave out required arguments), speech-to-text errors (3: "ZAT" for "CAT", "Mulan" for "Milan", a garbled product id) and value wording the model chose (2: `travel card`, fixed since, and `drivers_license`).
+
 ## Keys
 
 Copy `.env.example` to `.env`. It is git-ignored; keys are never in the repo.
@@ -272,10 +289,10 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 
 ## Limitations
 
-- **Voice results vary from run to run.** Hosted models, hosted speech-to-text and the benchmark's mock-tool timing move single recordings either way: two runs of near-identical code on 3 Oct scored 73 % and 65 % (the 65 % run exposed the early-turn-close cause above, now fixed), and the final code scored 74 %. Treat any single figure as within a few points. The move from local to hosted speech-to-text is part of the gain over the 30 Sep run (42 %). Housing (38.5 %) remains the weak spot: most of its failures are expected arguments the published tool does not declare (`pets_allowed`), filter values typed differently from the tool's string parameter, or values the user never stated. The Docker image was rebuilt from scratch, but these runs used the native path; `./reproduce.sh` has not been run with a GPU end to end. The organizers' re-run measures the current code.
+- **Voice results vary from run to run.** Hosted models, hosted speech-to-text and the benchmark's mock-tool timing move single recordings either way: two runs of near-identical code on 3 Oct scored 73 % and 65 % (the 65 % run exposed the early-turn-close cause above, now fixed), and the final code scored 74 %. Treat any single figure as within a few points. The move from local to hosted speech-to-text is part of the gain over the 30 Sep run (42 %). Housing (38.5 %) remains the weak spot: most of its failures are labels that disagree with the published tools or the recording (see [Benchmark labels](#benchmark-labels-and-the-published-tools)). The Docker image was rebuilt from scratch, but these runs used the native path; `./reproduce.sh` has not been run with a GPU end to end. The organizers' re-run measures the current code.
 - **Our voice runs used the native path** (`scripts/fdb_v3/native_run.sh`, the same inner script `./reproduce.sh` runs in its container) on a cloud GPU without Docker; the Docker wrapper itself is verified in its parts.
 - **Speech-to-text still mishears some names** (e.g. a city). Hosted transcription is the default for that reason; the local faster-whisper option mishears more.
-- **Housing (35 %)** is the weakest domain; argument values in long constraint-heavy requests are the main loss.
+- **Housing** (35 % in text replay, 38.5 % on voice) is the weakest domain; most of its misses are the label disagreements in [Benchmark labels](#benchmark-labels-and-the-published-tools), the rest argument values in long, constraint-heavy requests.
 - **The model is a hosted API.** Temperature 0 does not make it bit-reproducible, and evaluation needs network access to Gemini.
 - **No cancel or modify tool.** A booking that went through cannot be changed; the agent says so and will not make a second one without an explicit yes, but it cannot undo the first.
 - **Camera:** one frame per second, one still image per question. It cannot tell a *blinking* light from a solid one, so the user says that part.
