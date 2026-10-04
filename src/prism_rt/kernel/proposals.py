@@ -14,6 +14,7 @@ import dataclasses
 import re
 
 from prism_rt.model.types import (
+    ActionCondition,
     ActionRef,
     ActionSpec,
     AsrSegment,
@@ -63,7 +64,19 @@ def _parse_actions(raw_actions) -> tuple[ActionSpec, ...]:
                     )
                 )
             assumed = tuple(str(p) for p in (raw.get("assumed") or ()))
-            parsed.append(ActionSpec(tool=tool, args={str(k): v for k, v in args.items()}, refs=tuple(refs), assumed=assumed))
+            condition = None
+            only_if = raw.get("only_if")
+            if only_if:
+                source = only_if["from"]
+                test = str(only_if.get("test") or "").strip()
+                if isinstance(source, bool) or not test:
+                    return ()
+                condition = ActionCondition(source=int(source), test=test)
+            parsed.append(
+                ActionSpec(
+                    tool=tool, args={str(k): v for k, v in args.items()}, refs=tuple(refs), assumed=assumed, condition=condition
+                )
+            )
         return tuple(parsed)
     except (KeyError, TypeError, ValueError, AttributeError):
         return ()

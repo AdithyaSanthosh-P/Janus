@@ -23,7 +23,7 @@ from prism_rt.kernel.interpret_apply import (
 )
 from prism_rt.kernel.perception import PerceptionScheduler
 from prism_rt.kernel.action_plans import coerce_slot_value, coerce_to_schema, is_compiled, tool_props, write_bind_facts
-from prism_rt.kernel.action_plans import bind_failure_key, valid_bind_fact
+from prism_rt.kernel.action_plans import bind_failure_key, cond_key, valid_bind_fact, write_condition_fact
 from prism_rt.kernel.proposals import (
     fix_step_kind,
     parse_asr,
@@ -634,6 +634,16 @@ def _apply_worker_result(env: Envelope, txn: StoreTxn, now_us: int, step_no: int
         late = [p for p, b in step.bindings.items() if b.kind == BindingKind.LATE]
         chosen = proposal.get("args") if isinstance(proposal, dict) else None
         props = tool_props(txn.store, step.tool)[0]
+        if step.condition is not None and valid_bind_fact(txn.store, cond_key(job.goal_id, job.target)) is None:
+            # Config.conditional_actions_enabled: this job also checked the
+            # step's condition against the source's real result.
+            holds = proposal.get("proceed") if isinstance(proposal, dict) else None
+            if not isinstance(holds, bool):
+                _record_bind_failure(txn, job, now_us, step_no, event_id=env.event_id)
+                return
+            write_condition_fact(txn, job.goal_id, job.target, holds, job.read_set, rule="reducers.bind_condition", now_us=now_us, step_no=step_no, event_id=env.event_id)
+            if not holds:
+                return  # skipped: its chained values are never needed
         values: dict = {}
         for param in late:
             value = chosen.get(param) if isinstance(chosen, dict) else None

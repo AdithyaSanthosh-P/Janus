@@ -106,6 +106,9 @@ def fdb_v3_config(**overrides) -> Config:
     - partial_failure_continues (also in demo_config): one failed action no
       longer abandons the whole goal; actions that read its result fail with
       it, the rest still run, and the answer says what failed.
+    - conditional_actions_enabled (also in demo_config): "if X, do A,
+      otherwise B" runs only the branch the earlier result supports, checked
+      against that result; the answer says what was not done and why.
 
     `**overrides` lets a caller tune settle_ms/settle_ms_incomplete/etc.
     per run without editing this function -- passed straight to
@@ -141,6 +144,7 @@ def fdb_v3_config(**overrides) -> Config:
         vad_floor_enabled=True,
         parallel_independent_actions=True,
         partial_failure_continues=True,
+        conditional_actions_enabled=True,
     )
     return dataclasses.replace(base, **overrides) if overrides else base
 
@@ -189,6 +193,7 @@ def demo_config(**overrides) -> Config:
         merge_split_turns_enabled=True,
         parallel_independent_actions=True,
         partial_failure_continues=True,
+        conditional_actions_enabled=True,
         watchdog_timeout_ms=0,
     )
     return dataclasses.replace(base, **overrides) if overrides else base

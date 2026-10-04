@@ -17,6 +17,13 @@ writes is bound by PlanExecutor in the same step. Two ways to decide:
   value for it -- no model call;
 - otherwise a `JobKind.BIND` job (`workers/binder.py`) picks the values
   from the upstream results; `kernel/reducers.py` writes them.
+A conditional step (Config.conditional_actions_enabled: "if one is under
+$50, add two; otherwise track my order") is decided the same way, always
+by a BIND job: the job checks the step's `condition.test` against the
+source step's real result and the verdict lands at `cond.<gid>.<step>`
+(`action_plans.write_condition_fact`), grounded like a bind value. A step
+whose condition source failed or was itself skipped cannot be checked and
+is skipped -- an action the user made conditional never runs unverified.
 Either way the value lands at `bind.<gid>.<step>.<param>` as a DERIVED fact
 grounded in the upstream results (`action_plans.write_bind_facts`), so an
 upstream re-run makes it stale through the ordinary invalidation path and
@@ -30,7 +37,18 @@ from __future__ import annotations
 
 import re
 
-from prism_rt.kernel.action_plans import bind_failure_key, bind_key, coerce_to_schema, tool_props, valid_bind_fact, write_bind_facts
+from prism_rt.kernel.action_plans import (
+    bind_failure_key,
+    bind_key,
+    coerce_to_schema,
+    cond_key,
+    step_failed,
+    step_skipped,
+    tool_props,
+    valid_bind_fact,
+    write_bind_facts,
+    write_condition_fact,
+)
 from prism_rt.kernel.executor import PlanExecutor, _bfs_find_field
 from prism_rt.kernel.interpret_apply import active_goal_id
 from prism_rt.kernel.task import DispatchRequest
@@ -72,11 +90,19 @@ class BindScheduler:
         requests: list[DispatchRequest] = []
         for step in plan.steps:
             late = {p: b for p, b in step.bindings.items() if b.kind == BindingKind.LATE}
-            if not late:
+            undecided = step.condition is not None and valid_bind_fact(store, cond_key(gid, step.step_key)) is None
+            if step_skipped(store, gid, step.step_key):
+                continue  # its condition does not hold: nothing to bind
+            if not undecided and all(valid_bind_fact(store, bind_key(gid, step.step_key, p)) is not None for p in late):
                 continue
-            if all(valid_bind_fact(store, bind_key(gid, step.step_key, p)) is not None for p in late):
-                continue
-            sources = sorted({b.step_key for b in late.values()})
+            if undecided:
+                source = step.condition.step_key
+                if step_failed(store, gid, source) or step_skipped(store, gid, source):
+                    # Nothing to check the condition against: not run.
+                    read_set = store.facts.build_read_set(["goal.active", "catalog.version", cond_key(gid, source), f"step_failed.{gid}.{source}"])
+                    write_condition_fact(store, gid, step.step_key, False, read_set, rule="binder.condition_unverifiable", now_us=now_us, step_no=step_no)
+                    continue
+            sources = sorted({b.step_key for b in late.values()} | ({step.condition.step_key} if undecided else set()))
             if not all(_step_done(store, gid, s) for s in sources):
                 continue
             if any(j.target == step.step_key for j in store.jobs.running_by_kind_goal(JobKind.BIND, gid)):
@@ -90,11 +116,11 @@ class BindScheduler:
                 return requests
 
             read_set = self._read_set(store, gid, sources)
-            fast = self._fast_path(store, gid, step, late)
+            fast = None if undecided else self._fast_path(store, gid, step, late)
             if fast is not None:
                 write_bind_facts(store, gid, step.step_key, fast, read_set, rule="binder.fast_path", now_us=now_us, step_no=step_no)
                 continue
-            requests.append(self._dispatch(store, gid, step, late, sources, read_set))
+            requests.append(self._dispatch(store, gid, step, late, sources, read_set, condition=step.condition.test if undecided else None))
         return requests
 
     def _read_set(self, store, goal_id: str, sources: list[str]):
@@ -124,7 +150,7 @@ class BindScheduler:
             values[param] = coerce_to_schema(found.value, props.get(param) or {}, param)
         return values
 
-    def _dispatch(self, store, goal_id: str, step, late: dict, sources: list[str], read_set) -> DispatchRequest:
+    def _dispatch(self, store, goal_id: str, step, late: dict, sources: list[str], read_set, *, condition: str | None = None) -> DispatchRequest:
         props = tool_props(store, step.tool)[0]
         plan_steps = {s.step_key: s for s in store.plans.current(goal_id).steps}
         known_args = {}
@@ -160,6 +186,8 @@ class BindScheduler:
             ],
             "earlier_results": earlier,
         }
+        if condition is not None:
+            view["condition"] = condition
         job_id = store.ids.next("job")
         store.jobs.create(JobRecord(job_id=job_id, kind=JobKind.BIND, goal_id=goal_id, turn_id=None, read_set=read_set, target=step.step_key))
         return DispatchRequest(job_id=job_id, kind=JobKind.BIND, view=view, goal_id=goal_id, turn_id=None, read_set=read_set)

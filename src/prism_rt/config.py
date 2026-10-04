@@ -351,6 +351,15 @@ class Config:
     # abandoned at the first failure -- found by the 1 Oct audit (housing_24:
     # one failed update dropped the search and commute after it).
     partial_failure_continues: bool = False
+    # A conditional request ("if one is under $50, add two; otherwise track
+    # my order") runs only the branch the earlier action's real result
+    # supports: the Interpreter marks each conditional action with the
+    # earlier action that decides it and the test in words, and
+    # kernel/binder.py checks the test against that action's result before
+    # the step may run. Off: every action mentioned is run (found in the
+    # 3 Oct voice run, ecommerce_20: both branches ran, and a $99.99 item
+    # was added to the cart under "only if it's under $50").
+    conditional_actions_enabled: bool = False
     vad_floor_max_ms: int = 15_000
 
     # Day 2 (docs/fdb_v3_implementation_plan.md §5.2): G4 (commit_intent)

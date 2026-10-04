@@ -18,7 +18,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from prism_rt.kernel.action_plans import bind_key, step_failed, step_failed_key, valid_bind_fact
+from prism_rt.kernel.action_plans import (
+    bind_key,
+    cond_key,
+    condition_value,
+    step_failed,
+    step_failed_key,
+    step_skipped,
+    valid_bind_fact,
+    write_condition_fact,
+)
 from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.interpret_apply import active_goal_id
 from prism_rt.kernel.replies import duplicate_write_text
@@ -217,6 +226,18 @@ class PlanExecutor:
         for step in plan.steps:
             if step_failed(store, gid, step.step_key):
                 continue  # failed on its own (Config.partial_failure_continues)
+            if step_skipped(store, gid, step.step_key):
+                continue  # its condition does not hold (Config.conditional_actions_enabled)
+            skipped_input = next(
+                (b.step_key for b in step.bindings.values() if b.step_key and step_skipped(store, gid, b.step_key)), None
+            )
+            if skipped_input is not None:
+                # It reads the result of an action that was not run: not run either.
+                read_set = store.facts.build_read_set(["goal.active", "catalog.version", cond_key(gid, skipped_input)])
+                write_condition_fact(store, gid, step.step_key, False, read_set, rule="executor.input_skipped", now_us=now_us, step_no=step_no)
+                continue
+            if condition_value(store, gid, step) is None:
+                continue  # kernel/binder.py has not checked its condition yet
             failed_input = next(
                 (b.step_key for b in step.bindings.values() if b.step_key and step_failed(store, gid, b.step_key)), None
             )
@@ -360,7 +381,7 @@ class PlanExecutor:
 
             pending = [
                 dep for dep in step.after
-                if not (self._step_done(store, gid, dep) or step_failed(store, gid, dep))  # failed: not read (checked above)
+                if not (self._step_done(store, gid, dep) or step_failed(store, gid, dep) or step_skipped(store, gid, dep))  # failed/skipped: not read (checked above)
             ]
             if pending:
                 held_by_question = store.config.parallel_independent_actions and all(dep in waiting_on_user for dep in pending)
@@ -693,6 +714,11 @@ class PlanExecutor:
                 args[param] = value
                 read_keys.append(result_key)
                 continue
+
+        if step.condition is not None:
+            # The verdict this call runs under: if a re-run upstream result
+            # changes it, the call is stale like any other input change.
+            read_keys.append(cond_key(goal_id, step.step_key))
 
         # V2: absence entries — an optional constraint the step's validity
         # implicitly assumes is unset (I-12). Only added while it's still

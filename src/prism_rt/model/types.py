@@ -359,16 +359,30 @@ class ActionRef:
 
 
 @dataclass(frozen=True)
+class ActionCondition:
+    """Config.conditional_actions_enabled: an action the user made
+    conditional on what an earlier action finds ("if one is under $50, add
+    two; otherwise track my order"). `source` is that earlier action's index
+    in `TurnInterpretation.actions`; `test` is the condition in words, which
+    `kernel/binder.py` has checked against the source's real result."""
+
+    source: int
+    test: str
+
+
+@dataclass(frozen=True)
 class ActionSpec:
     """S3 (`kernel/action_plans.py`): one tool call the turn asked for, in
     the order asked -- its own literal `args` (so the same tool twice
-    never collides on one slot name), chained `refs`, and the parameter
-    names whose value the model `assumed` rather than heard."""
+    never collides on one slot name), chained `refs`, the parameter
+    names whose value the model `assumed` rather than heard, and the
+    `condition` it runs under, if any."""
 
     tool: str
     args: dict = field(default_factory=dict)
     refs: tuple[ActionRef, ...] = ()
     assumed: tuple[str, ...] = ()
+    condition: ActionCondition | None = None
 
 
 @dataclass(frozen=True)
@@ -424,6 +438,15 @@ class Binding:
 
 
 @dataclass(frozen=True)
+class StepCondition:
+    """A compiled step that runs only if `test` holds for `step_key`'s
+    result (see ActionCondition)."""
+
+    step_key: str
+    test: str
+
+
+@dataclass(frozen=True)
 class PlanStep:
     step_key: str  # digest of (goal_id, tool, binding template) — stable across revisions
     tool: str
@@ -437,6 +460,7 @@ class PlanStep:
     # S3: "a<i>" for a step compiled from interpreted action i -- its own
     # slots live at slot.<gid>.a<i>.<param>, not the flat slot.<gid>.<param>.
     slot_prefix: str | None = None
+    condition: StepCondition | None = None
 
 
 @dataclass(frozen=True)

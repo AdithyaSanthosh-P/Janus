@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from config.templates import WATCHDOG_FALLBACK
-from prism_rt.kernel.action_plans import active_actions_view, finished_actions_view, is_compiled, step_failed
+from prism_rt.kernel.action_plans import active_actions_view, finished_actions_view, is_compiled, step_failed, step_skipped
 from prism_rt.kernel.replies import last_finished_goal
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, merged_turns, user_content_pending
 from prism_rt.kernel.replies import salvage_text
@@ -256,6 +256,8 @@ class TaskStateMachine:
         for step in plan.steps:
             if step_failed(store, goal_id, step.step_key):
                 continue  # failed on its own; reported as not done (Config.partial_failure_continues)
+            if step_skipped(store, goal_id, step.step_key):
+                continue  # its condition does not hold; reported as not done and why
             latest = store.call_ledger.latest_by_step(goal_id, step.step_key)
             if latest is None or latest.status != CallStatus.CONSUMED:
                 return False
@@ -411,6 +413,8 @@ class TaskStateMachine:
         if store.config.action_plans_enabled:
             view["action_plans_enabled"] = True
             view["active_actions"] = active_actions_view(store, gid)
+            if store.config.conditional_actions_enabled:
+                view["conditional_actions_enabled"] = True
         if store.config.fill_unstated_required_enabled:
             view["fill_unstated_required_enabled"] = True
         if store.config.conversational_replies_enabled:
@@ -546,10 +550,15 @@ class TaskStateMachine:
                         effects[step.step_key] = effect.status.value
 
         not_done: list[str] = []
+        skipped: list[dict] = []
         if plan is not None and plan.origin == "compiled":
             # S3: per step, not per tool name -- the same tool asked for
             # twice with only one call made is still one action not done.
             for step in plan.steps:
+                if step_skipped(store, goal_id, step.step_key):
+                    read_keys.append(f"cond.{goal_id}.{step.step_key}")
+                    skipped.append({"tool": step.tool, "only_if": step.condition.test if step.condition else "an earlier action it needed was not run"})
+                    continue
                 call = store.call_ledger.latest_by_step(goal_id, step.step_key)
                 if call is None or call.status != CallStatus.CONSUMED:
                     not_done.append(step.tool)
@@ -566,6 +575,8 @@ class TaskStateMachine:
             "executed_calls": executed_calls,
             "not_done": not_done,
         }
+        if skipped:
+            view["skipped"] = skipped
         read_set = store.facts.build_read_set(sorted(set(read_keys)))
         return self._make_request(store, JobKind.COMPOSE, view, goal_id, None, read_set)
 

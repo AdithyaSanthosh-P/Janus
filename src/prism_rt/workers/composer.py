@@ -47,6 +47,13 @@ def build_prompt(view: dict) -> str:
             honesty_block += f" Plainly say that {not_done} was not completed.\n"
         else:
             honesty_block += "\n"
+        skipped = view.get("skipped")
+        if skipped:
+            honesty_block += (
+                f"skipped (deliberately NOT run, because the condition the user set did not hold): {skipped}. "
+                "Say briefly that each was not done and why, from the results (e.g. \"the earliest table is at 9, "
+                "so I didn't book it\"); if the condition was the user's own call, offer to do it if they want.\n"
+            )
     return (
         f"facts: {view.get('facts')}\n"
         f"effects: {view.get('effects')}\n"

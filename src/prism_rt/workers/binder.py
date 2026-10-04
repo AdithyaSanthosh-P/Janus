@@ -7,6 +7,12 @@ result -- "the cheapest one", "from there", "whatever you find". Same
 must come from the results: when the field the user's words point at
 doesn't exist there (e.g. an address the result never includes), the
 chosen item's own identifier is the honest pick, never an invented value.
+
+A conditional step (`view["condition"]`) is also checked here: `proceed`
+says whether the user's condition holds for the earlier results. A
+condition the results cannot settle (a matter of the user's own taste)
+does not hold -- the kernel then skips the action and the answer says so,
+rather than doing something the user only might have wanted.
 """
 
 from __future__ import annotations
@@ -17,7 +23,7 @@ from prism_rt.workers.gateway import ModelGateway
 
 BIND_SCHEMA = {
     "type": "object",
-    "properties": {"args": {"type": "object"}},
+    "properties": {"args": {"type": "object"}, "proceed": {"type": "boolean"}},
     "required": ["args"],
 }
 
@@ -29,6 +35,25 @@ def build_prompt(view: dict) -> str:
         + (f", probably its {f['field']!r} field" if f.get("field") else "")
         for f in view.get("fill") or []
     )
+    condition = view.get("condition")
+    if condition:
+        check = (
+            f"The next call runs ONLY IF this holds: {condition!r}. Check it against "
+            "the earlier results' actual values (prices, times, rates, counts) and set "
+            "proceed to true if it holds, false if it does not. If the results cannot "
+            "settle it (it depends on the user's own opinion, or the value is not in "
+            "the results), proceed is false. When proceed is false, args may be {}.\n"
+        )
+        if not view.get("fill"):
+            return (
+                f"user request: {view.get('request', '')!r}\n"
+                f"next call: {view.get('tool')} with args {json.dumps(view.get('known_args') or {})}\n"
+                f"earlier results: {json.dumps(view.get('earlier_results') or [], default=str)}\n"
+                + check
+                + "Return {\"proceed\": <true|false>, \"args\": {}}."
+            )
+    else:
+        check = ""
     return (
         f"user request: {view.get('request', '')!r}\n"
         f"next call: {view.get('tool')} with already-known args {json.dumps(view.get('known_args') or {})}\n"
@@ -38,7 +63,8 @@ def build_prompt(view: dict) -> str:
         "found, ...) and copy its value exactly as it appears in the results. "
         "If the named field doesn't exist, use that item's own identifier "
         "(e.g. its id or name) -- never invent a value that is not in the "
-        "results. Return {\"args\": {<param>: <value>}}."
+        "results. "
+        + (check + "Return {\"proceed\": <true|false>, \"args\": {<param>: <value>}}." if check else "Return {\"args\": {<param>: <value>}}.")
     )
 
 

@@ -33,6 +33,7 @@ import re
 from prism_rt.canonical import canonicalize_spoken_id, normalize_value, to_canonical_json
 from prism_rt.kernel.proposals import ACTION_SLOT_NAME, fix_step_kind  # noqa: F401 -- re-exported
 from prism_rt.model.types import (
+    ActionCondition,
     ActionRef,
     ActionSpec,
     Binding,
@@ -44,6 +45,7 @@ from prism_rt.model.types import (
     Provenance,
     SlotDelta,
     SlotOp,
+    StepCondition,
     StepKind,
     TurnInterpretation,
 )
@@ -205,6 +207,41 @@ def bind_failure_key(goal_id: str, step_key: str) -> str:
     return f"bindfail.{goal_id}.{step_key}"
 
 
+def cond_key(goal_id: str, step_key: str) -> str:
+    """Where kernel/binder.py puts a conditional step's verdict (True: run
+    it; False: its condition does not hold, skip it)."""
+    return f"cond.{goal_id}.{step_key}"
+
+
+def condition_value(store, goal_id: str, step) -> bool | None:
+    """True for an unconditional step; for a conditional one, the verdict
+    while it is still grounded in the result it was checked against, else
+    None (not decided yet -- the step waits)."""
+    if step.condition is None:
+        return True
+    fact = valid_bind_fact(store, cond_key(goal_id, step.step_key))
+    return None if fact is None else bool(fact.value)
+
+
+def step_skipped(store, goal_id: str, step_key: str) -> bool:
+    """Config.conditional_actions_enabled: this step's condition was checked
+    against the real result and does not hold -- not run, and not a failure."""
+    fact = valid_bind_fact(store, cond_key(goal_id, step_key))
+    return fact is not None and fact.value is False
+
+
+def write_condition_fact(txn, goal_id: str, step_key: str, holds: bool, read_set, *, rule: str, now_us: int, step_no: int, event_id: str | None = None) -> None:
+    """Same grounding contract as `write_bind_facts`: an upstream re-run
+    makes the verdict stale and the condition is checked again."""
+    key = cond_key(goal_id, step_key)
+    existing = txn.facts.get(key)
+    if existing is not None and existing.status != FactStatus.RETRACTED and existing.provenance.derivation_read_set != read_set:
+        txn.facts.retract(key, rule=f"{rule}.regrounded")
+    provenance = Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us, derivation_read_set=read_set)
+    txn.facts.set(key, bool(holds), FactStatus.DERIVED, provenance, rule=rule)
+    txn.facts.retract(bind_failure_key(goal_id, step_key), rule=f"{rule}.failures_cleared")
+
+
 def write_bind_facts(txn, goal_id: str, step_key: str, values: dict, read_set, *, rule: str, now_us: int, step_no: int, event_id: str | None = None) -> None:
     """DERIVED with the upstream grounding as `derivation_read_set`, so the
     invalidation fixpoint retracts them if an upstream result changes.
@@ -265,8 +302,11 @@ def _refs_valid(actions, first_index: int, source_map) -> bool:
     Checked before anything is written."""
     for offset, action in enumerate(actions):
         index = first_index + offset
-        for ref in action.refs:
-            source = source_map(ref.source)
+        sources = [ref.source for ref in action.refs]
+        if action.condition is not None:
+            sources.append(action.condition.source)
+        for raw in sources:
+            source = source_map(raw)
             if source is None or not 0 <= source < index:
                 return False
     return True
@@ -318,7 +358,12 @@ def _build_steps(txn, goal_id: str, actions, first_index: int, now_us: int, step
             # key path asks (or Q5 re-extracts) on this action's own key.
             bindings.setdefault(param, Binding(kind=BindingKind.FACT, fact_key=f"slot.$G.{prefix}.{param}"))
         after = (f"a{index - 1}",) if index > 0 else ()
-        step = PlanStep(step_key=prefix, tool=action.tool, kind=StepKind.WRITE, bindings=bindings, after=after, slot_prefix=prefix)
+        condition = None
+        if action.condition is not None and config.conditional_actions_enabled:
+            condition = StepCondition(step_key=f"a{source_map(action.condition.source)}", test=action.condition.test)
+        step = PlanStep(
+            step_key=prefix, tool=action.tool, kind=StepKind.WRITE, bindings=bindings, after=after, slot_prefix=prefix, condition=condition
+        )
         steps.append(fix_step_kind(step, txn.store.catalog))
     return steps
 
@@ -336,6 +381,7 @@ def _dedupe(actions) -> tuple[list[ActionSpec], dict[int, int]]:
             "tool": action.tool,
             "args": action.args,
             "refs": [[r.param, r.source, r.field, r.select] for r in action.refs],
+            "condition": [action.condition.source, action.condition.test] if action.condition else None,
         })
         if key in seen:
             index_map[original] = seen[key]
@@ -510,7 +556,10 @@ def active_actions_view(store, goal_id: str | None) -> list[dict]:
             fact = store.facts.get(f"slot.{goal_id}.{step.slot_prefix}.{param}")
             if fact is not None and fact.status != FactStatus.RETRACTED:
                 args[param] = fact.value
-        view.append({"action": step.slot_prefix, "tool": step.tool, "args": args})
+        entry = {"action": step.slot_prefix, "tool": step.tool, "args": args}
+        if step.condition is not None:
+            entry["only_if"] = {"from": int(step.condition.step_key[1:]), "test": step.condition.test}
+        view.append(entry)
     return view
 
 
@@ -586,7 +635,10 @@ def redo_actions(store, goal_id: str, deltas) -> list[ActionSpec] | None:
             fact = store.facts.get(f"slot.{goal_id}.{step.slot_prefix}.{param}")
             if fact is not None and fact.status != FactStatus.RETRACTED:
                 args[param] = fact.value
-        specs.append({"tool": step.tool, "args": args, "refs": refs, "props": _tool_props(store, step.tool)[0]})
+        condition = None
+        if step.condition is not None:
+            condition = ActionCondition(source=int(step.condition.step_key[1:]), test=step.condition.test)
+        specs.append({"tool": step.tool, "args": args, "refs": refs, "condition": condition, "props": _tool_props(store, step.tool)[0]})
     applied = False
     for delta in deltas:
         if delta.scope == "session" or delta.op != SlotOp.SET:
@@ -605,4 +657,4 @@ def redo_actions(store, goal_id: str, deltas) -> list[ActionSpec] | None:
         applied = True
     if not applied:
         return None
-    return [ActionSpec(tool=s["tool"], args=s["args"], refs=tuple(s["refs"])) for s in specs]
+    return [ActionSpec(tool=s["tool"], args=s["args"], refs=tuple(s["refs"]), condition=s["condition"]) for s in specs]

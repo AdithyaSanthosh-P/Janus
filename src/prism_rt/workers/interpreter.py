@@ -77,6 +77,13 @@ INTERPRET_SCHEMA_S3 = {
                         },
                     },
                     "assumed": {"type": "array", "items": {"type": "string"}},
+                    "only_if": {
+                        "type": ["object", "null"],
+                        "properties": {
+                            "from": {"type": "integer"},
+                            "test": {"type": "string"},
+                        },
+                    },
                 },
             },
         },
@@ -123,9 +130,21 @@ def _action_plans_block(view: dict) -> str:
         "is not an arg. Add {\"param\": <name>, \"from\": <that earlier "
         "action's 0-based index>, \"field\": <the result field holding it, if "
         "obvious, else null>, \"select\": <which item, in a few words>}.\n"
-        "- If the user makes an action conditional (\"if it's under 50, do X, "
-        "otherwise do Y\"), still list every action they mention, in order.\n"
-        "- Leave out an action the user explicitly called off.\n"
+        + (
+            "- If the user makes an action conditional on what an earlier action "
+            "finds (\"if a table is free at 7, book it; otherwise put me on the "
+            "waitlist\"), still list every action they mention, in order, and "
+            "give each conditional one only_if: {\"from\": <0-based index of the "
+            "earlier action whose result decides it>, \"test\": <the condition, "
+            "in a few words, as something the result can show, e.g. \"a table is "
+            "free at 7\">}. The \"otherwise\" action gets the opposite test (\"no "
+            "table is free at 7\"). An action that runs either way has no "
+            "only_if.\n"
+            if view.get("conditional_actions_enabled")
+            else "- If the user makes an action conditional (\"if it's under 50, do X, "
+            "otherwise do Y\"), still list every action they mention, in order.\n"
+        )
+        + "- Leave out an action the user explicitly called off.\n"
         "- If the user asks to book, buy, send or change something, include "
         "that action even when details are missing (leave them unbound -- the "
         "system will ask); never replace it with only a search. Booking "
