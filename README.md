@@ -140,17 +140,12 @@ What it does, in order:
 4. Starts the Janus LiveKit worker, then runs **FDB's own runner** (`run_tool_benchmark_all_released.py --provider janus`) and **FDB's own three evaluators**, with `--use-llm`.
 5. Writes `results/<timestamp>/`: `pass_rate_report.json`, `tool_calls_report.json`, latency report, per-room decision logs, `agent.log`, `manifest.json` (commit, package versions, the full profile, seeds, judge on/off), `PROVIDER.txt`, `SUMMARY.md`.
 
-<!-- DIAGRAM FIX (teammate), delete this comment when done:
-  - Setup flowchart: the speech models are baked into the image at build time, before FDB is cloned; show them inside the Docker build step (or reorder) instead of after the FDB node.
-  - Optionally add the options (--ids, --skip-build, --no-judge) on the reproduce.sh node.
--->
 ```mermaid
 flowchart TB
     subgraph SETUP["Setup · first run only"]
         direction TB
-        A["reproduce.sh"] --> B["Docker build · CUDA 12 / Python 3.11"]
+        A["reproduce.sh<br/>[--ids, --skip-build, --no-judge]"] --> B["Docker build · CUDA 12 / Python 3.11<br/>(speech models baked in)"]
         B --> C["FDB-v3 @ 3e799c4 · SHA-256 verified"]
-        C --> D["Speech models · pinned HF revisions"]
     end
     subgraph RUN["Run · inside container"]
         direction TB
@@ -172,14 +167,6 @@ Seeds and randomness: the model call uses temperature 0 and the kernel is determ
 
 ![Janus architecture](docs/architecture.png)
 
-<!-- DIAGRAM FIX (teammate), delete this comment when done:
-  - Rename the subgraph '1. Ears · Local' to '1. Ears': speech-to-text (gpt-4o-mini-transcribe) is HOSTED (OpenAI); only Silero VAD is local. Mark the STT node 'hosted (or local Whisper)'.
-  - Edge 'VAD --> CAM' is wrong: camera frames do not come from VAD. Change it to 'ROOM --> CAM'.
-  - Workers node: write 'Interpreter · Binder · Composer · Vision (Planner as fallback)'. In the benchmark profile the interpreter's per-action list is compiled into the plan in the same kernel step; there is no PLAN round trip.
-  - Step-engine node says '8-Phase'; pick one count and use it in every diagram (the spec names 7 phases: drain, order, apply, invalidate, decide, emit, log; the code splits out commit and dispatch, giving 8; the architecture PNG shows 7 chips).
-  - Tools node says 'FDB-v3 APIs' only: add 'and device-care tools' (the extension).
-  - Optional: add the voice bridge between the ears and the mailbox (it turns VAD and transcript events into kernel events and closes the turn).
--->
 ```mermaid
 %%{init: {'flowchart': {'nodeSpacing': 25, 'rankSpacing': 35, 'padding': 8}}}%%
 flowchart TB
@@ -187,15 +174,15 @@ flowchart TB
     ROOM[["LiveKit WebRTC Room"]]
     U <-->|"audio / video"| ROOM
 
-    subgraph EARS["1. Ears · Local"]
+    subgraph EARS["1. Ears"]
         direction TB
-        VAD["Silero VAD"]
-        ASR["STT<br/>gpt-4o-mini-transcribe"]
+        VAD["Silero VAD · local"]
+        ASR["STT · hosted (or local Whisper)<br/>gpt-4o-mini-transcribe"]
         CAM["Camera<br/>1 fps JPEG"]
         VAD --> ASR
-        VAD --> CAM
     end
     ROOM --> VAD
+    ROOM --> CAM
 
     subgraph KERNEL["2. Synchronous Kernel · ≤5 ms"]
         direction TB
@@ -210,7 +197,7 @@ flowchart TB
 
     subgraph WORKERS["3. Async Workers · Propose Only"]
         direction TB
-        POOL["Interpreter · Planner · Composer · Vision"]
+        POOL["Interpreter · Binder · Composer · Vision<br/>(Planner as fallback)"]
         LLM(["Gemini 3.6 Flash"])
         POOL <--> LLM
     end
@@ -220,7 +207,7 @@ flowchart TB
     subgraph SAFETY["4. Admission & Tools"]
         direction TB
         GATE{"CommitGate · G1–G11"}
-        TOOLS[("Tool Backend<br/>FDB-v3 APIs")]
+        TOOLS[("Tool Backend<br/>FDB-v3 APIs & device-care tools")]
         GATE ==>|admitted| TOOLS
     end
     ENGINE ==>|writes| GATE
@@ -252,12 +239,6 @@ The three rules everything else follows from:
 
 ### One turn, with a self-correction
 
-<!-- DIAGRAM FIX (teammate), delete this comment when done:
-  - Gate labels are wrong. Real gates (src/prism_rt/kernel/commit.py): G1 tool usable, G2 read set valid, G3 floor closed / user not speaking, G4 explicit commit intent, G5 no duplicate fingerprint, G6 no duplicate plan-step lineage, G7 no unknown-outcome effect, G8 arguments valid, G9 read set re-checked at emission (EmissionGate), G10 settle window elapsed, G11 no new turn open. The note currently says 'G1 floor closed, G2 no user speech, G5 settle window elapsed, G8 read set valid'. Replace with e.g. 'G3 floor closed and user quiet / G2 read set valid / G5 no duplicate'.
-  - Remove the Planner participant and the 'dispatch PLAN' steps: replace with 'Kernel compiles the plan from the interpretation (same step)'.
-  - search_flights is a read, so G4 and G10 do not apply to it by default; if you want the settle window in the picture, use a write such as book_flight(Milan, June 3).
-  - 'Kernel->>Kernel: Composer → answer with facts' should be 'Kernel->>Composer: COMPOSE job', 'Composer->>Kernel: proposal: answer text', then the kernel emits FINAL.
--->
 ```mermaid
 sequenceDiagram
     autonumber
@@ -265,9 +246,9 @@ sequenceDiagram
     participant Ears as Ears<br/>VAD · ASR
     participant Kernel as Kernel<br/>(single-writer step)
     participant Interp as Interpreter
-    participant Planner as Planner
     participant Gate as CommitGate
     participant Tools as Tool backend
+    participant Composer as Composer
 
     User->>Ears: "Book a flight to Rome..."
     Ears->>Kernel: speech_started, words arrive
@@ -278,15 +259,14 @@ sequenceDiagram
     Ears->>Kernel: new words arrive, turn closes
     Note over Kernel: INVALIDATE: Interpreter's read set<br/>is stale — Rome proposal cancelled<br/>in the same step
     Kernel->>Interp: dispatch INTERPRET (new snapshot)
-    Interp->>Kernel: proposal: intent=book_flight, dest=Milan, date=June 3
-
-    Kernel->>Planner: dispatch PLAN (frozen state)
-    Planner->>Kernel: proposed call: search_flights(Milan, June 3)
-    Note over Gate: G1 floor closed ✓<br/>G2 no user speech ✓<br/>G5 settle window elapsed ✓<br/>G8 read set valid ✓
+    Interp->>Kernel: proposal: search_flights(Milan, June 3)
+    Note over Kernel: Kernel compiles plan from interpretation<br/>(same step, no Planner round trip)
+    Note over Gate: G1 tool usable ✓<br/>G2 read set valid ✓<br/>G3 floor closed and user quiet ✓<br/>G5 no duplicate ✓<br/>G8 arguments valid ✓
     Gate-->>Kernel: ADMITTED
     Kernel->>Tools: search_flights(Milan, June 3)
     Tools-->>Kernel: FL123, $450
-    Kernel->>Kernel: Composer → answer with facts
+    Kernel->>Composer: COMPOSE job (facts: FL123, $450)
+    Composer->>Kernel: proposal: answer text
     Kernel-->>User: "I found flight FL123 to Milan on June 3 for $450."
 ```
 
@@ -294,36 +274,32 @@ Had the user spoken again at step 12 ("...actually, June 4"), the Rome-era plan 
 
 ### The CommitGate: when a write may run
 
-<!-- DIAGRAM FIX (teammate), delete this comment when done:
-  - Gate numbers/names are wrong; use the real ones: G1 tool usable, G2 read set valid, G3 floor closed + user not speaking, G4 commit intent, G5 no duplicate fingerprint, G6 no duplicate lineage, G7 no unknown-outcome effect, G8 args valid, G10 settle window elapsed, G11 no new turn open; G9 (read set valid at emission) is checked by the EmissionGate, after Admitted.
-  - 'user speaking' must go to HELD, not Rejected: the call waits and goes out once the floor closes. Only a stale read set (G2/G9) or invalid arguments (G8) are rejected.
-  - RetryOnce: the policy is a bounded retry for reads and none for writes in the benchmark profile (max_read_retries=0, max_write_retries=0). Say 'bounded retry (reads)' rather than 'retry once'.
--->
 ```mermaid
 stateDiagram-v2
-    [*] --> Proposed: planner proposes a call
+    [*] --> Proposed: planner or interpreter proposes a call
     Proposed --> GateCheck: kernel step reaches DECIDE phase
 
     state GateCheck {
-        [*] --> G1: floor closed?
-        G1 --> G2: no user speech?
-        G2 --> G5: settle window elapsed?
-        G5 --> G7: no duplicate fingerprint?
-        G7 --> G8: read set still valid?
-        G8 --> [*]: all gates passed
+        [*] --> G1: G1 tool usable?
+        G1 --> G2: G2 read set valid?
+        G2 --> G8: G8 args valid?
+        G8 --> G3: G3 floor closed & user quiet?
+        G3 --> G4_G7: G4 intent / G5-G7 duplicate & lineage checks
+        G4_G7 --> G10_G11: G10 settle elapsed & G11 no new turn?
+        G10_G11 --> [*]: all gates passed
     }
 
     GateCheck --> Admitted: all gates passed
-    GateCheck --> Held: settle window not yet elapsed
-    GateCheck --> Rejected: read set stale or user speaking
+    GateCheck --> Held: user speaking (G3), settle window not elapsed (G10), or turn open (G11)
+    GateCheck --> Rejected: read set stale (G2) or invalid args (G8)
     Held --> GateCheck: next step re-evaluates
     Rejected --> [*]: cancelled, never executed
-    Admitted --> EffectLedger: recorded before emission
+    Admitted --> EffectLedger: recorded before emission (G9 verified)
     EffectLedger --> Executed: tool call sent
-    Executed --> Done: result
-    Executed --> RetryOnce: read failed, retry
-    Executed --> NotRetried: write timed out, never re-sent
-    RetryOnce --> Done
+    Executed --> Done: result received
+    Executed --> BoundedRetry: read failed (bounded retry)
+    Executed --> NotRetried: write timed out / failed (no retry)
+    BoundedRetry --> Done
     Done --> [*]
     NotRetried --> [*]
 ```
@@ -368,21 +344,17 @@ The kernel X-ray draws a session from its decision log: what the user said, what
 
 ### Anatomy of one kernel step
 
-<!-- DIAGRAM FIX (teammate), delete this comment when done:
-  - Step diagram: P7 text should read 'DISPATCH · start the worker jobs that DECIDE requested' (workers return proposals later, as events). Decide whether to show 'Drain' as phase 0 so the diagram matches the 7-phase spec and the architecture PNG.
-  - P1 can read 'ORDER · sort the batch by (timestamp, event class, sequence)'.
--->
 ```mermaid
 flowchart TB
     subgraph STEP["One Kernel Step · ≤5 ms, No Awaiting"]
         direction TB
-        P1["1. ORDER · Sort batch by causal sequence"]
+        P1["1. ORDER · Sort the batch by (timestamp, event class, sequence)"]
         P2["2. APPLY · Reduce event batch into session store"]
         P3["3. INVALIDATE · Invalidate stale read sets & cancel"]
         P4["4. DECIDE · CommitGate, TaskStateMachine, responder"]
         P5["5. EMIT · Emit wire actions (re-verify read sets)"]
         P6["6. COMMIT · Persist transaction change set"]
-        P7["7. DISPATCH · Submit async worker proposals"]
+        P7["7. DISPATCH · Start the worker jobs that DECIDE requested"]
         P8["8. LOG · Append decision log trace & metrics"]
         P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8
     end
@@ -498,15 +470,12 @@ Design directions, not shipped or tested on a device:
 
 **This is the use-case extension.** A user points a phone camera at a device and talks to it. Janus reads the frame, looks the problem up, gives the fix steps, and books **exactly one** technician visit, even if the user changes their mind mid-sentence.
 
-<!-- DIAGRAM FIX (teammate), delete this comment when done:
-  - Extension flowchart: rename node id GEMMA to GEMINI (the label already says Gemini 3.6 Flash); the edge 'admitted writes only' should be 'admitted calls (writes via the CommitGate)'; optionally add the camera sampler and the vision worker as nodes.
--->
 ```mermaid
 flowchart LR
     UI["Phone / Browser<br/>microphone & camera"] <===>|"audio · video<br/>WebRTC"| ROOM[["LiveKit room"]]
     ROOM <==> AGENT["Janus kernel<br/>(demo profile · vision on)"]
-    AGENT <--> GEMMA(["Gemini 3.6 Flash<br/>hosted API"])
-    AGENT ==>|"admitted writes only"| CARE[("Device Care Tools<br/>identify · diagnose · status<br/>fix steps · control · book (×1)")]
+    AGENT <--> GEMINI(["Gemini 3.6 Flash<br/>hosted API"])
+    AGENT ==>|"admitted calls (writes via CommitGate)"| CARE[("Device Care Tools<br/>identify · diagnose · status<br/>fix steps · control · book (×1)")]
     AGENT -.->|"effect ledger report"| LOG(["Session summary<br/>committed · withdrawn<br/>refused · duplicates"])
 ```
 
