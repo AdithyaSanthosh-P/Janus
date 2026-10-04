@@ -6,6 +6,17 @@ Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptib
 
 **Demo video:** [Google Drive](https://drive.google.com/drive/folders/1voRXefVFo-aI9aMh7W6LHp6Px0K2_CcE?usp=drive_link) · **Slide deck:** [Google Slides](https://docs.google.com/presentation/d/16pbvTmVLDricxOrwYgVnJDcXBt5EJ9KR/edit?usp=sharing&ouid=117062392495455542034&rtpof=true&sd=true)
 
+| | |
+|---|---|
+| **Benchmark** | Full-Duplex-Bench v3 (FDB-v3): 100 real spoken recordings across 4 domains, 12 tools, official runner & judge |
+| **Reasoning core** | Gemini 3.6 Flash via Google AI Studio API (temp 0, zero-budget thinking; OpenAI GPT-4.1 alternate) |
+| **Speech & vision** | OpenAI `gpt-4o-mini-transcribe` (or local `faster-whisper`), Silero VAD, Kokoro-82M TTS, 1 fps video sampler |
+| **Core architecture** | Single-writer synchronous kernel ($\le 5\text{ ms}$/step) with read-set invalidation & G1–G11 CommitGate |
+| **Use-case extension** | Camera-grounded appliance & device diagnostics with Samsung SmartThings-style error handling ([§ Extension](#extension-camera-grounded-device-care)) |
+| **Submission materials** | [Demo video](https://drive.google.com/drive/folders/1voRXefVFo-aI9aMh7W6LHp6Px0K2_CcE?usp=drive_link) · [Slide deck](https://docs.google.com/presentation/d/16pbvTmVLDricxOrwYgVnJDcXBt5EJ9KR/edit?usp=sharing&ouid=117062392495455542034&rtpof=true&sd=true) · [`LangAI3.0_AI_Disclosure.docx`](LangAI3.0_AI_Disclosure.docx) |
+| **Reproduction** | One command: [`./reproduce.sh`](#reproduce-the-benchmark-one-command) (pinned Docker build with SHA-256 data verification) |
+| **Verification** | 622 deterministic unit tests on a stepped clock with invariant trace-checking & 19-race adversarial explorer |
+
 **Highlights**
 - **74 % strict pass rate on the full voice path** (all 100 FDB-v3 recordings over LiveKit, judged with gpt-4o, final code), against 60 % for the best published system (GPT-Realtime); 77 % for the reasoning core in text replay. Three full voice runs on 3 Oct scored 73, 65 and 74; the 65 is explained and fixed (below), and single runs vary by a few points. Every run is recorded in [`BENCHMARKS.md`](BENCHMARKS.md).
 - **Self-correction, the category FDB-v3 finds hardest for every system:** 0.765 Pass@1 on the final voice run, against 0.176 for the published cascaded pipeline (the same family as ours) and 0.588 for GPT-Realtime; 0.824 for the reasoning core in text replay.
@@ -65,51 +76,46 @@ Seeds and randomness: the model call uses temperature 0 and the kernel is determ
 
 ```mermaid
 flowchart TB
-    U(["User<br/>voice & camera"]) <-->|"audio · video · WebRTC"| ROOM[["LiveKit room"]]
+    U(["User<br/>voice & camera"]) <-->|"audio / video · WebRTC"| ROOM[["LiveKit room"]]
     ROOM --> VAD
 
     subgraph EARS["Ears · local"]
         direction LR
-        VAD["Silero VAD"] --> ASR["STT<br/>OpenAI gpt-4o-mini-transcribe<br/>or faster-whisper"]
-        VAD --> CAM["Camera sampler<br/>1 fps → JPEG"]
+        VAD["Silero VAD"] --> ASR["STT<br/>gpt-4o-mini-transcribe"]
+        VAD --> CAM["Camera sampler<br/>1 fps JPEG"]
     end
 
     ASR -->|words| MAILBOX
     CAM -->|frame_id| MAILBOX
 
-    subgraph KERNEL["Janus Synchronous Kernel · ≤5 ms per step"]
-        direction TB
-        MAILBOX["Ordered Event Mailbox"]
-        ENGINE{{"8-Phase Step Engine<br/>Order → Apply → Invalidate → Decide<br/>→ Emit → Commit → Dispatch → Log"}}
-        GATE["CommitGate<br/>G1–G11 · settle window"]
-        STORE[("Versioned Session Store<br/>facts · effect ledger · floor state")]
-
+    subgraph KERNEL["Janus Kernel · single writer, ≤5 ms"]
+        direction LR
+        MAILBOX["Mailbox<br/>ordered events"]
+        ENGINE{{"Step Engine<br/>8 phases · sync"}}
+        STORE[("Session Store<br/>facts · effect ledger")]
         MAILBOX --> ENGINE
-        ENGINE <--> GATE
         ENGINE <--> STORE
     end
 
-    subgraph WORKERS["Async Workers · propose only, never decide"]
+    subgraph WORKERS["Async Workers · propose only"]
         direction LR
-        INTERP["Turn Interpreter<br/>(speculative)"]
-        PLAN["DAG Planner<br/>& Rebinder"]
-        COMPOSE["Response<br/>Composer"]
-        VISION["Camera Vision<br/>Worker"]
+        POOL["Worker Pool<br/>Interpreter · Planner<br/>Composer · Vision"]
+        LLM(["Gemini 3.6 Flash<br/>hosted API"])
+        POOL <--> LLM
     end
 
-    WORKERS <-->|"Gemini 3.6 Flash<br/>(hosted API)"| LLM(["Gemini 3.6 Flash"])
+    ENGINE -.->|"frozen state"| POOL
+    POOL -.->|"proposals (read sets)"| MAILBOX
 
-    ENGINE -.->|"dispatch jobs<br/>(frozen state snapshot)"| WORKERS
-    WORKERS -.->|"proposals<br/>(with read sets)"| MAILBOX
-
-    ENGINE ==>|"admitted writes<br/>(CommitGate passed)"| TOOLS[("Tools<br/>FDB-v3 · Device Care APIs")]
+    GATE{"CommitGate<br/>G1–G11 · settle"}
+    ENGINE ==>|"admitted writes"| GATE
+    GATE ==>|"effect ledger"| TOOLS[("Tools<br/>FDB-v3 & Care APIs")]
     TOOLS -.->|results| MAILBOX
-    ENGINE -->|"immediate CANCEL /<br/>spoken audio"| ROOM
 
+    ENGINE -->|"answer text"| TTS
     subgraph MOUTH["Mouth · local"]
         TTS["Kokoro-82M"]
     end
-    ENGINE --> TTS
     TTS -->|audio| ROOM
 ```
 
@@ -208,16 +214,22 @@ stateDiagram-v2
 ### Inside one kernel step
 
 ```mermaid
-flowchart LR
-    subgraph STEP["One Kernel Step · ≤5 ms, no awaiting"]
-        direction LR
-        P1["1 ORDER<br/>sort batch by<br/>causal order"] --> P2["2 APPLY<br/>reduce events<br/>into store"]
-        P2 --> P3["3 INVALIDATE<br/>stale read sets<br/>→ cancel"]
-        P3 --> P4["4 DECIDE<br/>cancellation · tasks<br/>· CommitGate<br/>· responder"]
-        P4 --> P5["5 EMIT<br/>actions to wire<br/>(re-check read sets)"]
-        P5 --> P6["6 COMMIT<br/>persist<br/>change set"]
-        P6 --> P7["7 DISPATCH<br/>submit jobs<br/>to workers"]
-        P7 --> P8["8 LOG<br/>decision log<br/>& trace"]
+flowchart TB
+    subgraph STEP["One Kernel Step · ≤5 ms synchronous cycle"]
+        direction TB
+        subgraph ROW1["Phases 1–4 · Ingestion & Decision"]
+            direction LR
+            P1["1. ORDER<br/>causal sorting"] --> P2["2. APPLY<br/>event reducers"]
+            P2 --> P3["3. INVALIDATE<br/>stale read sets"]
+            P3 --> P4["4. DECIDE<br/>CommitGate & tasks"]
+        end
+        subgraph ROW2["Phases 5–8 · Execution & Persistence"]
+            direction LR
+            P5["5. EMIT<br/>actions to wire"] --> P6["6. COMMIT<br/>session change set"]
+            P6 --> P7["7. DISPATCH<br/>worker jobs"]
+            P7 --> P8["8. LOG<br/>decision trace"]
+        end
+        ROW1 --> ROW2
     end
 ```
 
