@@ -67,6 +67,23 @@ _DIGIT_WORDS = {
 } | {"oh": "0"}
 
 
+def _lone_code_among_words(value: str):
+    """For an identifier parameter only: "avitum. P52" -> "P52". Found in the
+    3 Oct voice run (ecommerce_14): speech-to-text turned "item uh P52" into
+    "avitum. P52" and the misheard word was sent as part of the id. An id
+    has no spaces, so when the value is one code (letters and digits mixed)
+    among plain lower-case words, the code is the id. None otherwise -- a
+    value with no such code, or with two, is left as it is."""
+    tokens = [t for t in _SPOKEN_ID_SPLIT.split(value) if t]
+    if len(tokens) < 2:
+        return None
+    codes = [t for t in tokens if t.isalnum() and any(c.isdigit() for c in t) and any(c.isalpha() for c in t)]
+    words = [t for t in tokens if t.isalpha() and t.islower()]
+    if len(codes) != 1 or len(codes) + len(words) != len(tokens):
+        return None
+    return codes[0]
+
+
 def _join_spoken_identifier(value: str):
     """For an identifier parameter only: "F A S T nine nine" -> "FAST99",
     "P.O. 999" -> "PO999", "one, two, three, ABC" -> "123ABC",
@@ -106,6 +123,9 @@ def canonicalize_spoken_id(value, name: str | None = None):
         joined = _join_spoken_identifier(value)
         if joined is not None:
             return joined
+        code = _lone_code_among_words(value)
+        if code is not None:
+            return code
     tokens = [t for t in _SPOKEN_ID_SPLIT.split(value) if t]
     if len(tokens) < 2 or not all(len(t) == 1 and t.isalnum() for t in tokens):
         return value

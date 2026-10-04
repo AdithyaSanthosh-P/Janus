@@ -32,3 +32,18 @@ def test_non_identifier_parameters_keep_the_old_rule():
     assert canonicalize_spoken_id("F A S T nine nine", "city") == "F A S T nine nine"
     assert canonicalize_spoken_id("X-Y-Z-8-8", "city") == "XYZ88"
     assert canonicalize_spoken_id("New York") == "New York"
+
+
+@pytest.mark.parametrize("heard, code", [
+    ("avitum. P52", "P52"),  # 3 Oct voice run, ecommerce_14: "item uh P52" misheard
+    ("item P52", "P52"),
+    ("number B7 please", "B7"),
+])
+def test_one_code_among_misheard_words_is_the_identifier(heard, code):
+    assert canonicalize_spoken_id(heard, "product_id") == code
+
+
+@pytest.mark.parametrize("value", ["orders 12A and 13B", "Paris FL123", "item fifty two", "my order"])
+def test_no_single_code_among_plain_words_is_left_alone(value):
+    assert canonicalize_spoken_id(value, "product_id") == value
+    assert canonicalize_spoken_id("avitum. P52", "query") == "avitum. P52"
