@@ -139,6 +139,26 @@ def _drop_repeated_type_noun(value: str, name: str | None) -> str:
     return value
 
 
+def _word_stem(word: str) -> str:
+    """"driving"/"drive"/"drives" -> "driv"; "walking"/"walk" -> "walk"."""
+    word = word.lower()
+    for suffix in ("ing", "es", "s", "e"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
+def _as_declared_default(value: str, prop: dict) -> str:
+    """A one-word value that is the declared default in another form takes
+    the default's form: "drive" for a `mode` defaulting to "driving". Found
+    in the 4 Oct voice run (housing_19, "make it a drive"). Only the default
+    itself is matched; any other word is left as said."""
+    default = prop.get("default")
+    if not isinstance(default, str) or not default.isalpha() or not value.isalpha() or value.lower() == default.lower():
+        return value
+    return default if _word_stem(value) == _word_stem(default) else value
+
+
 def coerce_to_schema(value, prop: dict, name: str | None = None):
     """Coerces a spoken value to the parameter's declared JSON type before
     it is written, so `ToolCatalog.validate_args` (G8) never rejects a value
@@ -162,7 +182,7 @@ def coerce_to_schema(value, prop: dict, name: str | None = None):
             # of digits) is left exactly as said.
             if amount and (amount.group(1) or amount.group(4) or amount.group(5)):
                 return amount.group(2).replace(",", "") + (amount.group(3) or "")
-            value = _snake_case_like_examples(_drop_repeated_type_noun(value, name), prop)
+            value = _as_declared_default(_snake_case_like_examples(_drop_repeated_type_noun(value, name), prop), prop)
     elif kind in ("integer", "number") and not isinstance(value, bool):
         if isinstance(value, str):
             parsed = _parse_number(value)

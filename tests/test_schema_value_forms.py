@@ -55,3 +55,14 @@ BILL_TYPE = {"type": "string", "description": "Type of bill, e.g. 'credit_card' 
 ])
 def test_a_type_value_does_not_repeat_the_noun(value, name, prop, written):
     assert coerce_to_schema(value, prop, name) == written
+
+
+MODE = {"type": "string", "default": "driving", "description": "Transport mode, defaults to 'driving'"}
+
+
+@pytest.mark.parametrize("said, sent", [("drive", "driving"), ("Drive", "driving"), ("drives", "driving"), ("driving", "driving"),
+                                       ("walking", "walking"), ("transit", "transit"), ("bike", "bike"), ("by car", "by car")])
+def test_the_declared_default_in_another_form_takes_its_form(said, sent):
+    """4 Oct voice run, housing_19: "make it a drive" was sent as mode="drive"
+    for a parameter whose declared default is "driving"."""
+    assert coerce_to_schema(said, MODE, "mode") == sent
