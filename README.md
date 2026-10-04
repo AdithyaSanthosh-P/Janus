@@ -18,7 +18,54 @@ Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptib
 
 ## Contents
 
-1. [Reproduce the benchmark](#reproduce-the-benchmark-one-command) · 2. [Architecture](#architecture) · 3. [How an interruption flows](#how-an-interruption-flows) · 4. [Extension: device care](#extension-camera-grounded-device-care) · 5. [Results](#results) · 6. [Benchmark labels](#benchmark-labels-and-the-published-tools) · 7. [Keys](#keys) · 8. [Tests](#tests) · 9. [Limitations](#limitations) · 10. [Repo map](#repo-map) · 11. [Citations](#citations)
+1. [Why this architecture](#why-janus-is-built-this-way) · 2. [Reproduce the benchmark](#reproduce-the-benchmark-one-command) · 3. [Architecture](#architecture) · 4. [How an interruption flows](#how-an-interruption-flows) · 5. [Extension: device care](#extension-camera-grounded-device-care) · 6. [Results](#results) · 7. [Benchmark labels](#benchmark-labels-and-the-published-tools) · 8. [Keys](#keys) · 9. [Tests](#tests) · 10. [Limitations](#limitations) · 11. [Repo map](#repo-map) · 12. [Citations](#citations)
+
+## Why Janus is built this way
+
+**The problem.** Most voice agents are one loop: the model decides, calls a tool, speaks. That loop is fine until the user interrupts. Then it fails in three specific ways: a **race** (the user corrects a value while a lookup is running, and the stale answer is spoken anyway), a **phantom completion** (the agent says "booked" for something that was cancelled or never ran), and a **duplicate side effect** (a retry or a correction books twice). None of these is a prompting problem. They come from letting a model own the state and the side effects.
+
+**The idea.** Models never act. Every language-model call (interpret, plan, bind, compose, vision) is an asynchronous *worker* that returns a **proposal**. One synchronous **kernel** owns all session state and is the only thing that can speak, call a tool or cancel. Each guarantee below is an enforced mechanism with a test, not an instruction in a prompt:
+
+| Guarantee | Mechanism | Where |
+|---|---|---|
+| A correction cancels stale work **in the same step** it arrives | Every proposal, call and pending utterance records the `(fact, version, digest)` it read; a changed fact invalidates its dependents and the CANCEL is emitted before any new speech or call | `kernel/invalidation.py`, `store/facts.py` |
+| A value that changes back (Pune, Mumbai, Pune) redoes nothing | Read sets compare digests, not a generation counter | `canonical.py`, `store/facts.py` |
+| No write fires while the user is still talking, before their go-ahead, or inside the settle window | `CommitGate` G1–G11: floor closed, explicit intent (required in the device-care profile), settle barrier, valid read set at emission | `kernel/commit.py`, `kernel/emission.py` |
+| No double booking | Fingerprint (G5) and plan-step lineage (G6) checks; the write is recorded in the effect ledger *before* it is emitted | `store/ledgers.py` |
+| No false "done" | A final answer is grounded in tool results the kernel consumed; failures, refusals and skipped steps are reported as not done, with `task_completed=false` | `kernel/responder.py`, `kernel/frames.py` |
+| An action the user ruled out never runs | "If it is under $50 add it, otherwise track my order": the condition is checked against the real result before the step may run; an action the user calls off is left out of the plan | `kernel/binder.py`, `kernel/action_plans.py`, `workers/interpreter.py` |
+| Everything is replayable | One synchronous step on an injected clock: the same input gives a byte-identical decision log, a required test | `sim/`, `observability/` |
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant V as Voice bridge
+    participant K as Kernel (single writer)
+    participant W as Workers (Gemini)
+    participant T as Tools
+    U->>V: "Book a technician for Thursday morning..."
+    V->>K: text chunks, end of turn
+    K->>W: INTERPRET job (carries its read set)
+    W-->>K: proposal: book_technician(Thursday)
+    Note over K: CommitGate holds the write (settle window)
+    U->>V: "...no wait, make it Friday afternoon"
+    V->>K: text chunk, user is speaking
+    Note over K: the slot changes: the Thursday call is invalidated and withdrawn in the same step
+    K->>W: INTERPRET job
+    W-->>K: proposal: slot update to Friday afternoon
+    K->>T: book_technician(Friday, afternoon), exactly once
+    T-->>K: result
+    K->>V: FINAL grounded in that result
+```
+
+**Why this is not a benchmark trick.** The same kernel runs the Full-Duplex-Bench voice benchmark and the camera-grounded device-care extension; only a configuration profile differs (`fdb_v3_config`, `demo_config` in `src/prism_rt/profiles.py`). New kernel behaviour is added behind a `Config` flag and covered by tests; the tagged versions V0–V4 and six post-V4 phases each stayed runnable.
+
+**Evidence, not claims**
+- **635 deterministic tests** on a stepped clock with a scripted model, and a trace checker that audits every decision log (no event reordering, floor rule, no stale consumption, no false completion claim, one confirmed write per lineage).
+- **A bounded adversarial explorer** perturbs tool and worker latencies and user timing around 19 race scenarios, with oracles re-derived from state; its first run found three real kernel bugs, all fixed with regression tests.
+- **Independent reviews are logged, not trusted:** every round's findings were reproduced before a fix shipped, and the ones that did not hold up are recorded too ([`reviews/index.md`](reviews/index.md), [`reviews/audit-2026-10-01.md`](reviews/audit-2026-10-01.md)).
+- **On the hardest benchmark category** (self-correction), 0.765 Pass@1 on the full voice path, against 0.176 for the published cascaded pipeline of the same family. See [Results](#results).
+- A step-by-step tour of the code is in [`docs/architecture_walkthrough.md`](docs/architecture_walkthrough.md).
 
 ## Reproduce the benchmark (one command)
 
@@ -73,8 +120,8 @@ class Edge,User,LiveKit edgeStyle;
 subgraph Kernel["2. Janus Synchronous Kernel (Single Writer Core, &le;5ms)"]
     direction TB
     Mailbox["Ordered Event Mailbox"]
-    Engine["7-Phase Execution Engine<br/>Order ➔ Apply ➔ Invalidate ➔ Decide ➔ Commit"]
-    Safety["Core Invariant Safety Gates<br/>• Optimistic Read Sets (key, ver, digest)<br/>• Same-Step Cancellation Engine<br/>• CommitGate (G1-G11 & 300ms Settle)"]
+    Engine["7-Phase Execution Engine<br/>Drain ➔ Order ➔ Apply ➔ Invalidate ➔ Decide ➔ Emit ➔ Log"]
+    Safety["Core Invariant Safety Gates<br/>• Optimistic Read Sets (key, ver, digest)<br/>• Same-Step Cancellation Engine<br/>• CommitGate (G1-G11 + settle window)"]
     Store[("Versioned Session Store<br/>Facts • Ledgers • Floor State")]
 
     Mailbox --> Engine
@@ -87,7 +134,7 @@ class Kernel,Mailbox,Engine,Safety,Store kernelStyle;
 %% 3. ASYNC WORKERS & LLM
 %% -------------------------------------------------
 subgraph Workers["3. Async Workers (Propose Only)"]
-    WorkerPool["Worker Subsystem<br/>• Turn Interpreter (Speculative)<br/>• DAG Planner & Rebinder<br/>• Response Composer<br/>• Camera Vision Worker"]
+    WorkerPool["Worker Subsystem<br/>• Turn Interpreter (Speculative)<br/>• Compiled per-action plans & late binder<br/>• Response Composer<br/>• Camera Vision Worker"]
     LLM["Gemini 3.6 Flash<br/>(Hosted Intelligence)"]
     WorkerPool <--> LLM
 end
@@ -110,7 +157,7 @@ Engine -->|"Immediate CANCEL / Spoken Audio"| LiveKit
 Engine -.->|"Dispatch Jobs (Frozen State)"| WorkerPool
 WorkerPool -.->|"Proposals (with Read Sets)"| Mailbox
 
-Engine ==>|"Admitted Writes (CommitGate)"| Tools
+Engine ==>|"Admitted calls (writes via CommitGate)"| Tools
 Tools -.->|"Tool Results"| Mailbox
 
 %% -------------------------------------------------

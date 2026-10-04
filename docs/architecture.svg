@@ -45,7 +45,7 @@
     <text x="325" y="393" fill="#475569" font-size="13">gpt-4o-mini-transcribe · or Whisper</text>
     <rect x="310" y="414" width="240" height="52" rx="9" fill="#FFFFFF" stroke="#BFDBFE"/>
     <text x="325" y="436" font-weight="600">Kokoro-82M TTS</text>
-    <text x="325" y="455" fill="#475569" font-size="13">stops mid-word on CANCEL</text>
+    <text x="325" y="455" fill="#475569" font-size="13">stops queued speech on barge-in</text>
     <rect x="310" y="476" width="240" height="52" rx="9" fill="#FFFFFF" stroke="#BFDBFE"/>
     <text x="325" y="498" font-weight="600">Camera sampler</text>
     <text x="325" y="517" fill="#475569" font-size="13">1 frame / s to the evidence store</text>
@@ -122,7 +122,7 @@
   <text x="1290" y="195" font-size="13" font-weight="700" fill="#6D28D9" letter-spacing="0.8">ASYNC WORKERS · PROPOSE ONLY</text>
   <g font-size="14" fill="#0F172A">
     <rect x="1290" y="212" width="240" height="40" rx="8" fill="#FFFFFF" stroke="#DDD6FE"/><text x="1305" y="237" font-weight="600">Interpreter <tspan fill="#64748B" font-weight="400" font-size="12.5">(speculative)</tspan></text>
-    <rect x="1290" y="260" width="240" height="40" rx="8" fill="#FFFFFF" stroke="#DDD6FE"/><text x="1305" y="285" font-weight="600">Planner <tspan fill="#64748B" font-weight="400" font-size="12.5">/ direct compile</tspan></text>
+    <rect x="1290" y="260" width="240" height="40" rx="8" fill="#FFFFFF" stroke="#DDD6FE"/><text x="1305" y="285" font-weight="600">Planner <tspan fill="#64748B" font-weight="400" font-size="12.5">/ compiled plans</tspan></text>
     <rect x="1290" y="308" width="240" height="40" rx="8" fill="#FFFFFF" stroke="#DDD6FE"/><text x="1305" y="333" font-weight="600">Composer</text>
     <rect x="1290" y="356" width="240" height="40" rx="8" fill="#FFFFFF" stroke="#DDD6FE"/><text x="1305" y="381" font-weight="600">Vision <tspan fill="#64748B" font-weight="400" font-size="12.5">(camera)</tspan></text>
   </g>
@@ -154,7 +154,7 @@
   <text x="604" y="345" font-size="12" fill="#475569" text-anchor="middle">events</text>
   <!-- kernel -> edge -->
   <line x1="636" y1="470" x2="572" y2="470" stroke="#DC2626" stroke-width="2.5" marker-end="url(#arr)"/>
-  <text x="604" y="492" font-size="12" fill="#DC2626" text-anchor="middle">speak</text><text x="604" y="507" font-size="12" fill="#DC2626" text-anchor="middle">cancel</text>
+  <text x="604" y="492" font-size="12" fill="#DC2626" text-anchor="middle">speech</text><text x="604" y="507" font-size="12" fill="#DC2626" text-anchor="middle">+ cancels</text>
   <!-- kernel -> workers -->
   <line x1="1202" y1="250" x2="1266" y2="250" stroke="#6D28D9" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#arr)"/>
   <text x="1234" y="236" font-size="12" fill="#6D28D9" text-anchor="middle">jobs</text>
