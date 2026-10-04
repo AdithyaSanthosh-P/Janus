@@ -18,7 +18,7 @@ Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptib
 
 ## Contents
 
-1. [Why this architecture](#why-janus-is-built-this-way) · 2. [Reproduce the benchmark](#reproduce-the-benchmark-one-command) · 3. [Architecture](#architecture) · 4. [How an interruption flows](#how-an-interruption-flows) · 5. [Extension: device care](#extension-camera-grounded-device-care) · 6. [Results](#results) · 7. [Benchmark labels](#benchmark-labels-and-the-published-tools) · 8. [Keys](#keys) · 9. [Tests](#tests) · 10. [Limitations](#limitations) · 11. [Repo map](#repo-map) · 12. [Citations](#citations)
+1. [Why this architecture](#why-janus-is-built-this-way) · 2. [Reproduce the benchmark](#reproduce-the-benchmark-one-command) · 3. [Architecture](#architecture) · 4. [How an interruption flows](#how-an-interruption-flows) · 5. [Deep dive](#deep-dive) · 6. [Extension: device care](#extension-camera-grounded-device-care) · 7. [Results](#results) · 8. [Benchmark labels](#benchmark-labels-and-the-published-tools) · 9. [Keys](#keys) · 10. [Tests](#tests) · 11. [Limitations](#limitations) · 12. [Repo map](#repo-map) · 13. [Citations](#citations)
 
 ## Why Janus is built this way
 
@@ -191,6 +191,116 @@ The kernel X-ray draws a session from its decision log: what the user said, what
 ![The user corrects a running lookup](docs/xray/correct_a_running_lookup.png)
 
 *The user asks about an orange light, and 2.4 s later says "sorry, actually red". The orange lookup is invalidated and cancelled in the same kernel step the correction arrives, and re-run with red. One final answer, grounded in the red result.* Interactive versions: [`docs/xray/correct_a_running_lookup.html`](docs/xray/correct_a_running_lookup.html), [`docs/xray/correct_before_booking.html`](docs/xray/correct_before_booking.html), and for the extension [`docs/xray/withdraw_one_of_two_writes.html`](docs/xray/withdraw_one_of_two_writes.html) (two writes pending, a correction withdraws one before it is sent; drawn as a struck "never sent" row). Regenerate with `PYTHONPATH=src:. python scripts/make_xray.py`; a live session writes its own logs when `JANUS_DECISION_LOG_DIR` is set, and `python -m prism_rt.observability.xray DECISIONS.jsonl WIRE.jsonl out.html` draws them.
+
+## Deep dive
+
+### Anatomy of one kernel step
+
+`Kernel.step(batch)` in `kernel/step.py` never awaits and runs these phases in this order. Everything after the first two sees the state the previous phase left behind.
+
+| # | Phase | What happens |
+|---|---|---|
+| 1 | Order | The batch is sorted by `(timestamp, event class, sequence)`, so the same events always replay the same way |
+| 2 | Apply | One reducer per event writes facts: speech chunks, tool results, worker proposals, user-speech activity, camera frames |
+| 3 | Invalidate | Changed fact keys are walked through the dependency index; every call, job and proposal that read one is marked stale in this same step |
+| 4 | Decide | Components run in a fixed order: cancellations, call deadlines, late binding, the task state machine, perception, ASR, response frames, the plan executor, the CommitGate, and the fast responder |
+| 5 | Emit | The emission gate re-checks each action's read set (G9), orders them CANCEL, SPEAK, TOOL_CALL, CLARIFY, FINAL, and stamps them. A correction's cancel always leaves before its replacement |
+| 6 | Commit | The transaction commits and the change set is produced |
+| 7 | Dispatch | The worker jobs that Decide requested are actually started |
+| 8 | Log | One decision-log line per step: events, fact changes, invalidations, gate rejections, emissions, dispatches |
+
+A step takes well under a millisecond in practice (0.4 ms measured over 200 turns; the design target is 5 ms), so the kernel is never the slow part.
+
+### Interruption cases the kernel handles
+
+Each row is a situation that breaks a loop-based agent, what Janus does, and the test that pins it.
+
+| Situation | Behaviour | Test |
+|---|---|---|
+| The user corrects a value while a lookup is running | The lookup is invalidated and cancelled in the same step, re-run with the new value, and only the new answer is spoken | `test_correction_race_regression.py`, `test_v2.py` |
+| A correction arrives mid-utterance | A high-confidence corrected value cancels the stale call as soon as it is heard, not at the end of the turn | `test_phase4.py` |
+| The user changes a booking before it is sent | The write waits in the settle window and is withdrawn; the ledger records "never sent" | `test_v2.py`, `test_devicecare.py` |
+| The user changes a booking after it went through | Janus says so and refuses a second booking; it never claims the first was changed | `test_write_lineage_regression.py` |
+| A tool fails past its retry limit | An honest failure, `task_completed=false`; never a "done" | `test_failure_honesty_regression.py` |
+| A write's result arrives after the user cancelled it | The result router reconciles it and the answer tells the truth about what went through | `test_v2.py`, `test_write_lineage_regression.py` |
+| One action in a plan fails | The failure is recorded; actions that do not depend on it still run; the answer lists what was not done | `test_s3_action_plans.py`, `test_multi_action.py` |
+| A request is split by a mid-sentence pause | The two halves are interpreted once, together | `test_merge_split_turns.py` |
+| The user is still speaking when a call is ready | The call and the speech are held until the floor is closed | `test_vad_floor.py`, `test_cs28_floor_rule.py`, `test_triage_hold.py` |
+| "If one is under $50 add it, otherwise track my order" | Only the branch the real result supports runs, and the answer says what was skipped | `test_conditional_actions.py` |
+| "Show me the cheapest one, then add it" | The chained value is chosen from the real result after it exists, never guessed | `test_s3_late_binding.py` |
+| A required detail is missing | Janus asks, with the allowed values, or re-reads the request once before asking | `test_clarify_wake.py`, `test_s2_quickwins.py` |
+| The user speaks over the agent | Queued speech stops; a barge-in with no recognised words still closes its turn | `test_voice_bridge.py`, `test_voice_bridge_kernel_barge_in.py` |
+| A tool result never comes back | A call deadline cancels it and the goal asks or fails instead of hanging | `test_p0_4_call_deadlines.py` |
+| The camera shows what the user did not say | A vision claim fills the missing value, and a user-stated value always wins over the camera | `test_v3.py`, `test_multimodal_races.py` |
+
+### From sound to a decision (the voice path)
+
+1. **LiveKit** carries the user's microphone and camera into the worker (`src/prism_rt/voice/agent.py`). Nothing language-model-related lives in the session: every utterance and tool call comes from the kernel.
+2. **Silero VAD** marks speech start and stop. The **voice bridge** (`adapters/voice_bridge.py`) turns those into kernel events and closes a turn only after the user's silence has run its course *and* every transcription still in flight has delivered its text.
+3. **Speech-to-text** is hosted (`gpt-4o-mini-transcribe`, pinned snapshot) by default, or faster-whisper on the GPU. Each segment is transcribed after a pause; the transcriber reports when each transcription starts and finishes so the bridge never closes a turn on half a sentence.
+4. The kernel receives `text_chunk`, `user_speech` and `end_of_turn` events and decides. Workers (Gemini) interpret, bind, plan and compose; **Kokoro-82M** speaks only what the kernel emits.
+5. A **speculative interpretation** starts on the transcript so far while the user is still talking, and is used at the end of the turn with no extra latency when nothing material was added.
+
+### Design decisions and trade-offs
+
+| Decision | Why | Cost |
+|---|---|---|
+| One synchronous writer instead of a concurrent agent loop | Races become impossible by construction and every run is replayable | Workers can only propose, so every LLM result waits for the next step |
+| The turn closes after 1.5 s of silence in the benchmark runs | Closing earlier split requests in the benchmark audio and cost accuracy (a 65 % run before the fix) | About 1.5 s of added time to the first word |
+| Writes wait out a settle window | A late "no wait, Friday" can still cancel the write | About 1 s before a booking goes out |
+| Hosted speech-to-text, not streaming | Far better on accents and names than the small local model | Transcription lands after the pause; first word is about 8.5 s on the benchmark |
+| Follow the published tool contract, not the benchmark's labels | An agent that sends arguments a tool does not declare, or invents a value, is wrong in a real product | Some recordings fail by design (see [Benchmark labels](#benchmark-labels-and-the-published-tools)) |
+| Every new behaviour behind a `Config` flag | Any tagged version stays a safe fallback | More flags to document |
+| Honest failure over a confident guess | A failed or skipped step is said aloud; a missing detail is asked | Sometimes one more question than a guessing agent |
+
+### Two profiles, one kernel
+
+| Setting | `fdb_v3_config` (benchmark) | `demo_config` (device care) |
+|---|---|---|
+| Action plans, split-turn merge, speculative interpretation | on | on |
+| `vad_floor_enabled` (the kernel hears that the user is speaking) | on | off (no echo cancellation in a live room) |
+| `conditional_actions_enabled`, `partial_failure_continues`, `parallel_independent_actions` | on | on |
+| `vision_enabled` (camera frames answer questions) | off | on |
+| `fill_unstated_required_enabled` (assume a count or budget, say it aloud) | on | off: a missing date or slot is asked |
+| Write needs the user's explicit go-ahead | exempt (the benchmark's tools declare no mutability) | required |
+| Whole-session watchdog | 105 s | none |
+
+### What we found by looking at real audio
+
+The kernel's correction machinery had been proven on deterministic tests and had never run on real speech, so the project audited its own voice runs:
+- **The main loss was not reasoning.** The voice bridge closed the user's turn while they were still talking, because hosted transcripts arrive about a second late and re-armed the timer. That split 52 of 72 recordings; the fix (turn-ending follows VAD silence, the kernel hears the floor) took a 26-recording check from 12 to 16 passes with no early closes.
+- **A second cause showed up on a slow day.** Hosted transcription of long sentences took 4–10 s, 19 turns closed before their last sentence arrived, and a run scored 65 %. The transcriber now reports when it starts and finishes, and a turn stays open while one is running; the next full run scored 74 %.
+- **Each finding became a regression test** that fails without its fix. The audit, with the status of every finding, is [`reviews/audit-2026-10-01.md`](reviews/audit-2026-10-01.md); every run and every failure is in [`BENCHMARKS.md`](BENCHMARKS.md).
+
+### Where this goes
+
+Design directions, not shipped or tested on a device:
+- **On-device hybrid.** The kernel is small, deterministic and runs in well under a millisecond per step, so it could sit next to voice-activity detection on a phone or a TV while heavy vision and reasoning stay in the cloud. Nothing here has been run on a Samsung device.
+- **Real device backends.** The extension's device adapter is replaced through the tool manifest; the coordination layer above it (corrections, commit gate, effect ledger) is unchanged. A SmartThings integration is the natural first step.
+- **Streaming transcription** so prefix speculation and mid-utterance cancellation engage on real audio, not only in the deterministic tests. This is the largest latency and accuracy lever left.
+- **A faster first-step model** for interpretation, and a build that picks its CUDA version from the GPU.
+
+### FAQ
+
+**Why not let the model call tools directly?** Because then a correction, a retry and a slow tool can all act on the same state at once. The kernel gives one place where "is this still true?" is decided, and a model that proposes without being able to act cannot double-book.
+
+**Isn't one synchronous step a bottleneck?** The step takes well under a millisecond; the waits are model calls and speech, which run outside it. The kernel is the part that is always fast.
+
+**What stops the agent saying "done" when it was not?** The final answer is built from results the kernel consumed. A step that failed, was skipped or was withdrawn is reported as not done and the goal's completion flag is false.
+
+**Does it work without the benchmark?** Yes: the extension runs the same kernel with a different profile, over live voice and camera, with a simulated device backend.
+
+**Is the score reproducible?** The scoring is FDB-v3's own runner and evaluators at a pinned commit through `./reproduce.sh`. A hosted model is not bit-reproducible, so single runs vary by a few points (three full runs on 3 Oct scored 73, 65 and 74).
+
+### Glossary
+
+- **Read set:** the list of `(fact, version, digest)` a proposal, call or utterance depended on. Valid while every fact still exists with the same digest.
+- **Settle window:** the short wait before a write is sent, so a late correction can still cancel it.
+- **Floor:** whether the user currently holds the turn (speaking, or their words still being transcribed).
+- **Effect ledger:** the append-only record of every write, entered before the write is emitted.
+- **Compiled plan:** the list of tool calls the interpreter returned, turned into a plan in the same step, with each call's own arguments.
+- **Late binding:** choosing a chained argument ("the cheapest one") from the earlier call's real result after it exists.
+- **X-ray:** the page drawn from a decision log that shows what was said, understood, held back and invalidated.
 
 ## Extension: camera-grounded device care
 
