@@ -127,6 +127,9 @@ class VoiceBridge:
     _last_speech_end: "float | None" = field(default=None, init=False, repr=False)
     _last_final_at: "float | None" = field(default=None, init=False, repr=False)
     _words_since_eot: bool = field(default=False, init=False, repr=False)
+    # An `interruption` opens a turn in the kernel (TurnManager.on_interruption)
+    # whether or not any words follow; that turn must be closed too.
+    _barge_in_open: bool = field(default=False, init=False, repr=False)
     _activity_reported: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -172,6 +175,7 @@ class VoiceBridge:
         self._cancel_eot_timer()
         await self._report_activity()
         if self._agent_speaking:
+            self._barge_in_open = True
             await self.events.put({"type": "interruption", "ts_us": self.now_us(), "payload": {}})
             self.on_interruption_logged("user started speaking while the agent was speaking")
 
@@ -268,7 +272,13 @@ class VoiceBridge:
         - every segment that has ended has had its transcript delivered,
           or `t_stt_wait_ms` has passed since the last stop (a lost
           transcription must not hold the turn open);
-        - some words were sent since the previous end-of-turn.
+        - some words were sent since the previous end-of-turn, or a barge-in
+          opened a turn in the kernel. Found in the 4 Oct voice run
+          (housing_15): five seconds of speech over the agent's ACK produced
+          no transcript, so no end-of-turn was ever sent; the barge-in's turn
+          stayed open and CommitGate held the search ("floor_open") until the
+          recording ended. The kernel closes an empty turn without
+          interpreting it.
 
         Found by the 1 Oct audit: re-arming a plain timer on every arriving
         transcript closed 86 turns while the user was still speaking (52 of
@@ -281,7 +291,7 @@ class VoiceBridge:
         if self._stopped or self._user_speaking:
             return
         waiting_until = self._transcripts_awaited_until()
-        if not self._words_since_eot:
+        if not (self._words_since_eot or self._barge_in_open):
             if waiting_until is not None:
                 # Nothing to close yet, but a transcript is awaited: stop
                 # waiting for it at the cap all the same.
@@ -325,6 +335,7 @@ class VoiceBridge:
         except asyncio.CancelledError:
             return
         self._words_since_eot = False
+        self._barge_in_open = False
         self._pending_segments = 0  # anything still outstanding was given up on
         await self._report_activity()
         await self.events.put({"type": "end_of_turn", "ts_us": self.now_us(), "payload": {}})

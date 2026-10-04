@@ -317,6 +317,26 @@ async def test_no_end_of_turn_without_any_words_since_the_last_one():
     assert await _drain_nowait(events) == []
 
 
+async def test_a_wordless_barge_in_still_ends_its_turn():
+    """4 Oct voice run (housing_15): speech over the agent's ACK produced no
+    transcript. The interruption had opened a turn in the kernel; without an
+    end-of-turn it stayed open and held the pending search forever."""
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
+    bridge.drop_filler_segments = True
+    bridge.on_agent_speaking_changed(True)
+    await bridge.on_speech_start()
+    bridge.on_agent_speaking_changed(False)
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("Hmm.")  # dropped: no words
+    await asyncio.sleep(0.06)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["interruption", "end_of_turn"]
+    await bridge.on_speech_start()  # later noise, not over the agent: nothing to close
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("you")
+    await asyncio.sleep(0.06)
+    assert await _drain_nowait(events) == []
+
+
 async def test_one_end_of_turn_per_turn():
     bridge, events, _actions, _said = _make_bridge(t_eot_ms=20)
     await bridge.on_speech_start()
