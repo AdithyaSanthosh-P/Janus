@@ -75,26 +75,27 @@ Seeds and randomness: the model call uses temperature 0 and the kernel is determ
 ## How Janus works
 
 ```mermaid
+%%{init: {'flowchart': {'nodeSpacing': 25, 'rankSpacing': 35, 'padding': 8}}}%%
 flowchart TB
     U(["User · Voice & Camera"])
     ROOM[["LiveKit WebRTC Room"]]
     U <-->|"audio / video"| ROOM
 
-    subgraph EARS["1. Ears · Local Perception"]
+    subgraph EARS["1. Ears · Local"]
         direction TB
         VAD["Silero VAD"]
-        ASR["STT: gpt-4o-mini-transcribe"]
-        CAM["Camera: 1 fps JPEG sampler"]
+        ASR["STT<br/>gpt-4o-mini-transcribe"]
+        CAM["Camera<br/>1 fps JPEG"]
         VAD --> ASR
         VAD --> CAM
     end
     ROOM --> VAD
 
-    subgraph KERNEL["2. Janus Synchronous Kernel · ≤5 ms"]
+    subgraph KERNEL["2. Synchronous Kernel · ≤5 ms"]
         direction TB
         MAILBOX["Ordered Event Mailbox"]
-        ENGINE{{"8-Phase Step Engine<br/>Order → Apply → Invalidate<br/>Decide → Emit → Commit"}}
-        STORE[("Versioned Session Store<br/>facts · effect ledger · floor")]
+        ENGINE{{"8-Phase Step Engine"}}
+        STORE[("Versioned<br/>Session Store")]
         MAILBOX --> ENGINE
         ENGINE <--> STORE
     end
@@ -103,28 +104,32 @@ flowchart TB
 
     subgraph WORKERS["3. Async Workers · Propose Only"]
         direction TB
-        POOL["Worker Subsystems<br/>Interpreter · Planner · Composer · Vision"]
-        LLM(["Gemini 3.6 Flash (Hosted API)"])
+        POOL["Interpreter · Planner · Composer · Vision"]
+        LLM(["Gemini 3.6 Flash"])
         POOL <--> LLM
     end
-    ENGINE -.->|"frozen snapshot"| POOL
-    POOL -.->|"proposals (with read sets)"| MAILBOX
+    ENGINE -.->|snapshot| POOL
+    POOL -.->|proposals| MAILBOX
 
-    subgraph SAFETY["4. Admission & Tool Ecosystem"]
+    subgraph SAFETY["4. Admission & Tools"]
         direction TB
-        GATE{"CommitGate<br/>G1–G11 & settle window"}
-        TOOLS[("Tool Backend<br/>FDB-v3 APIs & Device Care")]
-        GATE ==>|"admitted writes"| TOOLS
+        GATE{"CommitGate · G1–G11"}
+        TOOLS[("Tool Backend<br/>FDB-v3 APIs")]
+        GATE ==>|admitted| TOOLS
     end
-    ENGINE ==>|"proposed writes"| GATE
+    ENGINE ==>|writes| GATE
     TOOLS -.->|results| MAILBOX
 
-    subgraph MOUTH["5. Mouth · Local TTS"]
+    subgraph MOUTH["5. Mouth · Local"]
         direction TB
-        TTS["Kokoro-82M"]
+        TTS["Kokoro-82M TTS"]
     end
-    ENGINE -->|"spoken text"| TTS
+    ENGINE -->|speech| TTS
     TTS -->|audio| ROOM
+
+    %% invisible links: force Workers -> Admission -> Mouth to stack vertically
+    LLM ~~~ GATE
+    TOOLS ~~~ TTS
 ```
 
 - **The ears** turn the room audio into words and sample video frames. They never decide
