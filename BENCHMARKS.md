@@ -6,9 +6,9 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 
 | File | One row per | Use it for |
 |---|---|---|
-| `runs.csv` | scored run (86) | score vs time, configuration comparisons |
+| `runs.csv` | scored run (88) | score vs time, configuration comparisons |
 | `recordings.csv` | scenario in each text-replay run (2,593) | per-scenario and per-domain pass rates, text-replay latency |
-| `voice_recordings.csv` | recording in each voice run (702) | per-speaker before/after, turn-ending evidence, latency |
+| `voice_recordings.csv` | recording in each voice run (902) | per-speaker before/after, turn-ending evidence, latency |
 | `failures.csv` | failing recording in an analysed failure set (155) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
 | `other_measurements.csv` | measurement | tests, kernel latency, exploration, speech round trip, reference numbers |
@@ -125,6 +125,8 @@ Voice runs stream FDB's recordings through LiveKit to the Janus worker (speech r
 | 2026-10-03 | `cloud_20261003_121822` | judged | 65/100 | 65.0% | 0.917 | 0.704 | 9.0 s | All 100 recordings, judged, commit 054c305 (fix pass of 3 Oct), same box and providers as cloud_20261002_182600: 65/100. Hosted speech-to-text was slower that day; 19 turns closed while their last segment was still being transcribed (3 in the 73% run), splitting requests. Fixed in a8d1fcd |
 | 2026-10-03 | `cloud_20261003_143517` | judged | 24/32 | 75.0% | 0.963 | 0.807 | 7.1 s | Re-test of the 23 ids (32 recordings) hit by the early turn close, commit a8d1fcd (the bridge waits for a running transcription): 24/32, against 15/32 in cloud_20261003_121822 and 23/32 in cloud_20261002_182600; no turn closed before its transcript |
 | 2026-10-03 | `cloud_20261003_180457` | judged | 74/100 | 74.0% | 0.959 | 0.780 | 8.5 s | All 100 recordings, judged, commit e296c85 (bridge waits for running transcriptions, review-pass fixes), same box and providers: 74/100, no turn closed before its transcript, response quality 0.72, turn-taking 100/100. Against the 73% run: 4 recordings better, 3 worse; against the 65% run: 10 better, 1 worse |
+| 2026-10-04 | `cloud_20261004_105851` | judged | 73/100 | 73.0% | 0.953 | 0.767 | 7.5 s | All 100 recordings, judged, commit d1732c5 (conditional-branch, filter-update, identifier and value-form fixes), native path, RTX 3090: 73/100. The judge's OpenAI quota ran out for 53 of 100 response-quality scores (pass/fail and argument scoring unaffected). Against the 74% run: 4 better, 5 worse (two conditional recordings by design, two speech-to-text, one value form since fixed) |
+| 2026-10-04 | `cloud_20261004_151517` | judged | 74/100 | 74.0% | 0.964 | 0.807 | 7.1 s | All 100 recordings, judged, commit 1500c23, through ./reproduce.sh (Docker) on a clean Ubuntu 24.04 VM with an RTX 3090: 74/100, tool selection 0.964, argument accuracy 0.807, response quality 0.69, first word 7.1 s, no client aborts, no API errors |
 
 Read these with care:
 
@@ -485,6 +487,8 @@ The commit column is the code the run used (`-dirty` means uncommitted changes a
 | 2026-10-03 | `text_textreplay_pets_1003` | text_replay | debug | judged | 0/6 | 0.0% | 0.667 | 0.000 | gemini-3.6-flash | 6ddb2c9-dirty |
 | 2026-10-03 | `text_textreplay_pets_base_1003` | text_replay | debug | judged | 0/6 | 0.0% | 0.667 | 0.000 | gemini-3.6-flash | 6ddb2c9-dirty |
 | 2026-10-03 | `text_textreplay_review_1003` | text_replay | full100 | judged | 77/100 | 77.0% | 0.914 | 0.798 | gemini-3.6-flash | 830a672-dirty |
+| 2026-10-04 | `cloud_20261004_105851` | voice_cloud | full100 | judged | 73/100 | 73.0% | 0.953 | 0.767 | gemini-3.6-flash | d1732c55 |
+| 2026-10-04 | `cloud_20261004_151517` | voice_cloud | full100 | judged | 74/100 | 74.0% | 0.964 | 0.807 | gemini-3.6-flash | 1500c231 |
 | 2026-10-04 | `text_textreplay_cond_1004` | text_replay | subset | judged | 0/4 | 0.0% | 0.659 | 0.500 | gemini-3.6-flash | 6f3b5af-dirty |
 | 2026-10-04 | `text_textreplay_cond_rule_1004` | text_replay | full100 | judged | 76/100 | 76.0% | 0.970 | 0.813 | gemini-3.6-flash | 8a8122d-dirty |
 | 2026-10-04 | `text_textreplay_finance_typenoun` | text_replay | subset | judged | 25/25 | 100.0% | 1.000 | 1.000 | gemini-3.6-flash | e296c85-dirty |

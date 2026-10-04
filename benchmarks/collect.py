@@ -44,6 +44,8 @@ ARCHIVES = [
     ("docs/runs/janus_fdbv3_voice_full100b_2026-10-03.tgz", "janus_fdbv3_voice_full100b_2026-10-03", "cloud_20261003_121822"),
     ("docs/runs/janus_fdbv3_voice_retest32_2026-10-03.tgz", "janus_fdbv3_voice_retest32_2026-10-03", "cloud_20261003_143517"),
     ("docs/runs/janus_fdbv3_voice_full100c_2026-10-03.tgz", "janus_fdbv3_voice_full100c_2026-10-03", "cloud_20261003_180457"),
+    ("docs/runs/janus_fdbv3_voice_full100d_2026-10-04.tgz", "janus_fdbv3_voice_full100d_2026-10-04", "cloud_20261004_105851"),
+    ("docs/runs/janus_fdbv3_voice_docker100_2026-10-04.tgz", "janus_fdbv3_voice_docker100_2026-10-04", "cloud_20261004_151517"),
 ]
 
 # run id -> (class, phase, description). class: full100 | subset | debug
@@ -87,6 +89,8 @@ LABELS = {
     "cloud_20261002_182600": ("full100", "Cloud", "All 100 recordings, judged, current code (commit 8020f79 plus the native setup fix), native path on a clean RTX 3090 box, hosted speech-to-text; first full run after the turn-ending fixes (run 3 Oct IST, box clock 2 Oct UTC)"),
     "cloud_20261003_121822": ("full100", "Cloud", "All 100 recordings, judged, commit 054c305 (fix pass of 3 Oct), same box and providers as cloud_20261002_182600: 65/100. Hosted speech-to-text was slower that day; 19 turns closed while their last segment was still being transcribed (3 in the 73% run), splitting requests. Fixed in a8d1fcd"),
     "cloud_20261003_143517": ("subset", "Cloud", "Re-test of the 23 ids (32 recordings) hit by the early turn close, commit a8d1fcd (the bridge waits for a running transcription): 24/32, against 15/32 in cloud_20261003_121822 and 23/32 in cloud_20261002_182600; no turn closed before its transcript"),
+    "cloud_20261004_105851": ("full100", "Cloud", "All 100 recordings, judged, commit d1732c5 (conditional-branch, filter-update, identifier and value-form fixes), native path, RTX 3090: 73/100. The judge's OpenAI quota ran out for 53 of 100 response-quality scores (pass/fail and argument scoring unaffected). Against the 74% run: 4 better, 5 worse (two conditional recordings by design, two speech-to-text, one value form since fixed)"),
+    "cloud_20261004_151517": ("full100", "Cloud", "All 100 recordings, judged, commit 1500c23, through ./reproduce.sh (Docker) on a clean Ubuntu 24.04 VM with an RTX 3090: 74/100, tool selection 0.964, argument accuracy 0.807, response quality 0.69, first word 7.1 s, no client aborts, no API errors"),
     "cloud_20261003_180457": ("full100", "Cloud", "All 100 recordings, judged, commit e296c85 (bridge waits for running transcriptions, review-pass fixes), same box and providers: 74/100, no turn closed before its transcript, response quality 0.72, turn-taking 100/100. Against the 73% run: 4 recordings better, 3 worse; against the 65% run: 10 better, 1 worse"),
     "text_textreplay_travel_typenoun": ("subset", "3 Oct", "Travel domain (20 recordings) after the type-value rules: 19/20 (travel_02 is the P9-9-9-90011 label); every doc_type canonical"),
     "text_textreplay_finance_typenoun": ("subset", "3 Oct", "Finance domain (25 recordings) after the <noun>_type rule (b922183): 25/25, every card and bill type in its bare form"),
