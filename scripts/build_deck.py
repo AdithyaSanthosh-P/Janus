@@ -168,7 +168,7 @@ def build(args) -> Presentation:
     title(s, "Results on Full-Duplex-Bench v3")
     set_text(body_box(s, 0.9, 5.05, 10.6, 1.6), [
         "Text replay feeds ground-truth transcripts: it measures the reasoning and safety core, not speech or latency. Voice row: all 100 recordings on the final code (3 Oct); three full voice runs that day scored 73, 65 and 74.",
-        "Housing is weakest (35% text), as for every published system. The organizers' re-run of ./reproduce.sh is what scores.",
+        "Housing is weakest (35% text), as for every published system; 17 of the 26 voice misses are labels that disagree with the published tools or the recording (README: Benchmark labels). The organizers' re-run of ./reproduce.sh is what scores.",
     ], size=14)
     table(s, 0.9, 1.6, 10.6, [
         ["System (FDB-v3, gpt-4o judge)", "Pass@1", "Tool sel.", "Arg acc.", "Resp. qual."],
@@ -198,7 +198,7 @@ def build(args) -> Presentation:
         "Stack: LiveKit Agents · Silero VAD · faster-whisper large-v3-turbo · Kokoro-82M · Gemini 3.6 Flash (hosted) · Python 3.11, Docker.",
         "622 deterministic tests (stepped clock, scripted model), TraceChecker on every run, adversarial explorer over 19 race scenarios.",
         "One-command reproduction: pinned FDB commit, sha256-checked data, weights baked into the image.",
-        "Limits: the full voice run predates the turn-ending fixes; housing 35%; the hosted model is not bit-reproducible; the extension's device backend is simulated.",
+        "Limits: Janus follows the published tool contract, not labels that disagree with it (e.g. an undeclared pets_allowed); housing 35%; the hosted model is not bit-reproducible; the extension's device backend is simulated.",
     ], size=20)
 
     # 8. what's next -----------------------------------------------------------------------------
