@@ -1,0 +1,11 @@
+pluginManagement {
+    includeBuild("../node_modules/@react-native/gradle-plugin")
+}
+
+plugins {
+    id("com.facebook.react.settings")
+}
+
+rootProject.name = 'JanusCompanion'
+include ':app'
+includeBuild('../node_modules/@react-native/gradle-plugin')
