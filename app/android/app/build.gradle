@@ -1,21 +1,28 @@
-apply plugin: "com.android.application"
-apply plugin: "org.jetbrains.kotlin.android"
-apply plugin: "com.facebook.react"
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("com.facebook.react")
+}
+
+project.ext.set("hermesEnabled", true)
+project.ext.react = [
+    enableHermes: true
+]
 
 react {
     autolinkLibrariesWithApp()
 }
 
 android {
-    ndkVersion rootProject.ext.ndkVersion
-    buildToolsVersion rootProject.ext.buildToolsVersion
-    compileSdk rootProject.ext.compileSdkVersion
+    ndkVersion = "27.1.12297006"
+    compileSdk 35
+    compileSdkVersion 35
 
     namespace "com.januscompanion"
     defaultConfig {
         applicationId "com.januscompanion"
-        minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
+        minSdk 24
+        targetSdk 34
         versionCode 1
         versionName "1.0"
     }
@@ -43,9 +50,4 @@ android {
 
 dependencies {
     implementation("com.facebook.react:react-android")
-    if (hermesEnabled.toBoolean()) {
-        implementation("com.facebook.react:hermes-android")
-    } else {
-        implementation("org.webkit:android-jsc:+")
-    }
 }

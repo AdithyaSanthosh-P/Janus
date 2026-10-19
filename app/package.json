@@ -8,7 +8,7 @@
     "start": "react-native start",
     "test": "jest",
     "lint": "eslint .",
-    "postinstall": "node -e \"const fs=require('fs'),p='node_modules/@react-native-community/cli-server-api/build/index.js';if(fs.existsSync(p)){let c=fs.readFileSync(p,'utf8');if(!c.includes('exports.indexPageMiddleware')){fs.appendFileSync(p,'\\nexports.indexPageMiddleware=_indexPageMiddleware.default;\\n');}}\""
+    "postinstall": "node -e \"const fs=require('fs'),path=require('path'),cp=require('child_process'),p='node_modules/@react-native-community/cli-server-api/build/index.js';if(fs.existsSync(p)){let c=fs.readFileSync(p,'utf8');if(!c.includes('exports.indexPageMiddleware')){fs.appendFileSync(p,'\\nexports.indexPageMiddleware=_indexPageMiddleware.default;\\n');}}const svgDir='node_modules/react-native-svg/android/src/main/java/com/facebook/react/uimanager';if(fs.existsSync('node_modules/react-native-svg')){fs.mkdirSync(svgDir,{recursive:true});fs.writeFileSync(path.join(svgDir,'ViewManagerWithGeneratedInterface.java'),'package com.facebook.react.uimanager;\\npublic interface ViewManagerWithGeneratedInterface {}\\n');}const junc='node_modules/react-native-reanimated/android/Common';if(!fs.existsSync(junc)&&fs.existsSync('node_modules/react-native-reanimated/Common')){try{cp.execSync('cmd /c mklink /J \\\"'+path.resolve(junc)+'\\\" \\\"'+path.resolve('node_modules/react-native-reanimated/Common')+'\\\"');}catch(e){}}const rc='node_modules/react-native-reanimated/android/CMakeLists.txt';if(fs.existsSync(rc)){let c=fs.readFileSync(rc,'utf8');if(c.includes('../Common/cpp')){fs.writeFileSync(rc,c.replace('../Common/cpp','Common/cpp'));}}\""
   },
   "dependencies": {
     "@livekit/react-native": "^3.1.0",
@@ -18,10 +18,10 @@
     "lucide-react-native": "^0.454.0",
     "react": "18.3.1",
     "react-native": "0.76.2",
-    "react-native-gesture-handler": "^2.20.2",
-    "react-native-reanimated": "^3.16.1",
+    "react-native-gesture-handler": "^2.21.2",
+    "react-native-reanimated": "3.16.2",
     "react-native-safe-area-context": "^4.12.0",
-    "react-native-svg": "^15.8.0",
+    "react-native-svg": "^15.16.0",
     "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
