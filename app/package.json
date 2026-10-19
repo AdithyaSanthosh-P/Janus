@@ -7,7 +7,8 @@
     "ios": "react-native run-ios",
     "start": "react-native start",
     "test": "jest",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "postinstall": "node -e \"const fs=require('fs'),p='node_modules/@react-native-community/cli-server-api/build/index.js';if(fs.existsSync(p)){let c=fs.readFileSync(p,'utf8');if(!c.includes('exports.indexPageMiddleware')){fs.appendFileSync(p,'\\nexports.indexPageMiddleware=_indexPageMiddleware.default;\\n');}}\""
   },
   "dependencies": {
     "@livekit/react-native": "^3.1.0",
