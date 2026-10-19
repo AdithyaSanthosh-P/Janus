@@ -1,38 +1,46 @@
-import test from 'node:test';
-import assert from 'node:assert';
 import { demoPlaybackService } from '../demoPlaybackService';
 import { janusStore } from '../../store/janusStore';
 
-test('DemoPlaybackService handles play, pause, speed toggle, and reset', async () => {
-  demoPlaybackService.reset();
-  const initialStatus = demoPlaybackService.getStatus();
-  assert.strictEqual(initialStatus.isPlaying, false);
-  assert.strictEqual(initialStatus.currentIndex, 0);
+describe('DemoPlaybackService', () => {
+  beforeEach(() => {
+    demoPlaybackService.reset();
+  });
 
-  // Speed adjustments
-  demoPlaybackService.setSpeed(2.0);
-  assert.strictEqual(demoPlaybackService.getStatus().speed, 2.0);
-  demoPlaybackService.setSpeed(1.0);
-  assert.strictEqual(demoPlaybackService.getStatus().speed, 1.0);
+  afterEach(() => {
+    demoPlaybackService.reset();
+  });
 
-  // Trigger play
-  demoPlaybackService.play();
-  assert.strictEqual(demoPlaybackService.getStatus().isPlaying, true);
+  it('handles play, pause, speed toggle, and reset', async () => {
+    const initialStatus = demoPlaybackService.getStatus();
+    expect(initialStatus.isPlaying).toBe(false);
+    expect(initialStatus.currentIndex).toBe(0);
 
-  // Let it process initial zero-delay events
-  await new Promise(resolve => setTimeout(resolve, 80));
+    // Speed adjustments
+    demoPlaybackService.setSpeed(2.0);
+    expect(demoPlaybackService.getStatus().speed).toBe(2.0);
+    demoPlaybackService.setSpeed(1.0);
+    expect(demoPlaybackService.getStatus().speed).toBe(1.0);
 
-  assert.ok(demoPlaybackService.getStatus().currentIndex > 0);
-  const state = janusStore.getState();
-  assert.strictEqual(state.connectionStatus, 'demo');
-  assert.ok(state.backend);
+    // Trigger play
+    demoPlaybackService.play();
+    expect(demoPlaybackService.getStatus().isPlaying).toBe(true);
 
-  // Pause
-  demoPlaybackService.pause();
-  assert.strictEqual(demoPlaybackService.getStatus().isPlaying, false);
+    // Let it process initial zero-delay events
+    await new Promise((resolve) => setTimeout(resolve, 80));
 
-  // Reset
-  demoPlaybackService.reset();
-  assert.strictEqual(demoPlaybackService.getStatus().currentIndex, 0);
-  assert.strictEqual(demoPlaybackService.getStatus().isPlaying, false);
+    expect(demoPlaybackService.getStatus().currentIndex).toBeGreaterThan(0);
+    const state = janusStore.getState();
+    expect(state.connectionStatus).toBe('demo');
+    expect(state.backend).toBeDefined();
+
+    // Pause
+    demoPlaybackService.pause();
+    expect(demoPlaybackService.getStatus().isPlaying).toBe(false);
+
+    // Reset
+    demoPlaybackService.reset();
+    expect(demoPlaybackService.getStatus().currentIndex).toBe(0);
+    expect(demoPlaybackService.getStatus().isPlaying).toBe(false);
+  });
 });
+
