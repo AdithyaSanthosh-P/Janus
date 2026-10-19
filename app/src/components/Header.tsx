@@ -188,12 +188,13 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Text
               style={{
-                fontSize: 12,
-                fontWeight: '600',
+                fontSize: 11,
+                fontWeight: '700',
+                letterSpacing: 0.5,
                 color: isDark ? '#fafafa' : '#334155',
               }}
             >
-              {isDark ? '☀️' : '🌙'}
+              {isDark ? 'LIGHT' : 'DARK'}
             </Text>
           </TouchableOpacity>
         </View>

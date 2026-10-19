@@ -116,22 +116,20 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
           {card.security && (
             <View
               style={{
-                paddingHorizontal: 6,
+                paddingHorizontal: 8,
                 paddingVertical: 2,
                 borderRadius: 6,
                 backgroundColor: isDark ? 'rgba(245, 158, 11, 0.2)' : '#fef3c7',
                 borderWidth: 1,
                 borderColor: '#f59e0b',
-                flexDirection: 'row',
                 alignItems: 'center',
-                gap: 4,
               }}
             >
-              <Text style={{ fontSize: 10 }}>🔒</Text>
               <Text
                 style={{
                   fontSize: 10,
-                  fontWeight: '700',
+                  fontWeight: '800',
+                  letterSpacing: 0.5,
                   color: '#f59e0b',
                   textTransform: 'uppercase',
                 }}
@@ -334,7 +332,7 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
               color: isDark ? '#6ee7b7' : '#047857',
             }}
           >
-            ✓ {card.resultSummary || 'Confirmed by SmartThings cloud'}
+            {card.resultSummary || 'Confirmed by SmartThings cloud'}
           </Text>
         </View>
       )}
@@ -358,7 +356,7 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
               color: isDark ? '#6ee7b7' : '#047857',
             }}
           >
-            ✓ {card.resultSummary || 'Already in target state; duplicate blocked'}
+            {card.resultSummary || 'Already in target state; duplicate blocked'}
           </Text>
         </View>
       )}
@@ -382,7 +380,7 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
               color: '#d97706',
             }}
           >
-            ⚠ {card.resultSummary || 'Command sent, but cloud did not confirm state'}
+            {card.resultSummary || 'Command sent, but cloud did not confirm state'}
           </Text>
           <Text
             style={{
@@ -415,7 +413,7 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
               color: '#ef4444',
             }}
           >
-            ✕ {card.resultSummary || 'Action failed'}
+            {card.resultSummary || 'Action failed'}
           </Text>
         </View>
       )}

@@ -120,8 +120,8 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
                 backgroundColor: isDark ? '#27272a' : '#f1f5f9',
               }}
             >
-              <Text style={{ fontSize: 14, color: isDark ? '#fafafa' : '#334155' }}>
-                ✕
+              <Text style={{ fontSize: 12, fontWeight: '700', color: isDark ? '#fafafa' : '#334155' }}>
+                Close
               </Text>
             </TouchableOpacity>
           </View>
@@ -242,7 +242,26 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
                   Publish phone mic to Janus agent
                 </Text>
               </View>
-              <Text style={{ fontSize: 18 }}>{enableMic ? '✅' : '⚪'}</Text>
+              <View
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 4,
+                  borderRadius: 6,
+                  backgroundColor: enableMic
+                    ? (isDark ? 'rgba(16, 185, 129, 0.2)' : '#dcfce7')
+                    : (isDark ? '#27272a' : '#e2e8f0'),
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 11,
+                    fontWeight: '800',
+                    color: enableMic ? '#10b981' : (isDark ? '#71717a' : '#64748b'),
+                  }}
+                >
+                  {enableMic ? 'ON' : 'OFF'}
+                </Text>
+              </View>
             </TouchableOpacity>
 
             {/* Connect / Disconnect Buttons */}
@@ -301,7 +320,7 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
                   color: isDark ? '#fafafa' : '#334155',
                 }}
               >
-                ▶ Run Offline Demo Session (Fallback Mode)
+                Run Offline Demo Session (Fallback Mode)
               </Text>
             </TouchableOpacity>
           </ScrollView>

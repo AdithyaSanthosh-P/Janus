@@ -38,37 +38,37 @@ export const DeviceCard: React.FC<DeviceCardProps> = ({ device, isDark }) => {
   }));
 
   // Device display formatting
-  let icon = '🏠';
+  let tag = 'DEVICE';
   let formattedValue = String(device.value);
   let statusColor = '#10b981'; // default emerald
 
   switch (device.device) {
     case 'dev-lock':
-      icon = device.value === 'locked' ? '🔒' : '🔓';
+      tag = 'LOCK';
       formattedValue = device.value === 'locked' ? 'Locked' : 'Unlocked';
       statusColor = device.value === 'locked' ? '#10b981' : '#f59e0b';
       break;
 
     case 'dev-garage':
-      icon = '🚗';
+      tag = 'GARAGE';
       formattedValue = device.value === 'closed' ? 'Closed' : 'Open';
       statusColor = device.value === 'closed' ? '#10b981' : '#3b82f6';
       break;
 
     case 'dev-ac':
-      icon = '❄️';
+      tag = 'CLIMATE';
       formattedValue = `${device.value} °C`;
       statusColor = '#06b6d4'; // cyan
       break;
 
     case 'dev-light':
-      icon = device.value === 'on' ? '💡' : '🌑';
+      tag = 'LIGHT';
       formattedValue = device.value === 'on' ? 'On' : 'Off';
       statusColor = device.value === 'on' ? '#f59e0b' : '#71717a';
       break;
 
     case 'dev-washer':
-      icon = '🧺';
+      tag = 'WASHER';
       if (device.value === 'pause') {
         formattedValue = 'Paused · 4C';
         statusColor = '#ef4444'; // red error code
@@ -101,10 +101,28 @@ export const DeviceCard: React.FC<DeviceCardProps> = ({ device, isDark }) => {
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-between',
-          marginBottom: 6,
+          marginBottom: 8,
         }}
       >
-        <Text style={{ fontSize: 18 }}>{icon}</Text>
+        <View
+          style={{
+            paddingHorizontal: 7,
+            paddingVertical: 2.5,
+            borderRadius: 6,
+            backgroundColor: isDark ? '#27272a' : '#f1f5f9',
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 10,
+              fontWeight: '800',
+              letterSpacing: 0.8,
+              color: isDark ? '#d4d4d8' : '#475569',
+            }}
+          >
+            {tag}
+          </Text>
+        </View>
         <View
           style={{
             width: 8,
