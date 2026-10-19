@@ -6,13 +6,23 @@ import Animated, {
   withSpring,
   withRepeat,
 } from 'react-native-reanimated';
+import {
+  Radio,
+  Sun,
+  Moon,
+  Play,
+  Pause,
+  RotateCcw,
+  Mic,
+  MicOff,
+} from 'lucide-react-native';
 import { WaveformIndicator } from './WaveformIndicator';
 import { LUCID_SPRING_CONFIG } from '../theme/motion';
 import { BackendType } from '../types/janus';
 
 /**
  * 3-Bullet Architecture Plan:
- * - Primitives: React Native Reusables Header container, status pills, and action badges.
+ * - Primitives: Header container with vector action icons, status pills, and controls.
  * - Animation: Reanimated 3 with scale pulse on active mic status and spring transitions on mode switch.
  * - Theming: Native dark (bg-zinc-950, border-zinc-800) and light (bg-white, border-slate-200) support.
  */
@@ -159,12 +169,16 @@ export const Header: React.FC<HeaderProps> = ({
             onPress={onOpenConnectModal}
             activeOpacity={0.7}
             style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 5,
               paddingHorizontal: 10,
-              paddingVertical: 5,
+              paddingVertical: 6,
               borderRadius: 8,
               backgroundColor: isDark ? '#27272a' : '#f1f5f9',
             }}
           >
+            <Radio size={13} color={isDark ? '#fafafa' : '#334155'} />
             <Text
               style={{
                 fontSize: 12,
@@ -180,22 +194,19 @@ export const Header: React.FC<HeaderProps> = ({
             onPress={onToggleTheme}
             activeOpacity={0.7}
             style={{
-              paddingHorizontal: 10,
-              paddingVertical: 5,
+              width: 32,
+              height: 32,
               borderRadius: 8,
+              alignItems: 'center',
+              justifyContent: 'center',
               backgroundColor: isDark ? '#27272a' : '#f1f5f9',
             }}
           >
-            <Text
-              style={{
-                fontSize: 11,
-                fontWeight: '700',
-                letterSpacing: 0.5,
-                color: isDark ? '#fafafa' : '#334155',
-              }}
-            >
-              {isDark ? 'LIGHT' : 'DARK'}
-            </Text>
+            {isDark ? (
+              <Sun size={16} color="#fbbf24" />
+            ) : (
+              <Moon size={16} color="#6366f1" />
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -217,7 +228,7 @@ export const Header: React.FC<HeaderProps> = ({
               alignItems: 'center',
               gap: 6,
               paddingHorizontal: 8,
-              paddingVertical: 3,
+              paddingVertical: 4,
               borderRadius: 10,
               backgroundColor: isDark ? '#18181b' : '#f8fafc',
               borderWidth: 1,
@@ -251,7 +262,7 @@ export const Header: React.FC<HeaderProps> = ({
                 alignItems: 'center',
                 gap: 5,
                 paddingHorizontal: 8,
-                paddingVertical: 3,
+                paddingVertical: 4,
                 borderRadius: 10,
                 backgroundColor: userSpeaking
                   ? isDark
@@ -266,6 +277,11 @@ export const Header: React.FC<HeaderProps> = ({
               micAnimatedStyle,
             ]}
           >
+            {userSpeaking ? (
+              <Mic size={13} color="#3b82f6" />
+            ) : (
+              <MicOff size={13} color={isDark ? '#71717a' : '#94a3b8'} />
+            )}
             <WaveformIndicator active={userSpeaking} size="sm" color="#3b82f6" />
             <Text
               style={{
@@ -279,18 +295,26 @@ export const Header: React.FC<HeaderProps> = ({
           </Animated.View>
         </View>
 
-        {/* Demo playback bar (visible or accessible anytime for offline demo) */}
+        {/* Demo playback bar */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <TouchableOpacity
             onPress={onToggleDemoPlay}
             activeOpacity={0.7}
             style={{
-              paddingHorizontal: 8,
-              paddingVertical: 3,
-              borderRadius: 6,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              paddingHorizontal: 9,
+              paddingVertical: 5,
+              borderRadius: 7,
               backgroundColor: demoPlaying ? '#ef4444' : '#10b981',
             }}
           >
+            {demoPlaying ? (
+              <Pause size={12} color="#ffffff" fill="#ffffff" />
+            ) : (
+              <Play size={12} color="#ffffff" fill="#ffffff" />
+            )}
             <Text style={{ fontSize: 11, fontWeight: '700', color: '#ffffff' }}>
               {demoPlaying ? 'Pause' : 'Play Demo'}
             </Text>
@@ -300,9 +324,9 @@ export const Header: React.FC<HeaderProps> = ({
             onPress={onToggleDemoSpeed}
             activeOpacity={0.7}
             style={{
-              paddingHorizontal: 6,
-              paddingVertical: 3,
-              borderRadius: 6,
+              paddingHorizontal: 7,
+              paddingVertical: 5,
+              borderRadius: 7,
               backgroundColor: isDark ? '#27272a' : '#e2e8f0',
             }}
           >
@@ -321,12 +345,16 @@ export const Header: React.FC<HeaderProps> = ({
             onPress={onResetDemo}
             activeOpacity={0.7}
             style={{
-              paddingHorizontal: 6,
-              paddingVertical: 3,
-              borderRadius: 6,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              paddingHorizontal: 7,
+              paddingVertical: 5,
+              borderRadius: 7,
               backgroundColor: isDark ? '#27272a' : '#e2e8f0',
             }}
           >
+            <RotateCcw size={11} color={isDark ? '#fafafa' : '#334155'} />
             <Text
               style={{
                 fontSize: 11,
@@ -344,3 +372,4 @@ export const Header: React.FC<HeaderProps> = ({
 };
 
 export default Header;
+

@@ -6,6 +6,23 @@ import Animated, {
   withSpring,
   interpolate,
 } from 'react-native-reanimated';
+import {
+  ShieldAlert,
+  Ban,
+  CircleCheck,
+  CheckCheck,
+  Clock,
+  CircleHelp,
+  CircleAlert,
+  Send,
+  CircleX,
+  Lock,
+  Thermometer,
+  Lightbulb,
+  Warehouse,
+  WashingMachine,
+  Activity,
+} from 'lucide-react-native';
 import { ActionCardData } from '../types/janus';
 import {
   CardEntryTransition,
@@ -15,7 +32,7 @@ import {
 
 /**
  * 3-Bullet Architecture Plan:
- * - Primitives: React Native Reusables Card, Action Pills, and Status Badges.
+ * - Primitives: Action Card with semantic vector icons for safety states and devices.
  * - Animation: Reanimated 3 with horizontal strike-through line animation and opacity shift on cancelled actions.
  * - Theming: Full dark & light support with semantic status tokens (Emerald, Amber, Sky, Rose, Slate).
  */
@@ -54,36 +71,70 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
   let statusTextColor = isDark ? '#d4d4d8' : '#475569';
   let cardBorderColor = isDark ? '#27272a' : '#e2e8f0';
 
+  let statusIcon = <Clock size={12} color={statusTextColor} />;
+
   if (card.status === 'cancelled') {
     statusBadgeBg = isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2';
     statusBadgeBorder = isDark ? 'rgba(239, 68, 68, 0.3)' : '#fca5a5';
     statusTextColor = '#ef4444';
     cardBorderColor = isDark ? '#3f3f46' : '#cbd5e1';
-  } else if (card.status === 'confirmed' || card.status === 'already') {
+    statusIcon = <Ban size={12} color="#ef4444" />;
+  } else if (card.status === 'confirmed') {
     statusBadgeBg = isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5';
     statusBadgeBorder = isDark ? 'rgba(16, 185, 129, 0.3)' : '#a7f3d0';
     statusTextColor = '#10b981';
     cardBorderColor = isDark ? 'rgba(16, 185, 129, 0.25)' : '#a7f3d0';
-  } else if (card.status === 'held' || card.status === 'waiting_for_yes') {
+    statusIcon = <CircleCheck size={12} color="#10b981" />;
+  } else if (card.status === 'already') {
+    statusBadgeBg = isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5';
+    statusBadgeBorder = isDark ? 'rgba(16, 185, 129, 0.3)' : '#a7f3d0';
+    statusTextColor = '#10b981';
+    cardBorderColor = isDark ? 'rgba(16, 185, 129, 0.25)' : '#a7f3d0';
+    statusIcon = <CheckCheck size={12} color="#10b981" />;
+  } else if (card.status === 'held') {
     statusBadgeBg = isDark ? 'rgba(245, 158, 11, 0.15)' : '#fffbeb';
     statusBadgeBorder = isDark ? 'rgba(245, 158, 11, 0.3)' : '#fde68a';
     statusTextColor = '#f59e0b';
     cardBorderColor = isDark ? 'rgba(245, 158, 11, 0.3)' : '#fde68a';
+    statusIcon = <Clock size={12} color="#f59e0b" />;
+  } else if (card.status === 'waiting_for_yes') {
+    statusBadgeBg = isDark ? 'rgba(14, 165, 233, 0.15)' : '#f0f9ff';
+    statusBadgeBorder = isDark ? 'rgba(14, 165, 233, 0.3)' : '#bae6fd';
+    statusTextColor = '#0284c7';
+    cardBorderColor = isDark ? 'rgba(14, 165, 233, 0.3)' : '#bae6fd';
+    statusIcon = <CircleHelp size={12} color="#0284c7" />;
   } else if (card.status === 'unconfirmed') {
     // Contract Rule: Show as "Sent, not confirmed" in amber, NEVER as done!
     statusBadgeBg = isDark ? 'rgba(245, 158, 11, 0.2)' : '#fef3c7';
     statusBadgeBorder = isDark ? '#f59e0b' : '#f59e0b';
     statusTextColor = '#d97706';
     cardBorderColor = '#f59e0b';
+    statusIcon = <CircleAlert size={12} color="#d97706" />;
   } else if (card.status === 'sent') {
     statusBadgeBg = isDark ? 'rgba(59, 130, 246, 0.15)' : '#eff6ff';
     statusBadgeBorder = isDark ? 'rgba(59, 130, 246, 0.3)' : '#bfdbfe';
     statusTextColor = '#3b82f6';
+    statusIcon = <Send size={12} color="#3b82f6" />;
   } else if (card.status === 'refused' || card.status === 'failed') {
     statusBadgeBg = isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2';
     statusBadgeBorder = isDark ? '#ef4444' : '#ef4444';
     statusTextColor = '#ef4444';
     cardBorderColor = '#ef4444';
+    statusIcon = <CircleX size={12} color="#ef4444" />;
+  }
+
+  // Device Action Icon helper
+  let toolIcon = <Activity size={16} color={isDark ? '#a1a1aa' : '#64748b'} />;
+  if (card.tool.includes('lock')) {
+    toolIcon = <Lock size={16} color={isDark ? '#fafafa' : '#0f172a'} />;
+  } else if (card.tool.includes('cooling') || card.tool.includes('setpoint')) {
+    toolIcon = <Thermometer size={16} color="#06b6d4" />;
+  } else if (card.tool.includes('switch') || card.tool.includes('light')) {
+    toolIcon = <Lightbulb size={16} color="#f59e0b" />;
+  } else if (card.tool.includes('garage')) {
+    toolIcon = <Warehouse size={16} color={isDark ? '#fafafa' : '#0f172a'} />;
+  } else if (card.tool.includes('washer') || card.tool.includes('status')) {
+    toolIcon = <WashingMachine size={16} color="#3b82f6" />;
   }
 
   return (
@@ -116,15 +167,18 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
           {card.security && (
             <View
               style={{
-                paddingHorizontal: 8,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 7,
                 paddingVertical: 2,
                 borderRadius: 6,
                 backgroundColor: isDark ? 'rgba(245, 158, 11, 0.2)' : '#fef3c7',
                 borderWidth: 1,
                 borderColor: '#f59e0b',
-                alignItems: 'center',
               }}
             >
+              <ShieldAlert size={11} color="#f59e0b" />
               <Text
                 style={{
                   fontSize: 10,
@@ -152,9 +206,12 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
           </Text>
         </View>
 
-        {/* Status Pill */}
+        {/* Status Pill with Vector Icon */}
         <View
           style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
             paddingHorizontal: 8,
             paddingVertical: 3,
             borderRadius: 8,
@@ -163,6 +220,7 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
             borderColor: statusBadgeBorder,
           }}
         >
+          {statusIcon}
           <Text
             style={{
               fontSize: 11,
@@ -175,39 +233,63 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
         </View>
       </View>
 
-      {/* Action Title with Strike-Through Line */}
-      <View style={{ position: 'relative', alignSelf: 'flex-start', marginVertical: 2 }}>
-        <Text
+      {/* Action Title with Device Icon & Strike-Through Line */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          position: 'relative',
+          alignSelf: 'flex-start',
+          marginVertical: 2,
+        }}
+      >
+        <View
           style={{
-            fontSize: 16,
-            fontWeight: '700',
-            color: isCancelled
-              ? isDark
-                ? '#71717a'
-                : '#94a3b8'
-              : isDark
-              ? '#fafafa'
-              : '#0f172a',
+            width: 28,
+            height: 28,
+            borderRadius: 7,
+            backgroundColor: isDark ? '#27272a' : '#f1f5f9',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
         >
-          {card.label}
-        </Text>
+          {toolIcon}
+        </View>
+        <View style={{ position: 'relative' }}>
+          <Text
+            style={{
+              fontSize: 15,
+              fontWeight: '700',
+              color: isCancelled
+                ? isDark
+                  ? '#71717a'
+                  : '#94a3b8'
+                : isDark
+                ? '#fafafa'
+                : '#0f172a',
+            }}
+          >
+            {card.label}
+          </Text>
 
-        {/* Animated Strikethrough for "Never Sent" */}
-        <Animated.View
-          style={[
-            {
-              position: 'absolute',
-              left: 0,
-              top: '52%',
-              height: 2.5,
-              backgroundColor: '#ef4444',
-              borderRadius: 1,
-            },
-            animatedStrikeStyle,
-          ]}
-        />
+          {/* Animated Strikethrough for "Never Sent" */}
+          <Animated.View
+            style={[
+              {
+                position: 'absolute',
+                left: 0,
+                top: '52%',
+                height: 2.5,
+                backgroundColor: '#ef4444',
+                borderRadius: 1,
+              },
+              animatedStrikeStyle,
+            ]}
+          />
+        </View>
       </View>
+
 
       {/* Dynamic Content Details by State */}
       {/* 1. Cancelled / Never Sent Reason */}

@@ -4,12 +4,18 @@ import Animated, {
   FadeInUp,
   LinearTransition,
 } from 'react-native-reanimated';
+import {
+  MessageSquareText,
+  User,
+  Sparkles,
+  HelpCircle,
+} from 'lucide-react-native';
 import { CaptionEntry } from '../types/janus';
 import { LUCID_SPRING_CONFIG } from '../theme/motion';
 
 /**
  * 3-Bullet Architecture Plan:
- * - Primitives: React Native Reusables Card container with conversational chat bubbles.
+ * - Primitives: Conversational chat bubbles with speaker icons and live typography.
  * - Animation: Reanimated 3 with springified layout transitions and FadeInUp entry on streaming speech.
  * - Theming: Distinct styling for user, agent, and highlighted clarify queries across dark and light tokens.
  */
@@ -50,17 +56,21 @@ export const CaptionsCard: React.FC<CaptionsCardProps> = ({
           marginBottom: 8,
         }}
       >
-        <Text
-          style={{
-            fontSize: 12,
-            fontWeight: '700',
-            textTransform: 'uppercase',
-            letterSpacing: 0.8,
-            color: isDark ? '#a1a1aa' : '#64748b',
-          }}
-        >
-          Live Conversation
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <MessageSquareText size={14} color={isDark ? '#a1a1aa' : '#64748b'} />
+          <Text
+            style={{
+              fontSize: 12,
+              fontWeight: '700',
+              textTransform: 'uppercase',
+              letterSpacing: 0.8,
+              color: isDark ? '#a1a1aa' : '#64748b',
+            }}
+          >
+            Live Conversation
+          </Text>
+        </View>
+
         {userSpeaking && (
           <Text
             style={{
@@ -141,10 +151,17 @@ export const CaptionsCard: React.FC<CaptionsCardProps> = ({
                   style={{
                     flexDirection: 'row',
                     alignItems: 'center',
-                    gap: 6,
+                    gap: 5,
                     marginBottom: 3,
                   }}
                 >
+                  {isUser ? (
+                    <User size={11} color={isDark ? '#93c5fd' : '#3b82f6'} />
+                  ) : isClarify ? (
+                    <HelpCircle size={11} color="#0284c7" />
+                  ) : (
+                    <Sparkles size={11} color={isDark ? '#a1a1aa' : '#64748b'} />
+                  )}
                   <Text
                     style={{
                       fontSize: 10,
@@ -163,6 +180,7 @@ export const CaptionsCard: React.FC<CaptionsCardProps> = ({
                   >
                     {isUser ? 'You' : isClarify ? 'Janus (Clarification)' : 'Janus'}
                   </Text>
+
 
                   {caption.kind && !isClarify && (
                     <Text

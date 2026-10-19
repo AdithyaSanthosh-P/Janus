@@ -9,10 +9,19 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import {
+  X,
+  Radio,
+  Mic,
+  MicOff,
+  Play,
+  Globe,
+  Key,
+} from 'lucide-react-native';
 
 /**
  * 3-Bullet Architecture Plan:
- * - Primitives: React Native Reusables Sheet / Modal with responsive inputs.
+ * - Primitives: Bottom sheet modal with vector action icons and responsive inputs.
  * - Animation: Native modal slide transition with spring backdrop.
  * - Theming: Full dark (bg-zinc-900) & light (bg-white) tokens.
  */
@@ -91,38 +100,42 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
               marginBottom: 16,
             }}
           >
-            <View>
-              <Text
-                style={{
-                  fontSize: 18,
-                  fontWeight: '800',
-                  color: isDark ? '#fafafa' : '#0f172a',
-                }}
-              >
-                Connect to Janus Agent
-              </Text>
-              <Text
-                style={{
-                  fontSize: 12,
-                  color: isDark ? '#a1a1aa' : '#64748b',
-                  marginTop: 2,
-                }}
-              >
-                LiveKit Room (janus.events topic)
-              </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Radio size={18} color="#3b82f6" />
+              <View>
+                <Text
+                  style={{
+                    fontSize: 18,
+                    fontWeight: '800',
+                    color: isDark ? '#fafafa' : '#0f172a',
+                  }}
+                >
+                  Connect to Janus Agent
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 12,
+                    color: isDark ? '#a1a1aa' : '#64748b',
+                    marginTop: 2,
+                  }}
+                >
+                  LiveKit Room (janus.events topic)
+                </Text>
+              </View>
             </View>
 
             <TouchableOpacity
               onPress={onClose}
               style={{
-                padding: 8,
+                width: 32,
+                height: 32,
                 borderRadius: 8,
+                alignItems: 'center',
+                justifyContent: 'center',
                 backgroundColor: isDark ? '#27272a' : '#f1f5f9',
               }}
             >
-              <Text style={{ fontSize: 12, fontWeight: '700', color: isDark ? '#fafafa' : '#334155' }}>
-                Close
-              </Text>
+              <X size={16} color={isDark ? '#fafafa' : '#334155'} />
             </TouchableOpacity>
           </View>
 
@@ -145,16 +158,18 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
             )}
 
             {/* LiveKit URL Input */}
-            <Text
-              style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: isDark ? '#d4d4d8' : '#334155',
-                marginBottom: 4,
-              }}
-            >
-              LiveKit Server URL
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <Globe size={13} color={isDark ? '#a1a1aa' : '#64748b'} />
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  color: isDark ? '#d4d4d8' : '#334155',
+                }}
+              >
+                LiveKit Server URL
+              </Text>
+            </View>
             <TextInput
               value={url}
               onChangeText={setUrl}
@@ -176,16 +191,18 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
             />
 
             {/* Token Input */}
-            <Text
-              style={{
-                fontSize: 12,
-                fontWeight: '700',
-                color: isDark ? '#d4d4d8' : '#334155',
-                marginBottom: 4,
-              }}
-            >
-              Access Token (Pasted or Scanned)
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <Key size={13} color={isDark ? '#a1a1aa' : '#64748b'} />
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  color: isDark ? '#d4d4d8' : '#334155',
+                }}
+              >
+                Access Token (Pasted or Scanned)
+              </Text>
+            </View>
             <TextInput
               value={token}
               onChangeText={setToken}
@@ -223,25 +240,33 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
                 marginBottom: 16,
               }}
             >
-              <View>
-                <Text
-                  style={{
-                    fontSize: 13,
-                    fontWeight: '700',
-                    color: isDark ? '#fafafa' : '#0f172a',
-                  }}
-                >
-                  Enable Microphone
-                </Text>
-                <Text
-                  style={{
-                    fontSize: 11,
-                    color: isDark ? '#a1a1aa' : '#64748b',
-                  }}
-                >
-                  Publish phone mic to Janus agent
-                </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {enableMic ? (
+                  <Mic size={16} color="#10b981" />
+                ) : (
+                  <MicOff size={16} color={isDark ? '#71717a' : '#64748b'} />
+                )}
+                <View>
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontWeight: '700',
+                      color: isDark ? '#fafafa' : '#0f172a',
+                    }}
+                  >
+                    Enable Microphone
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      color: isDark ? '#a1a1aa' : '#64748b',
+                    }}
+                  >
+                    Publish phone mic to Janus agent
+                  </Text>
+                </View>
               </View>
+
               <View
                 style={{
                   paddingHorizontal: 10,
@@ -285,14 +310,18 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
                 onPress={handleConnect}
                 disabled={isConnecting}
                 style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
                   backgroundColor: '#3b82f6',
                   paddingVertical: 12,
                   borderRadius: 10,
-                  alignItems: 'center',
                   marginBottom: 10,
                   opacity: isConnecting ? 0.7 : 1,
                 }}
               >
+                <Radio size={15} color="#ffffff" />
                 <Text style={{ fontSize: 14, fontWeight: '700', color: '#ffffff' }}>
                   {isConnecting ? 'Connecting...' : 'Join Room & Start Live Feed'}
                 </Text>
@@ -306,13 +335,17 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
                 onClose();
               }}
               style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
                 backgroundColor: isDark ? '#27272a' : '#e2e8f0',
                 paddingVertical: 12,
                 borderRadius: 10,
-                alignItems: 'center',
                 marginBottom: 16,
               }}
             >
+              <Play size={13} color={isDark ? '#fafafa' : '#334155'} fill={isDark ? '#fafafa' : '#334155'} />
               <Text
                 style={{
                   fontSize: 13,
@@ -329,3 +362,4 @@ export const ConnectModal: React.FC<ConnectModalProps> = ({
     </Modal>
   );
 };
+
