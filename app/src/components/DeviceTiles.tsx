@@ -18,7 +18,7 @@ interface DeviceTilesProps {
 }
 
 export const DeviceTiles: React.FC<DeviceTilesProps> = ({ devices, isDark }) => {
-  const deviceList = Object.values(devices);
+  const deviceList: DeviceStateData[] = Object.values(devices);
 
   return (
     <Animated.View layout={AppLayoutTransition} style={{ marginBottom: 16 }}>

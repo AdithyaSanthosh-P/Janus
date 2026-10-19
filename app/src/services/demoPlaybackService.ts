@@ -5,7 +5,7 @@ export class DemoPlaybackService {
   private currentIndex = 0;
   private isPlaying = false;
   private speed = 1.0;
-  private timer: NodeJS.Timeout | null = null;
+  private timer: any = null;
   private listeners: Array<(status: { isPlaying: boolean; speed: number; progress: number }) => void> = [];
 
   public subscribe(listener: (status: { isPlaying: boolean; speed: number; progress: number }) => void) {

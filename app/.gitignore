@@ -1,0 +1,12 @@
+# Node & dependencies
+node_modules/
+.npm/
+
+# Android build outputs
+android/app/build/
+android/.gradle/
+android/build/
+android/app/src/main/assets/index.android.bundle
+
+# Metro cache
+.metro-health-check*
