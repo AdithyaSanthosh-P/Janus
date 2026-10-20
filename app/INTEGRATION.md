@@ -108,3 +108,27 @@ Style: clean and close to the look of a modern Android / Galaxy phone, but **no 
   ```
 
   This needs `.env` with the LiveKit keys and the `livekit` Python package (`pip install -r requirements-speech.txt`). It joins as `janus-replay` and publishes each event on `janus.events` with the original timing.
+
+## 6. Failure drills (app → agent, topic `janus.control`)
+
+The one message the app sends to the agent: a drill, so the demo can show how Janus behaves when something breaks. The agent applies it only when it runs in demo mode with `JANUS_DRILLS=1`, only from a participant that is not the agent, and only with `v == 1`; anything else is ignored (and logged on the agent). `janus.events` is unchanged: the effect of a drill shows up through the ordinary events (`call_result` failed / unconfirmed / already, `device_state`, `agent_said`).
+
+Transport: a LiveKit data packet, reliable, **topic `janus.control`**, one UTF-8 JSON object:
+
+```json
+{"v": 1, "type": "drill", "name": "st_no_confirm", "on": true, "args": {}}
+```
+
+| `name` | `on` | `args` | What happens |
+|---|---|---|---|
+| `st_unreachable` | toggle | — | Every SmartThings call fails as if the network were down. Nothing is sent |
+| `st_no_confirm` | toggle | — | Commands are accepted but the device never changes, so the result is "Sent, not confirmed" |
+| `st_latency` | toggle | `{"ms": 3000}` (default 3000, max 15000) | Every SmartThings call is delayed |
+| `model_slow` | toggle | `{"ms": 4000}` (default 4000, max 15000) | Every model call is delayed; the filler covers the wait |
+| `model_down` | toggle | — | Every model call fails; the agent says it can't reach its reasoning service and that nothing was done |
+| `external_command` | `true` (one-shot) | `{"device": "Janus Lock", "capability": "lock", "command": "unlock"}` | One command sent straight to SmartThings by "someone else", outside Janus. A later request for the same state is answered "already", nothing sent |
+| `reset` | `true` | — | Every drill off |
+
+`external_command` values for the demo devices: lock `lock`/`unlock` (capability `lock`), garage `open`/`close` (capability `garageDoorControl` in mock mode, `doorControl` on the real virtual device), switch `on`/`off` (capability `switch`).
+
+The app keeps its own toggle state (the agent sends no drill events). Put the drills in a hidden drawer, and send `reset` when the drawer's "all off" is pressed or a new session starts.

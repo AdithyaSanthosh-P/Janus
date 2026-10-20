@@ -180,6 +180,7 @@ def demo_config(**overrides) -> Config:
         normalize_spoken_ids=True,
         strict_value_rules_enabled=True,
         never_silent_unclear_enabled=True,
+        interpret_failure_notice_enabled=True,
         unclear_reask_delay_ms=2000,
         turn_stall_salvage_ms=15_000,
         clarify_reextract_enabled=True,

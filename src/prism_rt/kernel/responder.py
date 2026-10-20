@@ -36,6 +36,7 @@ from config.templates import (
     FRESH_VIEW_REQUEST,
     INFORM_DUPLICATE_WRITE,
     INFORM_UNKNOWN_WRITE_OUTCOME,
+    INTERPRET_FAILED,
     UNCLEAR_NO_GOAL,
 )
 from prism_rt.kernel.action_plans import step_failed
@@ -122,6 +123,7 @@ class FastResponder:
         actions.extend(self._inform_write_timeout(store, now_us, step_no))
         actions.extend(self._reconcile_completed_after_cancel(store, now_us, step_no))
         actions.extend(self._unclear_no_goal(store, now_us, step_no))
+        actions.extend(self._interpret_failed(store, now_us, step_no))
         actions.extend(self._honest_reply(store, now_us, step_no))
 
         gid = active_goal_id(store)
@@ -574,6 +576,37 @@ class FastResponder:
                 body=SpeakBody(text=UNCLEAR_NO_GOAL, kind="clarify"),
                 read_set=EMPTY_READ_SET,
                 rule_id="responder.unclear_no_goal",
+            )
+        ]
+
+    def _interpret_failed(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
+        """Config.interpret_failure_notice_enabled: a turn given up on after
+        every interpretation attempt failed (reducers._release_dropped_interpret)
+        is answered once with INTERPRET_FAILED, unless the user has already
+        said more."""
+        fact = store.facts.get("session.interpret_failed_turn")
+        if fact is None or fact.status == FactStatus.RETRACTED:
+            return []
+        turn_id = fact.value
+        already = store.facts.get(f"interpret.{turn_id}.failure_notice_sent")
+        if already is not None and already.status != FactStatus.RETRACTED:
+            return []
+        turns = store.turn_log.all()
+        if turns and turns[-1].turn_id != turn_id:
+            return []
+        store.facts.set(
+            f"interpret.{turn_id}.failure_notice_sent",
+            True,
+            FactStatus.COMMITTED,
+            Provenance(source="system", step_no=step_no, ts_us=now_us),
+            rule="responder.interpret_failed",
+        )
+        return [
+            IntendedAction(
+                action_type=ActionType.SPEAK,
+                body=SpeakBody(text=INTERPRET_FAILED, kind="inform"),
+                read_set=EMPTY_READ_SET,
+                rule_id="responder.interpret_failed",
             )
         ]
 

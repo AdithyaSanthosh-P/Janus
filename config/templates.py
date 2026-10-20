@@ -27,3 +27,6 @@ WATCHDOG_FALLBACK = "I wasn't able to finish in time — here's where things sto
 # tool name in words, {args} the argument values.
 CONFIRM_SECURITY = "That's a security action. Shall I go ahead and {action}{args}?"
 UNCLEAR_NO_GOAL = "Sorry, I didn't quite catch what you'd like me to do — could you say that again?"
+# Said once when a turn's interpretation failed every retry (the model could
+# not be reached): nothing was done, and the user is told so instead of silence.
+INTERPRET_FAILED = "Sorry, I can't reach my reasoning service right now, so I haven't done anything. Please try again in a moment."

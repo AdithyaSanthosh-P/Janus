@@ -207,6 +207,11 @@ class Config:
     # with no goal would also trigger it -- fine for a task-oriented
     # benchmark, a judgment call for a general assistant.
     never_silent_unclear_enabled: bool = False
+    # A turn whose interpretation failed every retry (`max_interpret_retries`,
+    # the model unreachable) is given up on in silence. With this on the user
+    # hears INTERPRET_FAILED once for that turn. Found by the model_down drill
+    # (2026-10-20): the demo profile stayed silent for over 30 s.
+    interpret_failure_notice_enabled: bool = False
     # How long the Q6a re-ask waits after the unclear turn was interpreted,
     # and it is dropped if the user has started another turn by then. Found
     # live (2026-09-27): a hesitant opener ("Um so uh...") followed by a

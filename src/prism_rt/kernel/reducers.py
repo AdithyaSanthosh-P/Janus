@@ -456,6 +456,8 @@ def _release_dropped_interpret(txn: StoreTxn, job, *, failed: bool, now_us: int,
         if pending is not None and pending.status != FactStatus.RETRACTED and pending.value == turn_id:
             txn.facts.retract("session.pending_interpretation_turn", rule="interpret.gave_up")
         txn.facts.set(f"interpret.{turn_id}.gave_up", True, FactStatus.COMMITTED, prov, rule="interpret.gave_up")
+        if txn.store.config.interpret_failure_notice_enabled:
+            txn.facts.set("session.interpret_failed_turn", turn_id, FactStatus.COMMITTED, prov, rule="interpret.failure_notice")
         advance_interpretation_queue(txn, now_us, step_no, event_id=event_id)
     elif was_waiting:
         enqueue_interpretation(txn, turn_id, prov, rule="speculation.eot_waiting_fallback")

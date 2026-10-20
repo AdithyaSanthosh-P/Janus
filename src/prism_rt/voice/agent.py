@@ -52,6 +52,8 @@ Environment:
                           speech mutes the user's audio to speech-to-text (default off in
                           fdb mode, LiveKit's 3.0 in demo mode; 0 = off; see
                           adapters/voice_settings.py)
+  JANUS_DRILLS            1 = demo mode only: accept failure drills from the companion app on the
+                          data topic `janus.control` (adapters/drills.py; default off, never in fdb mode)
   GEMINI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 
 Run: python -m prism_rt.voice.agent start
@@ -78,6 +80,7 @@ from livekit import rtc
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobExecutorType, JobProcess, cli, stt
 from livekit.plugins import silero
 
+from prism_rt.adapters.drills import CONTROL_TOPIC, DrilledBackend, DrilledProvider, DrillState, run_external_command
 from prism_rt.adapters.event_feed import EventFeed
 from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest
 from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply
@@ -137,7 +140,7 @@ def _int_env(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class Toolset:
     manifest: list[dict]
-    make_executor: Callable[..., Callable[[str, dict], Awaitable[dict]]]  # (room_name, on_device_state=None)
+    make_executor: Callable[..., Callable[[str, dict], Awaitable[dict]]]  # (room_name, on_device_state=None[, drills])
 
 
 def vocabulary_hotwords(manifest: list[dict]) -> str:
@@ -206,6 +209,7 @@ FILLER_ENABLED = _flag_env("JANUS_FILLER", MODE == "demo")
 FILLER_TEXT = os.environ.get("JANUS_FILLER_TEXT") or "Okay, one moment."
 TTS_CHUNKED = _flag_env("JANUS_TTS_CHUNKED", MODE == "demo")
 AEC_WARMUP_S = aec_warmup_duration(MODE, os.environ.get("JANUS_AEC_WARMUP_S"))
+DRILLS_ENABLED = MODE == "demo" and os.environ.get("JANUS_DRILLS") == "1"
 
 
 def demo_toolset() -> Toolset:
@@ -217,8 +221,11 @@ def demo_toolset() -> Toolset:
     mode = backend_mode()
     logger.info("demo toolset: SmartThings backend = %s", mode)
 
-    def make_executor(room_name: str, on_device_state=None):
-        st = SmartThingsToolset(make_backend(), on_device_state=on_device_state)
+    def make_executor(room_name: str, on_device_state=None, drills: DrillState | None = None):
+        backend = make_backend()
+        if drills is not None:
+            backend = DrilledBackend(backend, drills)
+        st = SmartThingsToolset(backend, on_device_state=on_device_state)
         care = DeviceCareToolset(on_device_state=on_device_state)
         _manifest, execute = combine(care, st)
 
@@ -227,6 +234,7 @@ def demo_toolset() -> Toolset:
             await st.snapshot_states()
 
         execute.snapshot_states = snapshot_states
+        execute.st_backend = backend
         return execute
 
     from prism_rt.devicecare.tools import MANIFEST as CARE_MANIFEST
@@ -336,8 +344,11 @@ async def entrypoint(ctx: JobContext) -> None:
     filler_pcm: bytes = userdata.get("filler_pcm") or b""
     # Device tiles for the app: the executor reports each device state it reads.
     state_sink: dict = {}
+    # Failure drills from the companion app (demo mode, JANUS_DRILLS=1 only).
+    drills = DrillState() if DRILLS_ENABLED else None
     executor = toolset.make_executor(
-        room_name, on_device_state=lambda *args, **kw: state_sink["fn"](*args, **kw) if "fn" in state_sink else None
+        room_name, on_device_state=lambda *args, **kw: state_sink["fn"](*args, **kw) if "fn" in state_sink else None,
+        **({"drills": drills} if drills is not None else {}),
     )
 
     # Companion-app event feed (demo mode): what the agent hears, decides and
@@ -413,6 +424,8 @@ async def entrypoint(ctx: JobContext) -> None:
             model=os.environ.get("JANUS_LLM_MODEL", "gemini-3.6-flash"),
             thinking_budget=int(thinking) if thinking not in (None, "") else None,
         )
+    if drills is not None:
+        provider = DrilledProvider(provider, drills)
     frames = FrameStore()
     if MODE == "demo":
         config = demo_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 0))
@@ -498,6 +511,34 @@ async def entrypoint(ctx: JobContext) -> None:
         if snapshot is not None:
             with contextlib.suppress(Exception):
                 await snapshot()
+
+    async def _external_command(args: dict) -> None:
+        # "Someone else" changes a device, outside the kernel; the tiles follow.
+        try:
+            logger.info(await run_external_command(executor.st_backend, args))
+            await executor.snapshot_states()
+        except Exception:  # noqa: BLE001 - a drill must never break the conversation
+            logger.warning("external_command drill failed", exc_info=True)
+
+    def _on_data(packet) -> None:
+        if packet.topic != CONTROL_TOPIC:
+            return
+        sender = getattr(packet.participant, "identity", "") or ""
+        if not sender or sender.startswith("agent-"):
+            logger.warning("drill ignored: sender %r", sender)
+            return
+        try:
+            external = drills.apply(json.loads(bytes(packet.data).decode("utf-8")))
+        except (ValueError, UnicodeDecodeError) as exc:
+            logger.warning("drill refused from %s: %s", sender, exc)
+            return
+        logger.info("drill from %s; active: %s", sender, ", ".join(drills.active()) or "none")
+        if external is not None:
+            _spawn(_external_command(external))
+
+    if drills is not None:
+        ctx.room.on("data_received", _on_data)
+        logger.info("failure drills enabled (topic %s)", CONTROL_TOPIC)
 
     if feed is not None:
         _spawn(_publish_events())
