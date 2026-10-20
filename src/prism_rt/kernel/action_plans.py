@@ -31,6 +31,7 @@ import dataclasses
 import re
 
 from prism_rt.canonical import canonicalize_spoken_id, normalize_value, to_canonical_json
+from prism_rt.config import RELAXED_HOUSING_TOOLS as RELAXED_TOOLS
 from prism_rt.kernel.proposals import ACTION_SLOT_NAME, fix_step_kind  # noqa: F401 -- re-exported
 from prism_rt.model.types import (
     ActionCondition,
@@ -170,6 +171,9 @@ def coerce_to_schema(value, prop: dict, name: str | None = None):
     case-insensitively. Anything that can't be coerced is returned as is
     (validation then decides)."""
     value = normalize_value(value)
+    union = prop.get("type")
+    if isinstance(union, list) and len([t for t in union if t != "null"]) > 1:
+        return _coerce_to_union(value, [t for t in union if t != "null"], name)
     kind = _schema_type(prop)
     if kind == "string":
         if isinstance(value, bool):
@@ -202,6 +206,36 @@ def coerce_to_schema(value, prop: dict, name: str | None = None):
             if isinstance(option, str) and option.lower() == value.lower():
                 return option
     return value
+
+
+def _coerce_to_union(value, kinds: list[str], name: str | None):
+    """A value for a parameter that accepts several types
+    (Config.fdb_relaxed_housing_schema's filter value): a number if it reads
+    as one ("$3,000" -> 3000), else a yes/no word as a boolean ("allowed" ->
+    True), else the text, in that order of preference."""
+    if isinstance(value, bool):
+        return value if "boolean" in kinds else coerce_to_schema(value, {"type": kinds[0]}, name)
+    if isinstance(value, (int, float)):
+        if "number" in kinds or "integer" in kinds:
+            return int(value) if isinstance(value, float) and value.is_integer() else value
+        return coerce_to_schema(value, {"type": kinds[0]}, name)
+    if isinstance(value, str):
+        if "number" in kinds or "integer" in kinds:
+            amount = _SPOKEN_AMOUNT.match(value.strip())
+            parsed = _parse_number(amount.group(2).replace(",", "") + (amount.group(3) or "") if amount else value)
+            if parsed is not None:
+                return int(parsed) if isinstance(parsed, float) and parsed.is_integer() else parsed
+        if "boolean" in kinds:
+            lowered = value.strip().lower()
+            if lowered in _TRUE_WORDS or lowered in _UNION_TRUE_WORDS:
+                return True
+            if lowered in _FALSE_WORDS:
+                return False
+    return value
+
+
+# Yes-words that only mean "true" for a yes/no filter value.
+_UNION_TRUE_WORDS = frozenset({"allowed", "permitted", "ok", "okay"})
 
 
 def bind_key(goal_id: str, step_key: str, param: str) -> str:
@@ -362,6 +396,8 @@ def _build_steps(txn, goal_id: str, actions, first_index: int, now_us: int, step
             assumed = param in action.assumed
             if assumed and (not config.fill_unstated_required_enabled or _schema_type(prop) not in _ASSUMABLE_TYPES):
                 continue  # an assumed free-text value is dropped -- still asked
+            if assumed and config.fdb_relaxed_housing_schema and action.tool in RELAXED_TOOLS and param not in required:
+                continue  # relaxed contract: an optional value the user never gave is left out, not assumed
             value = coerce_to_schema(raw, prop, param)
             if config.normalize_spoken_ids:
                 value = canonicalize_spoken_id(value, param)

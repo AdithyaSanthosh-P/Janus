@@ -84,11 +84,17 @@ class FdbToolAdapter:
         *,
         log_path: str = "/tmp/agent_tool_calls.log",
         get_params_schema: Callable[[str], dict | None] | None = None,
+        backend_fills: dict[str, dict[str, dict]] | None = None,
     ) -> None:
         self._registry = registry
         self._room_name = room_name
         self._log_path = log_path
         self._get_params_schema = get_params_schema
+        # Config.fdb_relaxed_housing_schema (adapters/fdb_schema_overrides.py):
+        # values the mock backend requires but the user never gave, sent to
+        # the backend only -- never logged, and their derived result fields
+        # are removed before the agent sees the result.
+        self._backend_fills = backend_fills or {}
 
     async def execute(self, tool_name: str, args: dict) -> dict:
         filled = args
@@ -96,13 +102,20 @@ class FdbToolAdapter:
             schema = self._get_params_schema(tool_name)
             if schema is not None:
                 filled = fill_schema_defaults(schema, args)
+        fills = self._backend_fills.get(tool_name, {})
+        missing = {name for name in fills if name not in filled}
+        sent = {**filled, **{name: fills[name]["value"] for name in missing}}
         t_start = time.time()
         # `MockAPIRegistry.call` -> `LatencyInjector.inject` does a real
         # blocking `time.sleep` (v3/latency_injector.py:182) -- run it off
         # the event loop so it never stalls Janus's own kernel/entry loop.
-        result = await asyncio.to_thread(self._registry.call, tool_name, **filled)
+        result = await asyncio.to_thread(self._registry.call, tool_name, **sent)
         t_end = time.time()
         self._append_log(LoggedCall(self._room_name, tool_name, filled, t_start, t_end))
+        if missing:
+            from prism_rt.adapters.fdb_schema_overrides import strip_derived
+
+            result = strip_derived(result, missing, fills)
         return result
 
     def _append_log(self, call: LoggedCall) -> None:

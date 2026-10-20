@@ -67,6 +67,7 @@ from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter, fill_schema_defau
 from prism_rt.config import Config  # noqa: E402
 from prism_rt.profiles import apply_overrides, fdb_v3_config  # noqa: E402
 from prism_rt.adapters.transcript_segmenter import segment_transcript  # noqa: E402
+from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply  # noqa: E402
 from prism_rt.entry import setup  # noqa: E402
 from prism_rt.observability import speechlint  # noqa: E402
 from prism_rt.workers.gateway import GeminiProvider, OpenAIProvider  # noqa: E402
@@ -110,7 +111,10 @@ async def run_one_scenario(
     if os.path.exists(log_path):
         os.remove(log_path)
     registry = mock_apis_module.MockAPIRegistry(latency_profile="instant", enable_logging=False)
-    adapter = FdbToolAdapter(registry, room_name, log_path=log_path, get_params_schema=tool_schemas.get)
+    adapter = FdbToolAdapter(
+        registry, room_name, log_path=log_path, get_params_schema=tool_schemas.get,
+        backend_fills=BACKEND_FILLS if config.fdb_relaxed_housing_schema else None,
+    )
 
     events: "asyncio.Queue[dict | None]" = asyncio.Queue()
     actions: "asyncio.Queue[dict]" = asyncio.Queue()
@@ -291,8 +295,10 @@ def _build_config(args: argparse.Namespace) -> Config:
 
 async def run_all(args: argparse.Namespace, config: Config) -> list[dict]:
     manifest_tools = introspect_file(os.path.join(args.fdb_root, "lk_agent_tool.py"))
-    manifest = to_catalog_manifest(manifest_tools)
-    print(f"Introspected {len(manifest)} FDB tools from {args.fdb_root}/lk_agent_tool.py")
+    # --set fdb_relaxed_housing_schema=true: the relaxed housing contract.
+    manifest = maybe_apply(to_catalog_manifest(manifest_tools), config.fdb_relaxed_housing_schema)
+    print(f"Introspected {len(manifest)} FDB tools from {args.fdb_root}/lk_agent_tool.py"
+          + (" (relaxed housing schema)" if config.fdb_relaxed_housing_schema else ""))
 
     mock_apis_module = _import_fdb_module(args.fdb_root, "mock_apis")
     if args.provider == "openai":

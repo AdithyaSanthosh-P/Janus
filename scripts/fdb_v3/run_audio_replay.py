@@ -39,6 +39,7 @@ from fdb_common import DEFAULT_DATA_ROOT, DEFAULT_FDB_ROOT, import_fdb_module, l
 load_dotenv(REPO_ROOT / ".env")
 
 from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest  # noqa: E402
+from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply  # noqa: E402
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter  # noqa: E402
 from prism_rt.adapters.voice_bridge import VoiceBridge  # noqa: E402
 from prism_rt.entry import setup  # noqa: E402
@@ -69,7 +70,10 @@ async def replay_one_recording(
     if os.path.exists(log_path):
         os.remove(log_path)
     registry = mock_apis_module.MockAPIRegistry(latency_profile="instant", enable_logging=False)
-    tool_adapter = FdbToolAdapter(registry, room_name, log_path=log_path, get_params_schema=manifest_by_name.get)
+    tool_adapter = FdbToolAdapter(
+        registry, room_name, log_path=log_path, get_params_schema=manifest_by_name.get,
+        backend_fills=BACKEND_FILLS if config.fdb_relaxed_housing_schema else None,
+    )
 
     events: "asyncio.Queue[dict | None]" = asyncio.Queue()
     actions: "asyncio.Queue[dict]" = asyncio.Queue()
@@ -137,10 +141,11 @@ async def replay_one_recording(
 
 async def main_async(args: argparse.Namespace) -> None:
     manifest_tools = introspect_file(os.path.join(args.fdb_root, "lk_agent_tool.py"))
-    manifest = to_catalog_manifest(manifest_tools)
+    relaxed = os.environ.get("JANUS_FDB_RELAXED_HOUSING") == "1"
+    manifest = maybe_apply(to_catalog_manifest(manifest_tools), relaxed)
     mock_apis_module = import_fdb_module(args.fdb_root, "mock_apis")
     provider = GeminiProvider(model=args.model)
-    config = fdb_v3_config(log_decisions=args.debug)
+    config = fdb_v3_config(log_decisions=args.debug, fdb_relaxed_housing_schema=relaxed)
 
     segments_dir = Path(args.segments_dir)
     data_root = Path(args.data_root)
