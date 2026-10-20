@@ -62,6 +62,10 @@ class MockToolRegistry:
         handler = cfg.get("handler")
         if handler is not None and error is None:
             response = handler(args)
+        # The host convention (adapters/voice_bridge.py): a result carrying
+        # outcome="unconfirmed" is delivered as status "unknown".
+        if status == "ok" and isinstance(response, dict) and response.get("outcome") == "unconfirmed":
+            status = "unknown"
         self._scheduled[call_id] = (due_us, status, response, error)
 
     def on_cancel(self, call_id: str) -> None:

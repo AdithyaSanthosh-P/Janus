@@ -31,6 +31,7 @@ from config.templates import (
     CLARIFY_RETRY_WRITE,
     CLARIFY_REPEAT_TEMPLATE,
     CLARIFY_TEMPLATE,
+    CONFIRM_SECURITY,
     FINAL_FALLBACK,
     FRESH_VIEW_REQUEST,
     INFORM_DUPLICATE_WRITE,
@@ -40,7 +41,7 @@ from config.templates import (
 from prism_rt.kernel.action_plans import step_failed
 from prism_rt.kernel.commit import CommitGate, user_audibly_active
 from prism_rt.kernel.proposals import plain_slot_name
-from prism_rt.kernel.replies import HONEST_REPLY_KEY, duplicate_write_text
+from prism_rt.kernel.replies import HONEST_REPLY_KEY, done_summary, duplicate_write_text, unconfirmed_text, unconfirmed_writes
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, user_content_pending
 from prism_rt.model.actions import FinalBody, IntendedAction, SpeakBody
 from prism_rt.model.types import (
@@ -371,6 +372,13 @@ class FastResponder:
         plan = store.plans.current(goal.goal_id)
         any_step_failed = plan is not None and any(step_failed(store, goal.goal_id, s.step_key) for s in plan.steps)
         task_completed = goal.status != GoalStatus.ABANDONED and not is_watchdog_salvage and not any_step_failed
+        # A write sent but not confirmed (status "unknown"): the kernel says
+        # so itself -- whatever the composer wrote is not trusted to.
+        unconfirmed = unconfirmed_writes(store, goal.goal_id)
+        if unconfirmed and not is_watchdog_salvage:
+            ran = done_summary(store, goal.goal_id)  # the writes that did confirm, if any
+            text = f"{ran} {unconfirmed_text(unconfirmed)}" if ran else unconfirmed_text(unconfirmed)
+            task_completed = False
 
         grade = None
         if store.config.claim_grades_enabled:
@@ -580,7 +588,7 @@ class FastResponder:
             if call.goal_id != goal_id or call.kind != StepKind.WRITE or call.call_id in skip_call_ids:
                 continue
             decision = self._commit_gate.evaluate(call, store, now_us)
-            if decision.allowed or decision.rule_id != "G4":
+            if decision.allowed or decision.rule_id not in ("G4", "G12"):
                 continue
             asked = store.facts.get(f"confirm.{call.call_id}.asked")
             if asked is not None and asked.status != FactStatus.RETRACTED:
@@ -589,7 +597,10 @@ class FastResponder:
             store.facts.set(f"confirm.{call.call_id}.asked", True, FactStatus.COMMITTED, prov, rule="responder.confirm_write")
             store.facts.set(f"goal.{goal_id}.awaiting_confirmation", call.call_id, FactStatus.COMMITTED, prov, rule="responder.confirm_write")
             values = ", ".join(str(v) for v in call.args.values())
-            text = f"Shall I go ahead and {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
+            if decision.rule_id == "G12":
+                text = CONFIRM_SECURITY.format(action=call.tool.removeprefix("st_").replace("_", " "), args=f" ({values})" if values else "")
+            else:
+                text = f"Shall I go ahead and {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
             repeat = store.facts.get(f"goal.{goal_id}.repeat_of")
             if repeat is not None and repeat.status != FactStatus.RETRACTED:
                 text = (

@@ -69,7 +69,8 @@ class ResultRouter:
             return RouteOutcome(call.call_id, "duplicate", None, "RES.DUPLICATE")
 
         # Branch 3: malformed payload
-        if result.status not in ("ok", "error"):
+        unknown = result.status == "unknown" and store.config.unconfirmed_outcomes_enabled
+        if result.status not in ("ok", "error") and not unknown:
             store.call_ledger.set_status(call.call_id, CallStatus.FAILED)
             _settle_pending_effect(store, call, ok=False)
             return RouteOutcome(call.call_id, "malformed", CallStatus.FAILED, "RES.MALFORMED")
@@ -100,7 +101,7 @@ class ResultRouter:
             return RouteOutcome(call.call_id, "stale", CallStatus.STALE, "RES.STALE")
 
         # Branch 7: relevant -> consume
-        if result.status == "ok":
+        if result.status == "ok" or unknown:
             store.facts.set(
                 f"result.{call.call_id}",
                 result.result,
@@ -109,7 +110,10 @@ class ResultRouter:
                 rule="results.consumed",
             )
             store.call_ledger.set_status(call.call_id, CallStatus.CONSUMED)
-            _settle_pending_effect(store, call, ok=True)
+            # "unknown": sent but not confirmed -> the effect stays UNKNOWN, so
+            # G7 blocks a blind resend of the same lineage and no reply may
+            # call it done.
+            _settle_pending_effect(store, call, ok=not unknown)
             return RouteOutcome(call.call_id, "consumed", CallStatus.CONSUMED, "RES.CONSUMED")
 
         # result.status == "error": tool executed but failed. §5.8 step 6 /

@@ -175,7 +175,7 @@ def _apply_visual_reference(
     )
 
 
-def _abandon_goal(txn: StoreTxn, goal_id: str, now_us: int, step_no: int, *, event_id: str) -> None:
+def _abandon_goal(txn: StoreTxn, goal_id: str, now_us: int, step_no: int, *, event_id: str, text: str | None = None) -> None:
     goal = txn.store.goals.get(goal_id)
     if goal is None:
         return
@@ -201,7 +201,7 @@ def _abandon_goal(txn: StoreTxn, goal_id: str, now_us: int, step_no: int, *, eve
     txn.store.goals.update(goal_id, status=GoalStatus.ABANDONED, task_state=TaskState.RESPONDING)
     txn.facts.set(
         f"compose.{goal_id}.text",
-        replies.abort_text(txn.store, goal_id) if txn.store.config.conversational_replies_enabled else "Okay, cancelled.",
+        text or (replies.abort_text(txn.store, goal_id) if txn.store.config.conversational_replies_enabled else "Okay, cancelled."),
         FactStatus.COMMITTED,
         Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
         rule="interpret_apply.abort_final",
@@ -610,6 +610,26 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             action_plans.ensure_bindings(txn, gid, [d.name for d in deltas if d.op == SlotOp.SET])
             changed = changed or extended
 
+        if interp.act == InterpretAct.CONFIRM:
+            # G12: the "yes" answers the question about this one call id.
+            waiting = txn.store.facts.get(f"goal.{gid}.awaiting_confirmation")
+            if _active(waiting) and waiting.value:
+                txn.facts.set(
+                    f"confirm.{waiting.value}.granted",
+                    True,
+                    FactStatus.COMMITTED,
+                    Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
+                    rule="interpret_apply.confirm_granted",
+                )
+        if interp.act == InterpretAct.DENY and txn.store.config.confirmation_policy_enabled:
+            # G12: "no" to the security question -- the call is dropped unsent
+            # and the goal ends honestly (a plain "no" used to leave it hanging).
+            waiting = txn.store.facts.get(f"goal.{gid}.awaiting_confirmation")
+            held = txn.store.call_ledger.get(waiting.value) if _active(waiting) and waiting.value else None
+            if held is not None and held.status == CallStatus.PROPOSED:
+                txn.facts.retract(f"goal.{gid}.awaiting_confirmation", rule="interpret_apply.confirm_declined")
+                _abandon_goal(txn, gid, now_us, step_no, event_id=event_id, text="Okay, nothing was sent.")
+                return gid
         if interp.act == InterpretAct.DENY:
             txn.facts.set(
                 f"goal.{gid}.commit_intent",

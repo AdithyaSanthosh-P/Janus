@@ -11,13 +11,14 @@ what actually ran (the call ledger), never from model text.
 
 from __future__ import annotations
 
-from prism_rt.model.types import CallStatus, FactStatus, GoalStatus, Provenance, StepKind
+from prism_rt.model.types import CallStatus, EffectStatus, FactStatus, GoalStatus, Provenance, StepKind
 
 HONEST_REPLY_KEY = "session.honest_reply"
 
 
 def _human(name: str) -> str:
-    return name.replace("_", " ")
+    """A tool name as speech: "st_unlock" -> "unlock" (the pack prefix is not a word)."""
+    return name.removeprefix("st_").replace("_", " ")
 
 
 def capabilities_text(store, limit: int = 5) -> str:
@@ -34,11 +35,34 @@ def unsupported_text(store, what: str) -> str:
     return f"Sorry — \"{what.rstrip('.')}\" isn't something I can do here.{capabilities_text(store)}"
 
 
+def unconfirmed_writes(store, goal_id: str) -> list:
+    """The goal's writes that were sent but whose outcome is UNKNOWN
+    (Config.unconfirmed_outcomes_enabled: tool-result status "unknown")."""
+    if not store.config.unconfirmed_outcomes_enabled:
+        return []
+    out = []
+    for call in store.call_ledger.all():
+        if call.goal_id == goal_id and call.status == CallStatus.CONSUMED and call.kind == StepKind.WRITE:
+            effect = store.effect_ledger.by_fingerprint(call.fingerprint)
+            if effect is not None and effect.status == EffectStatus.UNKNOWN:
+                out.append(call)
+    return out
+
+
+def unconfirmed_text(calls: list) -> str:
+    parts = []
+    for call in calls:
+        values = ", ".join(str(v) for v in call.args.values())
+        parts.append(f"{_human(call.tool)} ({values})" if values else _human(call.tool))
+    return "I sent " + "; ".join(parts) + ", but I couldn't confirm it went through — please check the device before relying on it."
+
+
 def done_summary(store, goal_id: str) -> str:
     """What actually ran for this goal, from the call ledger."""
+    unconfirmed = {c.call_id for c in unconfirmed_writes(store, goal_id)}
     parts = []
     for call in store.call_ledger.all():
-        if call.goal_id == goal_id and call.status == CallStatus.CONSUMED:
+        if call.goal_id == goal_id and call.status == CallStatus.CONSUMED and call.call_id not in unconfirmed:
             values = ", ".join(str(v) for v in call.args.values())
             parts.append(f"{_human(call.tool)} ({values})" if values else _human(call.tool))
     return "I ran " + "; ".join(parts) + "." if parts else ""

@@ -54,6 +54,12 @@ def build_prompt(view: dict) -> str:
                 "Say briefly that each was not done and why, from the results (e.g. \"the earliest table is at 9, "
                 "so I didn't book it\"); if the condition was the user's own call, offer to do it if they want.\n"
             )
+    if "unknown" in {str(v).lower() for v in (view.get("effects") or {}).values()}:
+        # Only present when an action's outcome is unknown (never in a benchmark run).
+        honesty_block += (
+            "\nAn effect marked unknown was SENT but its result was not confirmed: say it was sent "
+            "and not confirmed, and never say it is done, locked, opened, set or completed.\n"
+        )
     return (
         f"facts: {view.get('facts')}\n"
         f"effects: {view.get('effects')}\n"

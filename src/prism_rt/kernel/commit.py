@@ -205,6 +205,13 @@ class CommitGate:
             if intent_fact is None or intent_fact.status == FactStatus.RETRACTED or intent_fact.value is not True:
                 return GateDecision(False, "commit_intent_false", "G4")
 
+        # G12: a security write (tool.requires_confirmation) needs this call
+        # id's own explicit yes, whatever commit_intent says.
+        if store.config.confirmation_policy_enabled and tool.requires_confirmation:
+            granted = store.facts.get(f"confirm.{call.call_id}.granted")
+            if granted is None or granted.status == FactStatus.RETRACTED or granted.value is not True:
+                return GateDecision(False, "confirmation_required", "G12")
+
         # G5: no existing effect with the same fingerprint (non-FAILED)
         existing_fp = store.effect_ledger.by_fingerprint(call.fingerprint)
         if existing_fp is not None and existing_fp.status in BLOCKING_EFFECT_STATUSES:

@@ -65,7 +65,7 @@ class InterruptionPayload:
 @dataclass(frozen=True)
 class ToolResultPayload:
     call_id: str
-    status: str  # "ok" or "error"
+    status: str  # "ok", "error", or "unknown" (sent, not confirmed)
     result: Any = None
     error: dict | None = None
 

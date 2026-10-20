@@ -10,6 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+# The tools Config.fdb_relaxed_housing_schema relaxes (adapters/fdb_schema_overrides.py).
+RELAXED_HOUSING_TOOLS = ("search_apartments", "update_search_filter")
+
+
 @dataclass(frozen=True)
 class Config:
     # Clock (`docs/prompt 2.txt` §13.2, `adapters/clock.py`). "A" (coupled,
@@ -306,6 +310,23 @@ class Config:
     # never fires while the agent is waiting on the user's answer to a
     # question it asked.
     conversational_replies_enabled: bool = False
+    # A tool whose manifest says `requires_confirmation` (a lock, a garage
+    # door) is never sent on the model's commit_intent alone: CommitGate G12
+    # holds the call until the user answers "yes" to a question naming it
+    # (fact `confirm.<call_id>.granted`, per call id so a corrected call needs
+    # a fresh yes). Needs conversational_replies_enabled for the question.
+    confirmation_policy_enabled: bool = False
+    # Tool-result status "unknown": a command was sent but its effect could not
+    # be confirmed (SmartThings answers ACCEPTED even for an offline device).
+    # The call is consumed so the plan moves on, the effect is UNKNOWN, and
+    # the FINAL says "sent, not confirmed" with task_completed=False.
+    unconfirmed_outcomes_enabled: bool = False
+    # FDB-v3 profile, Round 2: the relaxed housing tool contract
+    # (adapters/fdb_schema_overrides.py) -- search_apartments needs only the
+    # city and takes pets_allowed; a filter value may be number/boolean/string.
+    # Applied by the manifest builders; in the kernel it only stops an assumed
+    # value for an *optional* parameter of those tools being sent.
+    fdb_relaxed_housing_schema: bool = False
     # Under conversational_replies_enabled: answer a turn that arrives with
     # no active task at once -- "Happy to help" to small talk, a status
     # summary to an unclear turn after a finished task. Off, those turns take

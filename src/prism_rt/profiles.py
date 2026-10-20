@@ -190,6 +190,8 @@ def demo_config(**overrides) -> Config:
         no_generic_ack_before_question=True,
         fill_unstated_required_enabled=False,
         conversational_replies_enabled=True,
+        confirmation_policy_enabled=True,
+        unconfirmed_outcomes_enabled=True,
         merge_split_turns_enabled=True,
         parallel_independent_actions=True,
         partial_failure_continues=True,

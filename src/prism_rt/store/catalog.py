@@ -36,11 +36,20 @@ _PY_TYPE_CHECKS = {
 }
 
 
+def _type_names(declared) -> list[str]:
+    """A property's declared `type` as a list: a JSON-schema type may be one
+    name or a list of names (any one of which the value may match)."""
+    if isinstance(declared, list):
+        return [t for t in declared if isinstance(t, str)]
+    return [declared] if isinstance(declared, str) else []
+
+
 def value_matches_schema_type(prop_schema: dict, value) -> bool:
     """True if `value` fits the property's declared JSON-schema `type`
-    (or the property declares none) -- the same table `validate_args` uses."""
-    check = _PY_TYPE_CHECKS.get((prop_schema or {}).get("type"))
-    return check is None or check(value)
+    (any member of a list of types; or the property declares none) -- the
+    same table `validate_args` uses."""
+    checks = [_PY_TYPE_CHECKS[t] for t in _type_names((prop_schema or {}).get("type")) if t in _PY_TYPE_CHECKS]
+    return not checks or any(check(value) for check in checks)
 
 
 class ToolValidationError(Exception):
@@ -62,6 +71,8 @@ class ToolSpec:
     # so a later request for the same tool is not a repeat of an earlier one
     # that went through. Declared in the manifest; the benchmark's never is.
     repeatable: bool = False
+    # Security-sensitive write: CommitGate G12 holds it until the user says yes.
+    requires_confirmation: bool = False
 
 
 @dataclass(frozen=True)
@@ -137,7 +148,9 @@ class ToolCatalog:
                 if not isinstance(prop_schema, dict):
                     raise ToolValidationError(f"property_schema_not_object:{prop_name}")
                 prop_type = prop_schema.get("type")
-                if prop_type is not None and prop_type not in _JSON_SCHEMA_TYPES:
+                names = prop_type if isinstance(prop_type, list) else [prop_type]
+                if prop_type is not None and (not names or any(t not in _JSON_SCHEMA_TYPES for t in names if isinstance(t, str))
+                                              or not all(isinstance(t, str) for t in names)):
                     raise ToolValidationError(f"unknown_type:{prop_name}:{prop_type}")
 
         raw_mutability = raw.get("mutability")
@@ -161,6 +174,7 @@ class ToolCatalog:
             status="USABLE",
             frame_param=raw.get("frame_param"),
             repeatable=raw.get("repeatable") is True,
+            requires_confirmation=raw.get("requires_confirmation") is True,
         )
 
     def get(self, name: str) -> ToolSpec | None:
@@ -197,11 +211,8 @@ class ToolCatalog:
             prop_schema = properties.get(key)
             if not prop_schema:
                 continue
-            expected_type = prop_schema.get("type")
-            if expected_type:
-                check = _PY_TYPE_CHECKS.get(expected_type)
-                if check is not None and not check(value):
-                    errors.append(f"type_mismatch:{key}")
+            if prop_schema.get("type") and not value_matches_schema_type(prop_schema, value):
+                errors.append(f"type_mismatch:{key}")
             enum_values = prop_schema.get("enum")
             if enum_values is not None and value not in enum_values:
                 errors.append(f"enum_mismatch:{key}")

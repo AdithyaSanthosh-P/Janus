@@ -573,7 +573,10 @@ class TraceChecker:
                             Violation("P-04", f"snapshot key {key!r} on action {er.action.action_id} is not a parameter of any declared tool", report.step_no)
                         )
                         continue
-                    expected = self._JSON_TYPES.get(params[key].get("type"))
+                    declared = params[key].get("type")
+                    # A list of types (any member matches) or one type name.
+                    names = declared if isinstance(declared, list) else [declared]
+                    expected = tuple(t for n in names if isinstance(n, str) for t in self._JSON_TYPES.get(n, ())) or None
                     if expected is None or value is None:
                         continue
                     if isinstance(value, bool) and bool not in expected:
