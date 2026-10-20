@@ -2,11 +2,18 @@
 node_modules/
 .npm/
 
-# Android build outputs
+# Android build outputs & binaries
 android/app/build/
 android/.gradle/
 android/build/
 android/app/src/main/assets/index.android.bundle
+*.apk
+
+# Sensitive & machine-specific Android configs
+local.properties
+android/local.properties
+*.keystore
 
 # Metro cache
 .metro-health-check*
+

@@ -15,3 +15,10 @@ results/
 
 # Optional local wheel cache for slow networks (docker/fdb_v3/Dockerfile TORCH_LOCAL_WHEELS=1)
 docker/fdb_v3/wheels/*.whl
+
+# Node & Android artifacts
+node_modules/
+*.apk
+*.keystore
+local.properties
+.gradle/
