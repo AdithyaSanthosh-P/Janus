@@ -219,8 +219,14 @@ def demo_toolset() -> Toolset:
 
     def make_executor(room_name: str, on_device_state=None):
         st = SmartThingsToolset(make_backend(), on_device_state=on_device_state)
-        _manifest, execute = combine(DeviceCareToolset(), st)
-        execute.snapshot_states = st.snapshot_states  # the app's initial device tiles
+        care = DeviceCareToolset(on_device_state=on_device_state)
+        _manifest, execute = combine(care, st)
+
+        async def snapshot_states() -> None:  # the app's initial device tiles
+            await care.snapshot_states()
+            await st.snapshot_states()
+
+        execute.snapshot_states = snapshot_states
         return execute
 
     from prism_rt.devicecare.tools import MANIFEST as CARE_MANIFEST
@@ -331,7 +337,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # Device tiles for the app: the executor reports each device state it reads.
     state_sink: dict = {}
     executor = toolset.make_executor(
-        room_name, on_device_state=lambda *args: state_sink["fn"](*args) if "fn" in state_sink else None
+        room_name, on_device_state=lambda *args, **kw: state_sink["fn"](*args, **kw) if "fn" in state_sink else None
     )
 
     # Companion-app event feed (demo mode): what the agent hears, decides and

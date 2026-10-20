@@ -123,9 +123,10 @@ class EventFeed:
             self._filler_turn = True
         self._send("agent_said", text=text, kind=kind)
 
-    def device_state(self, device: str, label: str, capability: str, attribute: str, value) -> None:
+    def device_state(self, device: str, label: str, capability: str, attribute: str, value,
+                     backend: str | None = None) -> None:
         self._send("device_state", device=device, label=label, capability=capability, attribute=attribute,
-                   value=value, backend=self._backend)
+                   value=value, backend=backend or self._backend)
 
     # ---- kernel steps -------------------------------------------------------
     def on_step(self, report, store) -> None:

@@ -95,6 +95,27 @@ def test_the_washer_refuses_to_resume_while_it_shows_an_error():
     assert DeviceCareToolset().status["washer"]["machine_state"] == "pause"  # each session starts from the KB
 
 
+def test_washer_state_reaches_the_app_tile_on_read_change_and_snapshot():
+    seen = []
+    tk = DeviceCareToolset(on_device_state=lambda *a, **kw: seen.append((*a, kw["backend"])))
+    ex = tk.make_executor()
+    tile = ("dev-washer", "Washer", "washerOperatingState", "machineState")
+    asyncio.run(tk.snapshot_states())
+    run(ex, "get_device_status", device_type="washer")
+    run(ex, "control_appliance", device_type="washer", command="pause")  # already paused: no change, no report
+    run(ex, "control_appliance", device_type="washer", command="resume")  # refused (4C): no report
+    run(ex, "control_appliance", device_type="washer", command="stop")
+    assert seen == [(*tile, "pause", "mock"), (*tile, "pause", "mock"), (*tile, "stop", "mock")]
+
+
+def test_a_failing_tile_callback_never_breaks_a_tool_call():
+    def boom(*_a, **_kw):
+        raise RuntimeError("app gone")
+
+    ex = DeviceCareToolset(on_device_state=boom).make_executor()
+    assert run(ex, "control_appliance", device_type="washer", command="stop")["done"] is True
+
+
 # --- the kernel driving them --------------------------------------------------
 
 

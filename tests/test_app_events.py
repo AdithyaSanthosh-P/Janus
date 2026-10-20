@@ -217,6 +217,9 @@ def test_filler_and_device_state_are_published_directly():
     assert events[0]["backend"] == "real" and events[0]["packs"] == ["smartthings"]
     assert events[1] == {**events[1], "type": "agent_said", "kind": "filler"}
     assert events[2]["backend"] == "real" and events[2]["value"] == "locked"
+    feed.device_state("dev-washer", "Washer", "washerOperatingState", "machineState", "pause", backend="mock")
+    check_schema(events)
+    assert events[3]["backend"] == "mock"  # a simulated device on a real session says so
 
 
 def test_unknown_event_types_are_a_programming_error_not_silently_sent():

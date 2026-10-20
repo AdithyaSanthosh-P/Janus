@@ -16,6 +16,10 @@ door), and `get_device_status` / `control_appliance` return and change the
 fields a SmartThings washer reports (`washerOperatingState`: machine state,
 job state, completion time). The backend is simulated; nothing here talks to
 SmartThings.
+
+`on_device_state`, when given, receives the washer's machine state each time
+it is read or changed (and from `snapshot_states`), in the SmartThings shape
+the companion app's device tiles use; the backend is always reported as mock.
 """
 
 from __future__ import annotations
@@ -173,8 +177,13 @@ MANIFEST: list[dict] = [
 ]
 
 
+# Device tiles in the companion app (app/INTEGRATION.md, `device_state`).
+_TILE = {"washer": ("dev-washer", "Washer")}
+
+
 class DeviceCareToolset:
-    def __init__(self, kb: dict | None = None) -> None:
+    def __init__(self, kb: dict | None = None,
+                 on_device_state: Callable[..., None] | None = None) -> None:
         self.kb = kb if kb is not None else json.loads(_KB_PATH.read_text())
         self.manifest: list[dict] = MANIFEST
         self.bookings: list[dict] = []
@@ -186,6 +195,7 @@ class DeviceCareToolset:
         self.status: dict[str, dict] = {
             key: dict(dev["status"]) for key, dev in self.kb["devices"].items() if "status" in dev
         }
+        self._on_device_state = on_device_state
 
     # ---- executor -----------------------------------------------------
     def make_executor(self) -> Callable[[str, dict], Awaitable[dict]]:
@@ -197,6 +207,21 @@ class DeviceCareToolset:
             return handler(args)
 
         return execute
+
+    def _report(self, dev: str) -> None:
+        if self._on_device_state is None or dev not in _TILE:
+            return
+        device, label = _TILE[dev]
+        try:
+            self._on_device_state(device, label, "washerOperatingState", "machineState",
+                                  self.status[dev]["machine_state"], backend="mock")
+        except Exception:  # noqa: BLE001 - the app must never break a tool call
+            pass
+
+    async def snapshot_states(self) -> None:
+        """Every connected appliance's state, through `on_device_state` (the app's initial tiles)."""
+        for dev in self.status:
+            self._report(dev)
 
     def _issue(self, a: dict) -> str | None:
         """The issue a call is about: the one it names, else the open case."""
@@ -266,6 +291,7 @@ class DeviceCareToolset:
         if dev is None or dev not in self.status:
             return {"found": False, "message": f"No connected {a.get('device_type') or 'device'} on SmartThings."}
         st = self.status[dev]
+        self._report(dev)
         out = {"found": True, "device": self.kb["devices"][dev]["name"], "machine_state": _STATE_WORD[st["machine_state"]],
                "cycle_phase": st["job_state"], "minutes_remaining": st["remaining_min"]}
         code = st.get("error_code")
@@ -319,4 +345,5 @@ class DeviceCareToolset:
         if command == "stop":
             st.update(job_state="none", remaining_min=0)
         self.commands.append({"device": dev, "command": command})
+        self._report(dev)
         return {"done": True, "device": name, "machine_state": _STATE_WORD[target]}
