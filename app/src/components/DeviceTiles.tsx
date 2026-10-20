@@ -7,7 +7,7 @@ import { AppLayoutTransition } from '../theme/motion';
 
 /**
  * 3-Bullet Architecture Plan:
- * - Primitives: 2-column flex-wrap responsive grid layout.
+ * - Primitives: 2-column flex-wrap responsive grid layout with empty state placeholder.
  * - Animation: Reanimated 3 continuous layout transition when device states update.
  * - Theming: Cohesive dark & light palette.
  */
@@ -52,18 +52,42 @@ export const DeviceTiles: React.FC<DeviceTilesProps> = ({ devices, isDark }) => 
         </Text>
       </View>
 
-      <View
-        style={{
-          flexDirection: 'row',
-          flexWrap: 'wrap',
-          gap: 10,
-          justifyContent: 'space-between',
-        }}
-      >
-        {deviceList.map(dev => (
-          <DeviceCard key={dev.device} device={dev} isDark={isDark} />
-        ))}
-      </View>
+      {deviceList.length === 0 ? (
+        <View
+          style={{
+            padding: 18,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: isDark ? '#27272a' : '#e2e8f0',
+            backgroundColor: isDark ? '#18181b' : '#ffffff',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 13,
+              fontWeight: '500',
+              color: isDark ? '#71717a' : '#94a3b8',
+            }}
+          >
+            Awaiting device states from agent...
+          </Text>
+        </View>
+      ) : (
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            gap: 10,
+            justifyContent: 'space-between',
+          }}
+        >
+          {deviceList.map(dev => (
+            <DeviceCard key={dev.device} device={dev} isDark={isDark} />
+          ))}
+        </View>
+      )}
     </Animated.View>
   );
 };

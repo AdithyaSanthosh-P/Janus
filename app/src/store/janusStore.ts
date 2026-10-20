@@ -75,7 +75,7 @@ export const INITIAL_STATE: JanusState = {
   userSpeaking: false,
   captions: [],
   actions: [],
-  devices: INITIAL_DEVICES,
+  devices: {}, // Live mode starts with NO tiles; built dynamically from device_state events
   ledger: {
     committed: 0,
     withdrawnBeforeSending: 0,
@@ -90,7 +90,7 @@ export const INITIAL_STATE: JanusState = {
 
 export class JanusEventReducer {
   private seenSeqs = new Set<number>();
-  private state: JanusState = { ...INITIAL_STATE, devices: { ...INITIAL_DEVICES } };
+  private state: JanusState = { ...INITIAL_STATE, devices: {} };
   private listeners: Array<(state: JanusState) => void> = [];
 
   public getState(): JanusState {
@@ -111,13 +111,21 @@ export class JanusEventReducer {
     }
   }
 
-  public reset(keepConnection: boolean = false) {
+  public reset(keepConnection: boolean = false, loadDemo: boolean = false) {
     this.seenSeqs.clear();
     const currentStatus = keepConnection ? this.state.connectionStatus : 'disconnected';
     this.state = {
       ...INITIAL_STATE,
-      devices: { ...INITIAL_DEVICES },
+      devices: loadDemo ? { ...INITIAL_DEVICES } : {},
       connectionStatus: currentStatus,
+    };
+    this.notify();
+  }
+
+  public loadDemoDevices() {
+    this.state = {
+      ...this.state,
+      devices: { ...INITIAL_DEVICES },
     };
     this.notify();
   }
@@ -126,8 +134,14 @@ export class JanusEventReducer {
     status: JanusState['connectionStatus'],
     error: string | null = null
   ) {
+    let nextDevices = this.state.devices;
+    // When switching to live mode (connecting/connected), start with NO tiles
+    if (status === 'connecting') {
+      nextDevices = {};
+    }
     this.state = {
       ...this.state,
+      devices: nextDevices,
       connectionStatus: status,
       connectionError: error,
     };
@@ -193,7 +207,7 @@ export class JanusEventReducer {
       case 'turn_closed': {
         this.state = {
           ...this.state,
-          activeTurnId: null,
+          userSpeaking: false,
         };
         break;
       }
@@ -217,26 +231,28 @@ export class JanusEventReducer {
 
       case 'agent_interrupted': {
         const captions = [...this.state.captions];
-        for (let i = captions.length - 1; i >= 0; i--) {
-          if (captions[i].sender === 'agent') {
-            captions[i] = { ...captions[i], isInterrupted: true };
-            break;
-          }
+        if (captions.length > 0) {
+          const last = { ...captions[captions.length - 1], isInterrupted: true };
+          captions[captions.length - 1] = last;
         }
-        this.state = { ...this.state, captions };
+        this.state = {
+          ...this.state,
+          captions,
+        };
         break;
       }
 
       case 'call_planned': {
         const actions = [...this.state.actions];
         const existingIndex = actions.findIndex(a => a.callId === event.call_id);
+
         const cardData: ActionCardData = {
           callId: event.call_id,
           tool: event.tool,
           label: event.label,
           kind: event.kind,
-          security: !!event.security,
           args: event.args || {},
+          security: !!event.security,
           status: 'planned',
           statusText: 'Planned',
           isFinal: false,
@@ -325,8 +341,10 @@ export class JanusEventReducer {
       case 'call_result': {
         const actions = this.state.actions.map(action => {
           if (action.callId === event.call_id) {
-            let status: ActionCardStatus = 'confirmed';
-            let statusText = 'Confirmed';
+            // Teammate contract rule: Unknown outcome must NOT show as done.
+            // Default to not-done/failed state. Only 'confirmed' and 'already' may ever show green.
+            let status: ActionCardStatus = 'failed';
+            let statusText = event.summary || 'Failed';
 
             if (event.outcome === 'confirmed') {
               status = 'confirmed';
@@ -343,7 +361,7 @@ export class JanusEventReducer {
               statusText = 'Refused';
             } else if (event.outcome === 'failed') {
               status = 'failed';
-              statusText = 'Failed';
+              statusText = event.summary || 'Failed';
             }
 
             return {

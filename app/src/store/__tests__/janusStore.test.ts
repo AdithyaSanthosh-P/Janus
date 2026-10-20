@@ -1,6 +1,7 @@
 import { JanusEventReducer } from '../janusStore';
 import { SAMPLE_EVENTS } from '../../data/sampleEvents';
 import { isValidJanusPacket } from '../../utils/eventValidator';
+import { JanusEvent } from '../../types/janus';
 
 describe('JanusStore Event Reducer & Validator', () => {
   it('isValidJanusPacket enforces contract rules', () => {
@@ -17,6 +18,80 @@ describe('JanusStore Event Reducer & Validator', () => {
 
     // Rejects invalid schema version
     expect(isValidJanusPacket({ ...valid, v: 2 }, 'janus.events', 'agent-001')).toBe(false);
+  });
+
+  it('Live mode starts with no tiles and builds them dynamically from device_state events', () => {
+    const store = new JanusEventReducer();
+    // Default initial devices in live mode should be empty
+    expect(Object.keys(store.getState().devices).length).toBe(0);
+
+    // Live agent sends device_state events for mock or real ST devices
+    store.processEvent({
+      v: 1,
+      seq: 1,
+      t_ms: 50,
+      type: 'device_state',
+      device: 'lock-1',
+      label: 'Janus Lock',
+      capability: 'lock',
+      attribute: 'lock',
+      value: 'unlocked',
+      backend: 'mock',
+    } as JanusEvent);
+
+    store.processEvent({
+      v: 1,
+      seq: 2,
+      t_ms: 60,
+      type: 'device_state',
+      device: 'garage-1',
+      label: 'Janus Garage',
+      capability: 'garageDoorControl',
+      attribute: 'door',
+      value: 'closed',
+      backend: 'mock',
+    } as JanusEvent);
+
+    const state = store.getState();
+    expect(Object.keys(state.devices).length).toBe(2);
+    expect(state.devices['lock-1'].label).toBe('Janus Lock');
+    expect(state.devices['lock-1'].capability).toBe('lock');
+    expect(state.devices['garage-1'].label).toBe('Janus Garage');
+  });
+
+  it('Unknown call_result outcome must NOT show as done (defaults to not-done/failed)', () => {
+    const store = new JanusEventReducer();
+
+    // Plan a call
+    store.processEvent({
+      v: 1,
+      seq: 1,
+      t_ms: 100,
+      type: 'call_planned',
+      call_id: 'call-unknown-test',
+      tool: 'custom_device_action',
+      label: 'Trigger unknown action',
+      kind: 'write',
+      args: {},
+      security: false,
+    } as JanusEvent);
+
+    // Emit result with an unrecognized outcome
+    store.processEvent({
+      v: 1,
+      seq: 2,
+      t_ms: 200,
+      type: 'call_result',
+      call_id: 'call-unknown-test',
+      outcome: 'unrecognized_third_party_state' as any,
+      summary: 'Third party service timeout',
+    } as JanusEvent);
+
+    const action = store.getState().actions.find(a => a.callId === 'call-unknown-test');
+    expect(action).toBeDefined();
+    expect(action?.status).toBe('failed'); // Must default to not-done/failed!
+    expect(action?.status).not.toBe('confirmed');
+    expect(action?.statusText).toBe('Third party service timeout');
   });
 
   it('Processes all 76 recorded sample session events with high fidelity', () => {

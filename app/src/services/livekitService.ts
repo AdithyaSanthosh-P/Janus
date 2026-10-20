@@ -37,6 +37,7 @@ export class LiveKitService {
 
   public async connect({ url, token, enableMic = true }: LiveKitConnectOptions): Promise<void> {
     try {
+      janusStore.reset(false, false); // Clear demo devices and state for clean live session
       janusStore.setConnectionStatus('connecting');
       this.currentUrl = url.trim();
       this.currentToken = token.trim();
