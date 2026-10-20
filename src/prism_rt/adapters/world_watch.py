@@ -1,0 +1,99 @@
+"""Watches the device a held write targets, for evidence-bound confirmation
+(kernel/evidence.py). Demo mode only.
+
+Driven by the companion-app event feed (adapters/event_feed.py): when the
+agent asks for a yes on a write whose tool declares `watch`
+(`confirmation_asked` after its `call_planned`), the device is read at once
+-- the question's baseline -- and then every `interval_s`, until the call is
+sent, cancelled or finished, or `max_s` has passed. Each new value is
+reported to the kernel as a `world_fact` under the key both sides build with
+`prism_rt.canonical.world_target_key`. `nudge()` re-reads every watched
+device at once (after the "someone else" drill).
+
+The interval is kept long on purpose: SmartThings allows about 12 requests a
+minute per device, and the write itself needs up to six (a pre-read, the
+command and up to four read-backs).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Awaitable, Callable
+
+from prism_rt.canonical import world_target_key
+
+log = logging.getLogger("janus.world_watch")
+
+_FINAL = ("call_sent", "call_result", "call_cancelled")
+
+
+class WorldWatcher:
+    def __init__(
+        self,
+        manifest: list[dict],
+        read_state: Callable[[str], Awaitable[object]],
+        report: Callable[[str, object], Awaitable[None]],
+        *,
+        interval_s: float = 10.0,
+        max_s: float = 120.0,
+        sleep: Callable[[float], Awaitable] = asyncio.sleep,
+    ) -> None:
+        self._watch_arg = {t["name"]: t["watch"] for t in manifest if isinstance(t.get("watch"), str)}
+        self._read_state = read_state
+        self._report = report
+        self._interval_s = interval_s
+        self._max_s = max_s
+        self._sleep = sleep
+        self._planned: dict[str, tuple[str, dict]] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._last: dict[str, object] = {}
+
+    def on_event(self, event: dict) -> None:
+        """Feed every `janus.events` event here; never raises."""
+        try:
+            kind, call_id = event.get("type"), event.get("call_id")
+            if kind == "call_planned" and call_id:
+                self._planned[call_id] = (event.get("tool"), event.get("args") or {})
+            elif kind == "confirmation_asked" and call_id:
+                tool, args = self._planned.get(call_id, (None, {}))
+                arg = self._watch_arg.get(tool)
+                spoken = args.get(arg) if arg else None
+                if isinstance(spoken, str) and spoken.strip() and call_id not in self._tasks:
+                    self._last.pop(world_target_key(spoken), None)  # each question gets its own baseline
+                    self._tasks[call_id] = asyncio.ensure_future(self._watch(call_id, spoken))
+            elif kind in _FINAL and call_id in self._tasks:
+                self._tasks.pop(call_id).cancel()
+        except Exception:  # noqa: BLE001 - the watch is optional; never break the feed
+            log.warning("world watch: could not handle %s", event.get("type"), exc_info=True)
+
+    def watching(self) -> list[str]:
+        return [args.get(self._watch_arg.get(tool, ""), "") for cid, (tool, args) in self._planned.items() if cid in self._tasks]
+
+    async def nudge(self) -> None:
+        for spoken in self.watching():
+            await self._read_and_report(spoken)
+
+    async def _watch(self, call_id: str, spoken: str) -> None:
+        waited = 0.0
+        try:
+            while waited <= self._max_s:
+                await self._read_and_report(spoken)
+                await self._sleep(self._interval_s)
+                waited += self._interval_s
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._tasks.pop(call_id, None)
+
+    async def _read_and_report(self, spoken: str) -> None:
+        key = world_target_key(spoken)
+        try:
+            value = await self._read_state(spoken)
+        except Exception as exc:  # noqa: BLE001 - a failed read is just no news
+            log.info("world watch: could not read %r: %s", spoken, exc)
+            return
+        if value is None or self._last.get(key) == value:
+            return
+        self._last[key] = value
+        await self._report(key, value)

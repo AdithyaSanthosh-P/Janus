@@ -73,6 +73,11 @@ class ToolSpec:
     repeatable: bool = False
     # Security-sensitive write: CommitGate G12 holds it until the user says yes.
     requires_confirmation: bool = False
+    # Evidence-bound confirmation (kernel/evidence.py): the argument naming
+    # the device the write targets, and the device value at which the write
+    # has nothing left to do ("locked", "{state}"). Declared in the manifest.
+    watch: str | None = None
+    done_when: str | None = None
 
 
 @dataclass(frozen=True)
@@ -175,6 +180,8 @@ class ToolCatalog:
             frame_param=raw.get("frame_param"),
             repeatable=raw.get("repeatable") is True,
             requires_confirmation=raw.get("requires_confirmation") is True,
+            watch=raw.get("watch") if isinstance(raw.get("watch"), str) else None,
+            done_when=raw.get("done_when") if isinstance(raw.get("done_when"), str) else None,
         )
 
     def get(self, name: str) -> ToolSpec | None:

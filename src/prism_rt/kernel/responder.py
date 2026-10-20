@@ -36,9 +36,11 @@ from config.templates import (
     FRESH_VIEW_REQUEST,
     INFORM_DUPLICATE_WRITE,
     INFORM_UNKNOWN_WRITE_OUTCOME,
+    EVIDENCE_REASK,
     INTERPRET_FAILED,
     UNCLEAR_NO_GOAL,
 )
+from prism_rt.kernel import evidence
 from prism_rt.kernel.action_plans import step_failed
 from prism_rt.kernel.commit import CommitGate, user_audibly_active
 from prism_rt.kernel.proposals import plain_slot_name
@@ -621,14 +623,21 @@ class FastResponder:
             if call.goal_id != goal_id or call.kind != StepKind.WRITE or call.call_id in skip_call_ids:
                 continue
             decision = self._commit_gate.evaluate(call, store, now_us)
-            if decision.allowed or decision.rule_id not in ("G4", "G12"):
+            if decision.allowed or decision.rule_id not in ("G4", "G12", "G13"):
                 continue
+            bound = store.config.evidence_bound_confirmation_enabled
             asked = store.facts.get(f"confirm.{call.call_id}.asked")
             if asked is not None and asked.status != FactStatus.RETRACTED:
-                return []
+                diffs = evidence.changes(store, call) if bound and evidence.held_for_yes(store, call) else []
+                if not diffs:
+                    return []
+                return self._reask_after_change(store, call, goal_id, decision, diffs, now_us, step_no)
             prov = Provenance(source="system", step_no=step_no, ts_us=now_us)
             store.facts.set(f"confirm.{call.call_id}.asked", True, FactStatus.COMMITTED, prov, rule="responder.confirm_write")
             store.facts.set(f"goal.{goal_id}.awaiting_confirmation", call.call_id, FactStatus.COMMITTED, prov, rule="responder.confirm_write")
+            if bound:
+                store.facts.set(evidence.SNAPSHOT.format(call_id=call.call_id), evidence.snapshot(store, call),
+                                FactStatus.COMMITTED, prov, rule="responder.confirm_evidence")
             values = ", ".join(str(v) for v in call.args.values())
             if decision.rule_id == "G12":
                 text = CONFIRM_SECURITY.format(action=call.tool.removeprefix("st_").replace("_", " "), args=f" ({values})" if values else "")
@@ -649,6 +658,32 @@ class FastResponder:
                 )
             ]
         return []
+
+    def _reask_after_change(self, store, call, goal_id: str, decision, diffs, now_us: int, step_no: int) -> list[IntendedAction]:
+        """kernel/evidence.py: what the question rested on changed while Janus
+        waited. Any yes already given is void (G13 held the call); the user
+        hears what changed and the question again, against a new snapshot."""
+        prov = Provenance(source="system", step_no=step_no, ts_us=now_us)
+        if store.facts.get(f"confirm.{call.call_id}.granted") is not None:
+            store.facts.retract(f"confirm.{call.call_id}.granted", rule="responder.evidence_changed")
+        store.facts.set(f"goal.{goal_id}.commit_intent", False, FactStatus.COMMITTED, prov, rule="responder.evidence_changed")
+        store.facts.set(evidence.SNAPSHOT.format(call_id=call.call_id), evidence.snapshot(store, call),
+                        FactStatus.COMMITTED, prov, rule="responder.evidence_changed")
+        what = "; ".join(f"the {evidence.describe(store, call, key)} changed from {old} to {new}" for key, old, new in diffs)
+        values = ", ".join(str(v) for v in call.args.values())
+        tool = store.catalog.get(call.tool)
+        action = call.tool.removeprefix("st_").replace("_", " ")
+        question = (f"Shall I still {action}" + (f" ({values})" if values else "") + "?")
+        if tool is not None and tool.requires_confirmation:
+            question = "It's a security action, so I need your yes again: " + question[0].lower() + question[1:]
+        return [
+            IntendedAction(
+                action_type=ActionType.SPEAK,
+                body=SpeakBody(text=EVIDENCE_REASK.format(what=what[0].upper() + what[1:], question=question), kind="clarify"),
+                read_set=EMPTY_READ_SET,
+                rule_id="responder.evidence_reask",
+            )
+        ]
 
     def _honest_reply(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
         """Config.conversational_replies_enabled (kernel/replies.py): the

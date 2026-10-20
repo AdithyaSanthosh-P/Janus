@@ -84,6 +84,16 @@ class VideoFramePayload:
 
 
 @dataclass(frozen=True)
+class WorldFactPayload:
+    """A state of the world the host observed outside any tool call -- a
+    watched device's current value (`kernel/evidence.py`). `key` is built by
+    `prism_rt.canonical.world_target_key`."""
+
+    key: str
+    value: Any = None
+
+
+@dataclass(frozen=True)
 class AudioClipPayload:
     """V(post-4) Phase A: accepted and stored (as an Observation), not yet
     analyzed — ASR (Phase 2 of `docs/post_v4_implementation_plan.md`)
@@ -117,6 +127,7 @@ PAYLOAD_TYPES: dict[str, type] = {
     "tool_result": ToolResultPayload,
     "worker_result": WorkerResultPayload,
     "video_frame": VideoFramePayload,
+    "world_fact": WorldFactPayload,
     "audio_clip": AudioClipPayload,
     "timer_fired": TimerFiredPayload,
     "watchdog": WatchdogPayload,
@@ -132,6 +143,7 @@ EVENT_CLASS_BY_PAYLOAD_TYPE: dict[str, EventClass] = {
     "audio_clip": EventClass.USER_CONTENT,
     "end_of_turn": EventClass.END_OF_TURN,
     "tool_result": EventClass.TOOL_RESULT,
+    "world_fact": EventClass.TOOL_RESULT,
     "worker_result": EventClass.WORKER_RESULT,
     "timer_fired": EventClass.TIMER,
     "watchdog": EventClass.TIMER,

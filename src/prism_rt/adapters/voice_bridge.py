@@ -179,6 +179,11 @@ class VoiceBridge:
         frame is analysed only when a question about it opens."""
         await self.events.put({"type": "video_frame", "ts_us": self.now_us(), "payload": {"frame_id": frame_id}})
 
+    async def on_world_fact(self, key: str, value) -> None:
+        """A watched device's state (adapters/world_watch.py), for
+        evidence-bound confirmation (kernel/evidence.py)."""
+        await self.events.put({"type": "world_fact", "ts_us": self.now_us(), "payload": {"key": key, "value": value}})
+
     async def on_speech_start(self) -> None:
         """User speech started (VAD). Cancels any pending end-of-turn
         countdown (the user is still talking); if the agent was speaking,

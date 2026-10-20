@@ -52,6 +52,8 @@ Environment:
                           speech mutes the user's audio to speech-to-text (default off in
                           fdb mode, LiveKit's 3.0 in demo mode; 0 = off; see
                           adapters/voice_settings.py)
+  JANUS_WORLD_POLL_S      demo mode: seconds between reads of the device a held write targets, while
+                          Janus waits for the user's yes (adapters/world_watch.py; default 10, 0 = off)
   JANUS_DRILLS            1 = demo mode only: accept failure drills from the companion app on the
                           data topic `janus.control` (adapters/drills.py; default off, never in fdb mode)
   GEMINI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
@@ -87,6 +89,7 @@ from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter
 from prism_rt.adapters.voice_bridge import VoiceBridge
 from prism_rt.adapters.voice_settings import aec_warmup_duration
+from prism_rt.adapters.world_watch import WorldWatcher
 from prism_rt.devicecare import DeviceCareToolset
 from prism_rt.entry import setup
 from prism_rt.observability.effects import effect_summary, format_effect_summary
@@ -357,10 +360,32 @@ async def entrypoint(ctx: JobContext) -> None:
     # never holds up the kernel.
     feed: EventFeed | None = None
     event_queue: asyncio.Queue = asyncio.Queue()
+    # Evidence-bound confirmation (kernel/evidence.py): while a write waits for
+    # a yes, the device it targets is watched and its state reported to the
+    # kernel. Fed by the same events the app gets. Created before the bridge,
+    # which it reports through (bound below).
+    world_sink: dict = {}
+    watcher: WorldWatcher | None = None
+    poll_s = float(os.environ.get("JANUS_WORLD_POLL_S", "10") or 0)
+    if MODE == "demo" and poll_s > 0:
+        async def _read_device(spoken: str):
+            return (await executor("st_get_status", {"device": spoken})).get("state")
+
+        async def _report_world(key: str, value) -> None:
+            if "fn" in world_sink:
+                await world_sink["fn"](key, value)
+
+        watcher = WorldWatcher(toolset.manifest, _read_device, _report_world, interval_s=poll_s)
+
+    def _feed_out(event: dict) -> None:
+        event_queue.put_nowait(event)
+        if watcher is not None:
+            watcher.on_event(event)
+
     if MODE == "demo":
         feed_start = time.monotonic()
         feed = EventFeed(
-            event_queue.put_nowait,
+            _feed_out,
             backend=_st_backend_label(),
             packs=["smartthings", "device_care"],
             manifest=toolset.manifest,
@@ -401,6 +426,7 @@ async def entrypoint(ctx: JobContext) -> None:
         play_filler=play_filler if FILLER_ENABLED else None,
         generic_ack_texts=(ACK_DEFAULT,),
     )
+    world_sink["fn"] = bridge.on_world_fact
     logger.info(
         "filler %s, chunked TTS %s, AEC warm-up %s",
         "on" if FILLER_ENABLED else "off", "on" if TTS_CHUNKED else "off",
@@ -517,6 +543,8 @@ async def entrypoint(ctx: JobContext) -> None:
         try:
             sink = state_sink.get("fn")
             logger.info(await run_external_command(executor.st_backend, args, on_device_state=sink))
+            if watcher is not None:
+                await watcher.nudge()  # the kernel hears of the change at once, not at the next poll
         except Exception:  # noqa: BLE001 - a drill must never break the conversation
             logger.warning("external_command drill failed", exc_info=True)
 

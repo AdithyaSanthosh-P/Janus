@@ -212,6 +212,13 @@ class Config:
     # hears INTERPRET_FAILED once for that turn. Found by the model_down drill
     # (2026-10-20): the demo profile stayed silent for over 30 s.
     interpret_failure_notice_enabled: bool = False
+    # kernel/evidence.py: a yes counts only for the world it was asked about.
+    # A write held for confirmation records what the camera showed for the
+    # request and the watched device's state; if either changes while Janus
+    # waits, CommitGate G13 holds the write and the user is asked again, or,
+    # when the device reached the requested state by itself, the write is
+    # withdrawn unsent. Demo profile only.
+    evidence_bound_confirmation_enabled: bool = False
     # How long the Q6a re-ask waits after the unclear turn was interpreted,
     # and it is dropped if the user has started another turn by then. Found
     # live (2026-09-27): a hesitant opener ("Um so uh...") followed by a

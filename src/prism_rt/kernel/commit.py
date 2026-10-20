@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 
 from config.lexicons import HOLD_CUES, INERT_TOKENS, TRAILING_CONNECTIVES
+from prism_rt.kernel import evidence
 from prism_rt.kernel.interpret_apply import user_content_pending
 from prism_rt.model.actions import IntendedAction, ToolCallBody
 from prism_rt.model.types import (
@@ -211,6 +212,12 @@ class CommitGate:
             granted = store.facts.get(f"confirm.{call.call_id}.granted")
             if granted is None or granted.status == FactStatus.RETRACTED or granted.value is not True:
                 return GateDecision(False, "confirmation_required", "G12")
+
+        # G13: a write held for the user's yes stays held while anything its
+        # question rested on has changed since it was asked (kernel/evidence.py);
+        # the responder says what changed and asks again.
+        if store.config.evidence_bound_confirmation_enabled and evidence.held_for_yes(store, call) and evidence.changes(store, call):
+            return GateDecision(False, "evidence_changed", "G13")
 
         # G5: no existing effect with the same fingerprint (non-FAILED)
         existing_fp = store.effect_ledger.by_fingerprint(call.fingerprint)

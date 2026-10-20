@@ -62,6 +62,7 @@ _REASON_CODE = {
     "confirmation_required": "needs_confirmation",
     "duplicate_fingerprint": "duplicate", "duplicate_lineage": "duplicate",
     "unknown_effect_outcome": "outcome_unknown",
+    "evidence_changed": "other",
 }
 
 _GONE = (CallStatus.INVALIDATED, CallStatus.DISCARDED, CallStatus.CANCEL_REQUESTED, CallStatus.CANCELLED)
@@ -157,7 +158,7 @@ class EventFeed:
         self._planned_events(calls, store)
         for rejection in getattr(report, "gate_rejections", ()):
             self._held_event(rejection)
-        self._cancelled_events(calls)
+        self._cancelled_events(calls, store)
 
         for emitted in report.emit_report.emitted:
             self._action_events(emitted.action, store, calls)
@@ -199,11 +200,13 @@ class EventFeed:
         self._held[rejection.call_id] = code
         self._send("call_held", call_id=rejection.call_id, reason_code=code, reason=HELD_REASONS[code])
 
-    def _cancelled_events(self, calls) -> None:
+    def _cancelled_events(self, calls, store=None) -> None:
         for call in calls:
             if call.status in _GONE and call.call_id in self._planned and call.call_id not in self._cancelled:
                 self._cancelled.add(call.call_id)
-                self._send("call_cancelled", call_id=call.call_id, reason=self._cancel_reason(call, calls))
+                withdrawn = store.facts.get(f"withdrawn.{call.call_id}.reason") if store is not None else None
+                reason = (str(withdrawn.value)[0].upper() + str(withdrawn.value)[1:]) if withdrawn is not None and withdrawn.value else self._cancel_reason(call, calls)
+                self._send("call_cancelled", call_id=call.call_id, reason=reason)
 
     @staticmethod
     def _cancel_reason(call, calls) -> str:

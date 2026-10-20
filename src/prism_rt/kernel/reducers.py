@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import dataclasses
 
-from config.templates import WATCHDOG_FALLBACK
+from config.templates import EVIDENCE_WITHDRAWN, WATCHDOG_FALLBACK
+from prism_rt.kernel import evidence
 from prism_rt.kernel.audio import AsrScheduler
 from prism_rt.kernel.frames import FrameScheduler
 from prism_rt.kernel.interpret_apply import (
+    _abandon_goal,
     active_goal_id,
     advance_interpretation_queue,
     apply_interpretation,
@@ -44,6 +46,7 @@ from prism_rt.model.events import (
     ToolResultPayload,
     VideoFramePayload,
     WorkerResultPayload,
+    WorldFactPayload,
 )
 from prism_rt.model.types import (
     BindingKind,
@@ -301,6 +304,42 @@ def _apply_user_speech(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) 
         txn.store.timers.schedule("user_active_cap", now_us + txn.store.config.vad_floor_max_ms * 1000)
     else:
         txn.store.timers.cancel("user_active_cap")
+
+
+def _apply_world_fact(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
+    """kernel/evidence.py: a watched device's state, reported by the host.
+    For a write held for the user's yes on that device: the first value
+    reported is the question's baseline; a later different value that is the
+    state the write asked for withdraws it unsent (someone else did it); any
+    other change is left to CommitGate G13 and the responder's re-ask."""
+    if not txn.store.config.evidence_bound_confirmation_enabled:
+        return
+    payload: WorldFactPayload = env.payload
+    key = "world." + str(payload.key)
+    prov = Provenance(source="world", event_id=env.event_id, step_no=step_no, ts_us=now_us)
+    txn.facts.set(key, payload.value, FactStatus.COMMITTED, prov, rule="reducers.world_fact")
+    new = evidence.same_form(payload.value)
+    for call in list(txn.store.call_ledger.proposed()):
+        if evidence.world_key(txn.store, call) != key or not evidence.held_for_yes(txn.store, call):
+            continue
+        pairs = evidence.recorded(txn.store, call.call_id) or []
+        old = next((value for k, value in pairs if k == key), None)
+        if old is None:
+            baseline = [[k, payload.value if k == key else value] for k, value in pairs]
+            txn.facts.set(evidence.SNAPSHOT.format(call_id=call.call_id), baseline, FactStatus.COMMITTED, prov, rule="evidence.baseline")
+            continue
+        if new == evidence.same_form(old) or new != evidence.done_value(txn.store, call):
+            continue
+        others = [c for c in txn.store.call_ledger.non_terminal() if c.goal_id == call.goal_id and c.call_id != call.call_id]
+        if others:
+            continue  # other actions of this request still pending: G13 holds this one and the user is asked
+        device = evidence.describe(txn.store, call, key)
+        txn.facts.set(f"withdrawn.{call.call_id}.reason", f"{device} is already {payload.value}; changed outside Janus",
+                      FactStatus.COMMITTED, prov, rule="evidence.withdrawn")
+        txn.facts.retract(f"goal.{call.goal_id}.awaiting_confirmation", rule="evidence.withdrawn")
+        _abandon_goal(txn, call.goal_id, now_us, step_no, event_id=env.event_id,
+                      text=EVIDENCE_WITHDRAWN.format(device=f"the {device}" if not device.lower().startswith("the ") else device,
+                                                     value=payload.value))
 
 
 def _apply_video_frame(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
@@ -680,6 +719,7 @@ _HANDLERS = {
     "tool_result": _apply_tool_result,
     "text_chunk": _apply_text_chunk,
     "video_frame": _apply_video_frame,
+    "world_fact": _apply_world_fact,
     "audio_clip": _apply_audio_clip,
     "end_of_turn": _apply_end_of_turn,
     "interruption": _apply_interruption,

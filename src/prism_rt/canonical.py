@@ -22,6 +22,13 @@ ABSENT = "__ABSENT__"
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
+def world_target_key(spoken) -> str:
+    """The key a device is watched under (`kernel/evidence.py`), from the
+    device as the user named it: "Front door" and "front  door" are one key.
+    The host and the kernel both build it here, so they always agree."""
+    return "target." + " ".join(str(spoken or "").strip().lower().replace("-", " ").replace("_", " ").split())
+
+
 def _normalize_scalar(value: Any) -> Any:
     if isinstance(value, str):
         return _WHITESPACE_RE.sub(" ", value.strip())
