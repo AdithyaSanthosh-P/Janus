@@ -12,9 +12,11 @@ import { ActionTimeline } from './src/components/ActionTimeline';
 import { DeviceTiles } from './src/components/DeviceTiles';
 import { LedgerFooter } from './src/components/LedgerFooter';
 import { ConnectModal } from './src/components/ConnectModal';
+import { DrillDrawer } from './src/components/DrillDrawer';
 import { janusStore, JanusState } from './src/store/janusStore';
 import { demoPlaybackService } from './src/services/demoPlaybackService';
 import { livekitService } from './src/services/livekitService';
+import { drillService } from './src/services/drillService';
 
 /**
  * 3-Bullet Architecture Plan:
@@ -28,6 +30,8 @@ export default function App() {
   const [isDark, setIsDark] = useState(true); // Default dark mode for tech demo aesthetic
   const [state, setState] = useState<JanusState>(janusStore.getState());
   const [connectModalVisible, setConnectModalVisible] = useState(false);
+  const [drillDrawerVisible, setDrillDrawerVisible] = useState(false);
+  const [isDrillActive, setIsDrillActive] = useState<boolean>(drillService.isAnyActive());
   const [demoStatus, setDemoStatus] = useState(demoPlaybackService.getStatus());
 
   // Subscribe to central Janus store
@@ -42,6 +46,14 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = demoPlaybackService.subscribe(status => {
       setDemoStatus(demoPlaybackService.getStatus());
+    });
+    return unsubscribe;
+  }, []);
+
+  // Subscribe to failure drill status
+  useEffect(() => {
+    const unsubscribe = drillService.subscribe((_drillState, anyActive) => {
+      setIsDrillActive(anyActive);
     });
     return unsubscribe;
   }, []);
@@ -88,7 +100,7 @@ export default function App() {
         backgroundColor={isDark ? '#09090b' : '#ffffff'}
       />
 
-      {/* Top Header: Branding, Backend Badge, Mic indicator, Controls */}
+      {/* Top Header: Branding, Backend Badge, Mic indicator, Controls, Drill On Badge */}
       <Header
         backend={state.backend}
         connectionStatus={state.connectionStatus}
@@ -96,11 +108,13 @@ export default function App() {
         isDark={isDark}
         demoPlaying={demoStatus.isPlaying}
         demoSpeed={demoStatus.speed}
+        isDrillActive={isDrillActive}
         onToggleTheme={handleToggleTheme}
         onOpenConnectModal={() => setConnectModalVisible(true)}
         onToggleDemoPlay={handleToggleDemoPlay}
         onToggleDemoSpeed={handleToggleDemoSpeed}
         onResetDemo={handleResetDemo}
+        onOpenDrillDrawer={() => setDrillDrawerVisible(true)}
       />
 
       {/* Main Portrait Scroll Content */}
@@ -142,6 +156,13 @@ export default function App() {
           demoPlaybackService.reset();
           demoPlaybackService.play();
         }}
+      />
+
+      {/* Hidden Failure Drills Drawer (opened by long-press on REAL/MOCK badge in live mode) */}
+      <DrillDrawer
+        visible={drillDrawerVisible}
+        isDark={isDark}
+        onClose={() => setDrillDrawerVisible(false)}
       />
     </SafeAreaView>
   );

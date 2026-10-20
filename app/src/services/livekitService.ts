@@ -1,6 +1,7 @@
 import { isValidJanusPacket } from '../utils/eventValidator';
 import { janusStore } from '../store/janusStore';
 import { JanusEvent } from '../types/janus';
+import { DrillPacket } from '../utils/drillBuilder';
 
 export interface LiveKitConnectOptions {
   url: string;
@@ -174,6 +175,27 @@ export class LiveKitService {
     } catch (err) {
       console.error('[LiveKitService] Error toggling camera:', err);
       return this.isCameraEnabled;
+    }
+  }
+
+  /**
+   * Send a failure drill message over LiveKit data channel.
+   * Topic: `janus.control`, reliable: true.
+   */
+  public async sendDrill(packet: DrillPacket): Promise<void> {
+    if (!this.room || !this.room.localParticipant) {
+      console.warn('[LiveKitService] Cannot send drill: room is not connected.');
+      return;
+    }
+    try {
+      const encoded = new TextEncoder().encode(JSON.stringify(packet));
+      await this.room.localParticipant.publishData(encoded, {
+        reliable: true,
+        topic: 'janus.control',
+      });
+    } catch (err) {
+      console.error('[LiveKitService] Error publishing drill:', err);
+      throw err;
     }
   }
 

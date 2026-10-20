@@ -7,16 +7,15 @@ import Animated, {
   withRepeat,
 } from 'react-native-reanimated';
 import {
-  Radio,
   Sun,
   Moon,
+  Radio,
   Play,
   Pause,
   RotateCcw,
   Mic,
   MicOff,
 } from 'lucide-react-native';
-import { WaveformIndicator } from './WaveformIndicator';
 import { LUCID_SPRING_CONFIG } from '../theme/motion';
 import { BackendType } from '../types/janus';
 
@@ -34,11 +33,13 @@ interface HeaderProps {
   isDark: boolean;
   demoPlaying: boolean;
   demoSpeed: number;
+  isDrillActive?: boolean;
   onToggleTheme: () => void;
   onOpenConnectModal: () => void;
   onToggleDemoPlay: () => void;
   onToggleDemoSpeed: () => void;
   onResetDemo: () => void;
+  onOpenDrillDrawer?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -48,11 +49,13 @@ export const Header: React.FC<HeaderProps> = ({
   isDark,
   demoPlaying,
   demoSpeed,
+  isDrillActive = false,
   onToggleTheme,
   onOpenConnectModal,
   onToggleDemoPlay,
   onToggleDemoSpeed,
   onResetDemo,
+  onOpenDrillDrawer,
 }) => {
   const micPulse = useSharedValue(1);
 
@@ -122,8 +125,11 @@ export const Header: React.FC<HeaderProps> = ({
             Janus
           </Text>
 
-          {/* Backend Badge per contract */}
-          <View
+          {/* Backend Badge per contract: Long-press in live mode opens Failure Drills drawer */}
+          <TouchableOpacity
+            onLongPress={connectionStatus !== 'demo' ? onOpenDrillDrawer : undefined}
+            delayLongPress={500}
+            activeOpacity={connectionStatus !== 'demo' ? 0.75 : 1}
             style={{
               paddingHorizontal: 8,
               paddingVertical: 3,
@@ -160,7 +166,45 @@ export const Header: React.FC<HeaderProps> = ({
                 ? 'REAL · SmartThings Cloud'
                 : 'MOCK · Simulated'}
             </Text>
-          </View>
+          </TouchableOpacity>
+
+          {/* DRILL ON Badge: Highlighted when any failure injection toggle is active */}
+          {isDrillActive && (
+            <TouchableOpacity
+              onPress={onOpenDrillDrawer}
+              activeOpacity={0.8}
+              style={{
+                paddingHorizontal: 6,
+                paddingVertical: 2,
+                borderRadius: 8,
+                backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                borderWidth: 1,
+                borderColor: '#ef4444',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+              }}
+            >
+              <View
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: 3,
+                  backgroundColor: '#ef4444',
+                }}
+              />
+              <Text
+                style={{
+                  fontSize: 10,
+                  fontWeight: '800',
+                  color: '#ef4444',
+                  letterSpacing: 0.5,
+                }}
+              >
+                DRILL ON
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Quick controls: Connect, Theme Toggle */}
@@ -220,17 +264,17 @@ export const Header: React.FC<HeaderProps> = ({
           marginTop: 8,
         }}
       >
-        {/* Status Pill & Mic */}
+        {/* Left: Connection pill + Live Mic Status */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <View
             style={{
               flexDirection: 'row',
               alignItems: 'center',
-              gap: 6,
+              gap: 5,
               paddingHorizontal: 8,
               paddingVertical: 4,
-              borderRadius: 10,
-              backgroundColor: isDark ? '#18181b' : '#f8fafc',
+              borderRadius: 8,
+              backgroundColor: isDark ? '#18181b' : '#f1f5f9',
               borderWidth: 1,
               borderColor: isDark ? '#27272a' : '#e2e8f0',
             }}
@@ -247,14 +291,14 @@ export const Header: React.FC<HeaderProps> = ({
               style={{
                 fontSize: 11,
                 fontWeight: '600',
-                color: isDark ? '#a1a1aa' : '#64748b',
+                color: isDark ? '#e4e4e7' : '#334155',
               }}
             >
               {statusLabel}
             </Text>
           </View>
 
-          {/* Mic Waveform & Activity Indicator */}
+          {/* Dynamic Mic Waveform Pill */}
           <Animated.View
             style={[
               {
@@ -263,39 +307,46 @@ export const Header: React.FC<HeaderProps> = ({
                 gap: 5,
                 paddingHorizontal: 8,
                 paddingVertical: 4,
-                borderRadius: 10,
+                borderRadius: 8,
                 backgroundColor: userSpeaking
                   ? isDark
-                    ? 'rgba(59, 130, 246, 0.2)'
-                    : 'rgba(59, 130, 246, 0.1)'
+                    ? 'rgba(16, 185, 129, 0.2)'
+                    : '#dcfce7'
                   : isDark
                   ? '#18181b'
-                  : '#f8fafc',
+                  : '#f1f5f9',
                 borderWidth: 1,
-                borderColor: userSpeaking ? '#3b82f6' : isDark ? '#27272a' : '#e2e8f0',
+                borderColor: userSpeaking
+                  ? '#10b981'
+                  : isDark
+                  ? '#27272a'
+                  : '#e2e8f0',
               },
               micAnimatedStyle,
             ]}
           >
             {userSpeaking ? (
-              <Mic size={13} color="#3b82f6" />
+              <Mic size={12} color="#10b981" />
             ) : (
-              <MicOff size={13} color={isDark ? '#71717a' : '#94a3b8'} />
+              <MicOff size={12} color={isDark ? '#71717a' : '#94a3b8'} />
             )}
-            <WaveformIndicator active={userSpeaking} size="sm" color="#3b82f6" />
             <Text
               style={{
                 fontSize: 11,
                 fontWeight: '600',
-                color: userSpeaking ? '#3b82f6' : isDark ? '#71717a' : '#94a3b8',
+                color: userSpeaking
+                  ? '#10b981'
+                  : isDark
+                  ? '#71717a'
+                  : '#94a3b8',
               }}
             >
-              {userSpeaking ? 'Listening...' : 'Mic idle'}
+              {userSpeaking ? 'Listening' : 'Muted'}
             </Text>
           </Animated.View>
         </View>
 
-        {/* Demo playback bar */}
+        {/* Right: Demo playback toolbar */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <TouchableOpacity
             onPress={onToggleDemoPlay}
@@ -372,4 +423,3 @@ export const Header: React.FC<HeaderProps> = ({
 };
 
 export default Header;
-
