@@ -137,9 +137,10 @@ export const DeviceCard: React.FC<DeviceCardProps> = ({ device, isDark }) => {
     devId.startsWith('washer-')
   ) {
     if (device.value === 'pause') {
-      formattedValue = 'Paused · 4C';
-      statusColor = '#ef4444'; // red error code
-      iconBg = isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2';
+      // No error code here: a user can pause with no fault; the agent says the code.
+      formattedValue = 'Paused';
+      statusColor = '#f59e0b';
+      iconBg = isDark ? 'rgba(245, 158, 11, 0.15)' : '#fffbeb';
     } else if (device.value === 'run') {
       formattedValue = 'Running';
       statusColor = '#3b82f6';

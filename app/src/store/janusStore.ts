@@ -134,14 +134,11 @@ export class JanusEventReducer {
     status: JanusState['connectionStatus'],
     error: string | null = null
   ) {
-    let nextDevices = this.state.devices;
-    // When switching to live mode (connecting/connected), start with NO tiles
-    if (status === 'connecting') {
-      nextDevices = {};
-    }
+    // Tiles are kept on every status change: a LiveKit reconnect resumes the
+    // same session and the agent does not resend device states. A fresh live
+    // session starts empty through reset() in LiveKitService.connect().
     this.state = {
       ...this.state,
-      devices: nextDevices,
       connectionStatus: status,
       connectionError: error,
     };
@@ -231,9 +228,11 @@ export class JanusEventReducer {
 
       case 'agent_interrupted': {
         const captions = [...this.state.captions];
-        if (captions.length > 0) {
-          const last = { ...captions[captions.length - 1], isInterrupted: true };
-          captions[captions.length - 1] = last;
+        for (let i = captions.length - 1; i >= 0; i--) {
+          if (captions[i].sender === 'agent') {
+            captions[i] = { ...captions[i], isInterrupted: true };
+            break;
+          }
         }
         this.state = {
           ...this.state,

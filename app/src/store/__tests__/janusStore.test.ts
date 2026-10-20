@@ -154,4 +154,32 @@ describe('JanusStore Event Reducer & Validator', () => {
     const replayed = store.processEvent(SAMPLE_EVENTS[0]);
     expect(replayed).toBe(false); // dropped as duplicate
   });
+
+  it('A LiveKit reconnect keeps the device tiles (the agent does not resend them)', () => {
+    const store = new JanusEventReducer();
+    store.setConnectionStatus('connecting');
+    store.setConnectionStatus('connected');
+    store.processEvent({
+      v: 1, seq: 1, t_ms: 10, type: 'device_state', device: 'lock-1', label: 'Janus Lock',
+      capability: 'lock', attribute: 'lock', value: 'locked', backend: 'mock',
+    } as JanusEvent);
+
+    store.setConnectionStatus('connecting'); // RoomEvent.Reconnecting
+    store.setConnectionStatus('connected'); // RoomEvent.Reconnected
+    expect(store.getState().devices['lock-1'].value).toBe('locked');
+
+    store.reset(false, false); // a fresh live session (LiveKitService.connect)
+    expect(Object.keys(store.getState().devices).length).toBe(0);
+  });
+
+  it('agent_interrupted marks the last agent caption, never a user caption', () => {
+    const store = new JanusEventReducer();
+    store.processEvent({ v: 1, seq: 1, t_ms: 10, type: 'agent_said', text: 'The washer shows', kind: 'inform' } as JanusEvent);
+    store.processEvent({ v: 1, seq: 2, t_ms: 20, type: 'heard', turn_id: 't-2', text: 'wait' } as JanusEvent);
+    store.processEvent({ v: 1, seq: 3, t_ms: 30, type: 'agent_interrupted' } as JanusEvent);
+
+    const [agent, user] = store.getState().captions;
+    expect(agent.isInterrupted).toBe(true);
+    expect(user.isInterrupted).toBeFalsy();
+  });
 });
