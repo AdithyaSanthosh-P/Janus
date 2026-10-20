@@ -238,6 +238,7 @@ def demo_toolset() -> Toolset:
 
         execute.snapshot_states = snapshot_states
         execute.st_backend = backend
+        execute.read_target = st.read_target
         return execute
 
     from prism_rt.devicecare.tools import MANIFEST as CARE_MANIFEST
@@ -368,8 +369,8 @@ async def entrypoint(ctx: JobContext) -> None:
     watcher: WorldWatcher | None = None
     poll_s = float(os.environ.get("JANUS_WORLD_POLL_S", "10") or 0)
     if MODE == "demo" and poll_s > 0:
-        async def _read_device(spoken: str):
-            return (await executor("st_get_status", {"device": spoken})).get("state")
+        async def _read_device(tool: str, spoken: str):
+            return await executor.read_target(tool, spoken)
 
         async def _report_world(key: str, value) -> None:
             if "fn" in world_sink:

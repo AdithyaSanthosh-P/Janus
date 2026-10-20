@@ -36,7 +36,10 @@ from config.templates import (
     FRESH_VIEW_REQUEST,
     INFORM_DUPLICATE_WRITE,
     INFORM_UNKNOWN_WRITE_OUTCOME,
+    EVIDENCE_MAX_REASKS,
     EVIDENCE_REASK,
+    EVIDENCE_REASK_QUESTION,
+    EVIDENCE_REASK_SECURITY,
     INTERPRET_FAILED,
     UNCLEAR_NO_GOAL,
 )
@@ -664,18 +667,25 @@ class FastResponder:
         waited. Any yes already given is void (G13 held the call); the user
         hears what changed and the question again, against a new snapshot."""
         prov = Provenance(source="system", step_no=step_no, ts_us=now_us)
+        count_fact = store.facts.get(f"confirm.{call.call_id}.reasks")
+        count = (count_fact.value if count_fact is not None and count_fact.status != FactStatus.RETRACTED else 0) + 1
+        store.facts.set(f"confirm.{call.call_id}.reasks", count, FactStatus.COMMITTED, prov, rule="responder.evidence_changed")
         if store.facts.get(f"confirm.{call.call_id}.granted") is not None:
             store.facts.retract(f"confirm.{call.call_id}.granted", rule="responder.evidence_changed")
         store.facts.set(f"goal.{goal_id}.commit_intent", False, FactStatus.COMMITTED, prov, rule="responder.evidence_changed")
-        store.facts.set(evidence.SNAPSHOT.format(call_id=call.call_id), evidence.snapshot(store, call),
+        # Bounded: a camera reading re-asks about once (a blinking LED must not
+        # re-ask every lease renewal), and after EVIDENCE_MAX_REASKS nothing does.
+        camera_changed = any(not key.startswith("world.") for key, _old, _new in diffs)
+        recorded = evidence.recorded(store, call.call_id) or []
+        camera_kept = not camera_changed and any(not key.startswith("world.") for key, _v in recorded)
+        new_snapshot = [] if count >= EVIDENCE_MAX_REASKS else evidence.snapshot(store, call, perception=camera_kept, world_now=True)
+        store.facts.set(evidence.SNAPSHOT.format(call_id=call.call_id), new_snapshot,
                         FactStatus.COMMITTED, prov, rule="responder.evidence_changed")
-        what = "; ".join(f"the {evidence.describe(store, call, key)} changed from {old} to {new}" for key, old, new in diffs)
-        values = ", ".join(str(v) for v in call.args.values())
+        what = "; ".join(f"{evidence.describe(store, call, key)} changed from {old} to {new}" for key, old, new in diffs)
         tool = store.catalog.get(call.tool)
-        action = call.tool.removeprefix("st_").replace("_", " ")
-        question = (f"Shall I still {action}" + (f" ({values})" if values else "") + "?")
-        if tool is not None and tool.requires_confirmation:
-            question = "It's a security action, so I need your yes again: " + question[0].lower() + question[1:]
+        action, args = evidence.action_words(call)
+        template = EVIDENCE_REASK_SECURITY if tool is not None and tool.requires_confirmation else EVIDENCE_REASK_QUESTION
+        question = template.format(action=action, args=args)
         return [
             IntendedAction(
                 action_type=ActionType.SPEAK,

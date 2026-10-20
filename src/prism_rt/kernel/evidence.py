@@ -81,15 +81,22 @@ def _perception_keys(store, goal_id: str) -> list[str]:
     )
 
 
-def snapshot(store, call) -> list[list]:
-    keys = _perception_keys(store, call.goal_id)
+def snapshot(store, call, *, perception: bool = True, world_now: bool = False) -> list[list]:
+    """The device's value always starts empty: a `world.*` fact left by an
+    earlier watch may be stale (nothing refreshes it once that watch ends),
+    so only a report made for *this* question can be its baseline.
+    `perception=False` leaves the camera readings out (already re-asked about
+    once: a flickering reading must not re-ask forever). `world_now=True`
+    (a re-ask, whose device value was just reported for this question)
+    keeps the current device value as the new baseline."""
+    pairs = []
+    if perception:
+        for key in _perception_keys(store, call.goal_id):
+            pairs.append([key, store.facts.get(key).value])
     wk = world_key(store, call)
     if wk is not None:
-        keys.append(wk)
-    pairs = []
-    for key in keys:
-        fact = store.facts.get(key)
-        pairs.append([key, fact.value if _active(fact) else None])
+        fact = store.facts.get(wk)
+        pairs.append([wk, fact.value if world_now and _active(fact) else None])
     return pairs
 
 
@@ -122,9 +129,19 @@ def held_for_yes(store, call) -> bool:
 
 
 def describe(store, call, key: str) -> str:
-    """Words for an evidence key: the device as the user named it, or the
-    camera reading's name ("code", "led color")."""
+    """Words for an evidence key, with its article: "the front door" (the
+    device as the user named it, whether or not they said "the"), or the
+    camera reading's name ("the code", "the led color")."""
     if key.startswith("world."):
         tool = store.catalog.get(call.tool)
-        return str(call.args.get(tool.watch, "the device")) if tool is not None and tool.watch else "the device"
-    return key.rsplit(".", 1)[-1].replace("_", " ")
+        name = str(call.args.get(tool.watch) or "") if tool is not None and tool.watch else ""
+        name = re.sub(r"^(the|my)\s+", "", name.strip(), flags=re.IGNORECASE) or "device"
+        return "the " + name
+    return "the " + key.rsplit(".", 1)[-1].replace("_", " ")
+
+
+def action_words(call) -> tuple[str, str]:
+    """("unlock", " (front door)"): the action and its argument values, as
+    the confirmation question words them."""
+    values = ", ".join(str(v) for v in call.args.values())
+    return call.tool.removeprefix("st_").replace("_", " "), (f" ({values})" if values else "")

@@ -334,12 +334,11 @@ def _apply_world_fact(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -
         if others:
             continue  # other actions of this request still pending: G13 holds this one and the user is asked
         device = evidence.describe(txn.store, call, key)
-        txn.facts.set(f"withdrawn.{call.call_id}.reason", f"{device} is already {payload.value}; changed outside Janus",
+        txn.facts.set(f"withdrawn.{call.call_id}.reason", f"{device.removeprefix('the ')} is already {payload.value}; changed outside Janus",
                       FactStatus.COMMITTED, prov, rule="evidence.withdrawn")
         txn.facts.retract(f"goal.{call.goal_id}.awaiting_confirmation", rule="evidence.withdrawn")
         _abandon_goal(txn, call.goal_id, now_us, step_no, event_id=env.event_id,
-                      text=EVIDENCE_WITHDRAWN.format(device=f"the {device}" if not device.lower().startswith("the ") else device,
-                                                     value=payload.value))
+                      text=EVIDENCE_WITHDRAWN.format(device=device, value=payload.value))
 
 
 def _apply_video_frame(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:

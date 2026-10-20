@@ -29,6 +29,21 @@ _KIND_WORDS = {
 }
 
 
+_KIND_ORDER = ("garage", "thermostat", "switch", "lock")
+
+# What each watched write targets: (capabilities, kind, attribute). The same
+# resolution the write's own `_set` uses, so the evidence watch
+# (adapters/world_watch.py) reads the very device the write would change.
+_WRITE_TARGETS = {
+    "st_lock": (("lock",), "lock", "lock"),
+    "st_unlock": (("lock",), "lock", "lock"),
+    "st_open_garage": (GARAGE_CAPABILITIES, "garage", "door"),
+    "st_close_garage": (GARAGE_CAPABILITIES, "garage", "door"),
+    "st_switch": (("switch",), "switch", "switch"),
+    "st_set_cooling_setpoint": (("thermostatCoolingSetpoint",), "thermostat", "coolingSetpoint"),
+}
+
+
 def _obj(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties, "required": required}
 
@@ -143,6 +158,20 @@ class SmartThingsToolset:
             if primary is not None:
                 self._report(device, *primary, attribute_value(await self.backend.status(device["deviceId"]), *primary))
 
+    async def read_target(self, tool: str, spoken) -> object:
+        """The current value of what `tool` would change on the device the
+        user named -- resolved exactly as the write resolves it. None for a
+        tool that targets no single device attribute."""
+        target = _WRITE_TARGETS.get(tool)
+        if target is None:
+            return None
+        capabilities, kind, attribute = target
+        device = await self._resolve(spoken, capabilities, kind)
+        capability = next(c for c in capabilities if c in self._caps(device))
+        value = attribute_value(await self.backend.status(device["deviceId"]), capability, attribute)
+        self._report(device, capability, attribute, value)
+        return value
+
     # ---- reads --------------------------------------------------------------
     async def _st_list_devices(self, a: dict) -> dict:
         devices = await self._all_devices(refresh=True)
@@ -159,7 +188,9 @@ class SmartThingsToolset:
     async def _st_get_status(self, a: dict) -> dict:
         spoken = a.get("device")
         words = set(_norm(spoken).split())
-        kind = next((k for k, names in _KIND_WORDS.items() if words & set(names)), None)
+        # The most specific kind word wins: "garage door" is the garage and
+        # "front porch light" the light, though "door" and "front" are lock words.
+        kind = next((k for k in _KIND_ORDER if words & set(_KIND_WORDS[k])), None)
         by_kind = {"lock": ("lock",), "garage": GARAGE_CAPABILITIES, "thermostat": ("thermostatCoolingSetpoint",), "switch": ("switch",)}
         device = await self._resolve(spoken, by_kind[kind] if kind else None, kind)
         status = await self.backend.status(device["deviceId"])

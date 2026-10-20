@@ -53,18 +53,20 @@ UNLOCK = {"act": "new_goal", "intent": "st_unlock", "slot_deltas": [], "commit_i
           "actions": [{"tool": "st_unlock", "args": {"device": "front door"}}]}
 
 
-def unlock_asked(config=None):
+def unlock_asked(config=None, *, device="front door", before=()):
     mock = MockSmartThings()
     run(mock.command("lock-1", "lock", "lock"))
     mock.commands.clear()
     execute = SmartThingsToolset(mock, sleep=_no_sleep).make_executor()
     provider = ScriptedProvider()
     provider.register("interpret", "yes please", {"act": "confirm", "slot_deltas": []})
-    provider.register("interpret", "unlock the front", UNLOCK)
+    provider.register("interpret", "unlock the front", {**UNLOCK, "actions": [{"tool": "st_unlock", "args": {"device": device}}]})
     provider.register("compose", "", {"text": "Done.", "claims": []})
     tools = {m["name"]: {"latency_ms": 200, "handler": (lambda args, n=m["name"]: run(execute(n, args)))} for m in MANIFEST}
     h = SimHarness(config or demo_config(), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
     h.send(0, [manifest_event(MANIFEST)])
+    if before:
+        h.send(50_000, list(before))
     h.send(100_000, [chunk_event("unlock the front door")])
     actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + drain(h, 3_000_000, stop_on_final=False)
     assert any("security action" in t for t in said(actions)) and tool_calls(actions) == []
@@ -222,3 +224,51 @@ def test_replay_is_identical():
         return [r.to_dict() if hasattr(r, "to_dict") else repr(r) for r in h.run_log.reports]
 
     assert log() == log()
+
+
+def test_a_device_value_left_by_an_earlier_watch_is_never_the_baseline():
+    """Review finding: an earlier watch left world.<front door> = locked;
+    the door has since been unlocked (by Janus itself). The new question's
+    first report is its baseline, not a change."""
+    h, mock, _ = unlock_asked(before=[world_event("front door", "locked")])
+    actions = push(h, 3_100_000, [world_event("front door", "unlocked")], 3_600_000)
+    assert said(actions) == []
+    clean(h)
+
+
+def test_the_device_value_stays_the_baseline_after_a_reask():
+    h, mock, _ = unlock_asked()
+    push(h, 3_100_000, [world_event("front door", "locked")], 3_500_000)
+    push(h, 4_000_000, [world_event("front door", "jammed")], 5_000_000)  # re-asked
+    actions = push(h, 5_200_000, [world_event("front door", "unlocked")], 6_000_000)  # then someone unlocks it
+    assert EVIDENCE_WITHDRAWN.format(device="the front door", value="unlocked") in said(actions)
+    clean(h)
+
+
+def test_reasks_are_bounded():
+    h, mock, _ = unlock_asked()
+    push(h, 3_100_000, [world_event("front door", "locked")], 3_500_000)
+    actions = []
+    for i, value in enumerate(["jammed", "locked", "jammed", "locked"]):
+        actions += push(h, 4_000_000 + i * 1_000_000, [world_event("front door", value)], 4_900_000 + i * 1_000_000)
+    assert len([t for t in said(actions) if t.startswith("Heads up")]) == 2
+    later = say(h, 9_100_000, "yes please", 12_000_000)
+    assert tool_calls(later) == ["st_unlock"]
+    clean(h)
+
+
+def test_a_flickering_camera_reading_re_asks_once():
+    """Review finding: a blinking LED reads differently on every renewal."""
+    h, tk, actions = washer_booking(["4C", "none", "4C", "none", "4C", "none", "4C"])
+    assert len([t for t in said(actions) if t.startswith("Heads up")]) == 1
+    later = say(h, 9_100_000, "yes go ahead", 14_000_000)
+    assert tool_calls(later) == ["book_technician"]
+    clean(h)
+
+
+def test_the_device_is_named_once_with_its_article():
+    h, mock, _ = unlock_asked(device="the front door")
+    push(h, 3_100_000, [world_event("the front door", "locked")], 3_500_000)
+    actions = push(h, 4_000_000, [world_event("the front door", "jammed")], 5_000_000)
+    assert [t for t in said(actions) if t.startswith("Heads up")][0].startswith("Heads up: The front door changed")
+    clean(h)

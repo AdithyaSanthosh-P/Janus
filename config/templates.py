@@ -37,3 +37,8 @@ INTERPRET_FAILED = "Sorry, I couldn't process that just now, so I didn't act on 
 EVIDENCE_WITHDRAWN = "Never mind: {device} is already {value}. It changed while I was waiting, so I didn't send anything."
 # Something the question rested on changed; asked again. {what} lists the changes.
 EVIDENCE_REASK = "Heads up: {what} since I asked. {question}"
+EVIDENCE_REASK_QUESTION = "Shall I still {action}{args}?"
+EVIDENCE_REASK_SECURITY = "It's a security action, so I need your yes again: shall I still {action}{args}?"
+# Asked again EVIDENCE_MAX_REASKS times and it is still changing: no further
+# re-asks; the write's own pre-read before sending still applies.
+EVIDENCE_MAX_REASKS = 2
