@@ -7,7 +7,10 @@ provider -- never inside the kernel, so what the jury sees is the kernel's
 ordinary handling of a failure:
 
   st_unreachable    every SmartThings call fails as a connection error
-  st_no_confirm     commands are accepted but never take effect (-> unconfirmed)
+  st_no_confirm     device commands and mode changes are accepted but never take
+                    effect (-> unconfirmed; both are read back). Scenes are not
+                    drilled: a scene is never read back, so a fake ACCEPTED
+                    would turn into a false "done"
   st_latency        every SmartThings call is delayed by `args.ms`
   model_slow        every model call is delayed by `args.ms`
   model_down        every model call fails as a connection error
@@ -60,7 +63,9 @@ class DrillState:
         (the caller runs it), else None. Raises ValueError on a bad message."""
         if not isinstance(message, dict) or message.get("v") != 1 or message.get("type") != "drill":
             raise ValueError("not a v1 drill message")
-        name, on, args = message.get("name"), message.get("on") is True, message.get("args") or {}
+        name, on, args = message.get("name"), message.get("on"), message.get("args") or {}
+        if not isinstance(on, bool):
+            raise ValueError("on must be true or false")
         if not isinstance(args, dict):
             raise ValueError("args must be an object")
         if name == "reset":
@@ -87,8 +92,11 @@ class DrillState:
 
 
 def _delay(args: dict, default: int) -> int:
+    raw = args.get("ms", default)
+    if isinstance(raw, bool):
+        raise ValueError("ms must be a number")
     try:
-        ms = int(args.get("ms", default))
+        ms = int(raw)
     except (TypeError, ValueError):
         raise ValueError("ms must be a number") from None
     return max(0, min(ms, _MAX_DELAY_MS))
@@ -98,7 +106,7 @@ class DrilledBackend:
     """A SmartThings backend (real client or mock) with the SmartThings drills
     applied. Same async interface as the backend it wraps."""
 
-    _COMMANDS = ("command", "set_mode", "execute_scene")
+    _COMMANDS = ("command", "set_mode")
 
     def __init__(self, inner, state: DrillState, *, sleep: Callable[[float], Awaitable] = asyncio.sleep) -> None:
         self.inner = inner
@@ -142,10 +150,12 @@ class DrilledProvider:
         return self.inner.complete_json(kind, prompt, schema, media=media)
 
 
-async def run_external_command(backend, args: dict) -> str:
+async def run_external_command(backend, args: dict, on_device_state: Callable | None = None) -> str:
     """The `external_command` drill: one command by "someone else", sent to the
     backend underneath the drills (it must work even while SmartThings drills
-    are on) and outside the kernel. The device is matched by label or id."""
+    are on) and outside the kernel. The device is matched by label or id. The
+    new state is read back the same way and reported through `on_device_state`
+    (the app's tile), never through the drilled backend."""
     raw = backend.inner if isinstance(backend, DrilledBackend) else backend
     wanted = args["device"].strip().lower()
     devices = await raw.list_devices()
@@ -154,4 +164,10 @@ async def run_external_command(backend, args: dict) -> str:
         raise ValueError(f"external_command: no single device matches {args['device']!r}")
     device = match[0]
     await raw.command(device["deviceId"], args["capability"], args["command"], [])
+    if on_device_state is not None:
+        status = await raw.status(device["deviceId"])
+        attrs = status.get("components", {}).get("main", {}).get(args["capability"], {})
+        for attribute, body in attrs.items():
+            on_device_state(device["deviceId"], device["label"], args["capability"], attribute, body.get("value"))
+            break
     return f"external_command: {args['command']} sent to {device['label']} as someone else"

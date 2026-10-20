@@ -71,6 +71,9 @@ def test_delay_is_capped():
     drill("format_disk"),
     drill("external_command", device="lock"),
     drill("st_latency", ms="soon"),
+    drill("st_latency", ms=True),
+    {"v": 1, "type": "drill", "name": "model_down", "on": 1},
+    {"v": 1, "type": "drill", "name": "model_down", "on": "true"},
     "not a dict",
 ])
 def test_bad_messages_are_refused_and_change_nothing(message):
@@ -275,3 +278,35 @@ def test_e2e_someone_else_unlocks_while_janus_waits_for_yes():
     assert [(n, o.get("already")) for n, o in results] == [("st_unlock", True)]
     assert len(mock.commands) == 1  # only "someone else"'s command; Janus sent nothing
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_no_confirm_does_not_drill_scenes():
+    """A scene is never read back, so a fake ACCEPTED would become a false
+    "done": under st_no_confirm a scene really runs (or the drill is moot)."""
+    s, mock, _b, execute, _ = drilled()
+    s.st_no_confirm = True
+    scenes = run(mock.list_scenes("loc"))
+    if not scenes:
+        pytest.skip("the mock has no scenes")
+    out = run(execute("st_execute_scene", {"scene": scenes[0]["sceneName"]}))
+    assert out["done"] is True and mock.scenes_run == [scenes[0]["sceneId"]]
+
+
+def test_no_confirm_mode_change_is_unconfirmed():
+    s, _m, _b, execute, _ = drilled()
+    s.st_no_confirm = True
+    out = run(execute("st_set_location_mode", {"mode": "Away"}))
+    assert out["outcome"] == "unconfirmed" and "done" not in out
+
+
+def test_external_command_reports_the_tile_even_while_smartthings_is_drilled_down():
+    s, mock, backend, _e, _ = drilled()
+    s.st_unreachable = True
+    tiles = []
+    run(run_external_command(backend, {"device": "Janus Lock", "capability": "lock", "command": "lock"},
+                             on_device_state=lambda *a: tiles.append(a)))
+    assert tiles == [("lock-1", "Janus Lock", "lock", "lock", "locked")]
+
+
+def test_failure_notice_never_denies_earlier_work():
+    assert "anything" not in INTERPRET_FAILED and "reach" not in INTERPRET_FAILED

@@ -28,5 +28,7 @@ WATCHDOG_FALLBACK = "I wasn't able to finish in time — here's where things sto
 CONFIRM_SECURITY = "That's a security action. Shall I go ahead and {action}{args}?"
 UNCLEAR_NO_GOAL = "Sorry, I didn't quite catch what you'd like me to do — could you say that again?"
 # Said once when a turn's interpretation failed every retry (the model could
-# not be reached): nothing was done, and the user is told so instead of silence.
-INTERPRET_FAILED = "Sorry, I can't reach my reasoning service right now, so I haven't done anything. Please try again in a moment."
+# not be reached, or kept answering with something unusable): that turn was
+# not acted on, and the user is told so instead of silence. Cause-neutral, and
+# says nothing about earlier turns, which may well have done things.
+INTERPRET_FAILED = "Sorry, I couldn't process that just now, so I didn't act on it. Please try again in a moment."

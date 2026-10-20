@@ -515,8 +515,8 @@ async def entrypoint(ctx: JobContext) -> None:
     async def _external_command(args: dict) -> None:
         # "Someone else" changes a device, outside the kernel; the tiles follow.
         try:
-            logger.info(await run_external_command(executor.st_backend, args))
-            await executor.snapshot_states()
+            sink = state_sink.get("fn")
+            logger.info(await run_external_command(executor.st_backend, args, on_device_state=sink))
         except Exception:  # noqa: BLE001 - a drill must never break the conversation
             logger.warning("external_command drill failed", exc_info=True)
 
