@@ -44,26 +44,27 @@ export class LiveKitService {
       this.currentUrl = url.trim();
       this.currentToken = token.trim();
 
-      // Lazy load livekit-client / @livekit/react-native to support runtime environments cleanly
+      // Room and RoomEvent come from livekit-client; @livekit/react-native
+      // only supplies the WebRTC globals (registerGlobals, in index.js) and the
+      // native audio session. It exports no Room: looking for one there made
+      // every live connect fail with "LiveKit client module is not loaded".
       let RoomClass: any;
       let RoomEvent: any;
-
       try {
-        const lk = require('@livekit/react-native');
-        RoomClass = lk.Room;
-        RoomEvent = lk.RoomEvent;
-      } catch (e1) {
-        try {
-          const lkc = require('livekit-client');
-          RoomClass = lkc.Room;
-          RoomEvent = lkc.RoomEvent;
-        } catch (e2) {
-          console.warn('[LiveKitService] Native LiveKit modules will be available on native build.');
-        }
+        const lkc = require('livekit-client');
+        RoomClass = lkc.Room;
+        RoomEvent = lkc.RoomEvent;
+      } catch (e) {
+        console.warn('[LiveKitService] livekit-client could not be loaded:', e);
       }
-
-      if (!RoomClass) {
+      if (!RoomClass || !RoomEvent) {
         throw new Error('LiveKit client module is not loaded.');
+      }
+      try {
+        const { AudioSession } = require('@livekit/react-native');
+        await AudioSession.startAudioSession();
+      } catch (e) {
+        console.warn('[LiveKitService] Could not start the native audio session:', e);
       }
 
       // Initialize room instance

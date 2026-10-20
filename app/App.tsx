@@ -138,7 +138,7 @@ export default function App() {
         <ActionTimeline actions={state.actions} isDark={isDark} />
 
         {/* Area 3: Home Device Tiles (Lock, Garage, AC, Light, Washer) */}
-        <DeviceTiles devices={state.devices} isDark={isDark} />
+        <DeviceTiles devices={state.devices} isDark={isDark} backend={state.backend} />
       </ScrollView>
 
       {/* Bottom Pinned Area: Safety Ledger Counters */}
