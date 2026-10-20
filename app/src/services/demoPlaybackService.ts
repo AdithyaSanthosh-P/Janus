@@ -46,6 +46,9 @@ export class DemoPlaybackService {
     if (this.isPlaying) return;
     this.isPlaying = true;
     janusStore.setConnectionStatus('demo');
+    if (Object.keys(janusStore.getState().devices).length === 0 && this.currentIndex === 0) {
+      janusStore.loadDemoDevices();
+    }
     this.scheduleNext();
     this.notify();
   }
@@ -63,7 +66,7 @@ export class DemoPlaybackService {
   public reset() {
     this.pause();
     this.currentIndex = 0;
-    janusStore.reset(false);
+    janusStore.reset(false, true); // Retain sample-file demo tiles for demo mode
     janusStore.setConnectionStatus('demo');
     this.notify();
   }

@@ -22,7 +22,7 @@ import { LUCID_SPRING_CONFIG, SNAPPY_SPRING_CONFIG } from '../theme/motion';
 
 /**
  * 3-Bullet Architecture Plan:
- * - Primitives: SmartThings tile widget with prominent vector icons and state badges.
+ * - Primitives: SmartThings tile widget styled by capability with prominent vector icons and state badges.
  * - Animation: Reanimated 3 scale spring bounce when device value updates.
  * - Theming: Dynamic state colors (Emerald for locked/closed/normal, Amber/Cyan for active, Rose for error).
  */
@@ -48,94 +48,113 @@ export const DeviceCard: React.FC<DeviceCardProps> = ({ device, isDark }) => {
     transform: [{ scale: scale.value }],
   }));
 
-  // Device display formatting & vector icon selection
+  // Device display formatting & vector icon selection - styled by capability
   let formattedValue = String(device.value);
   let statusColor = '#10b981'; // default emerald
   let iconBg = isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5';
 
   let iconNode = <Cpu size={20} color={statusColor} />;
 
-  switch (device.device) {
-    case 'dev-lock':
-      formattedValue = device.value === 'locked' ? 'Locked' : 'Unlocked';
-      statusColor = device.value === 'locked' ? '#10b981' : '#f59e0b';
-      iconBg =
-        device.value === 'locked'
-          ? isDark
-            ? 'rgba(16, 185, 129, 0.15)'
-            : '#ecfdf5'
-          : isDark
-          ? 'rgba(245, 158, 11, 0.15)'
-          : '#fffbeb';
-      iconNode =
-        device.value === 'locked' ? (
-          <Lock size={20} color={statusColor} />
-        ) : (
-          <LockOpen size={20} color={statusColor} />
-        );
-      break;
+  const cap = device.capability || '';
+  const devId = device.device || '';
 
-    case 'dev-garage':
-      formattedValue = device.value === 'closed' ? 'Closed' : 'Open';
-      statusColor = device.value === 'closed' ? '#10b981' : '#3b82f6';
-      iconBg =
-        device.value === 'closed'
-          ? isDark
-            ? 'rgba(16, 185, 129, 0.15)'
-            : '#ecfdf5'
-          : isDark
-          ? 'rgba(59, 130, 246, 0.15)'
-          : '#eff6ff';
-      iconNode =
-        device.value === 'closed' ? (
-          <Warehouse size={20} color={statusColor} />
-        ) : (
-          <DoorOpen size={20} color={statusColor} />
-        );
-      break;
-
-    case 'dev-ac':
-      formattedValue = `${device.value} °C`;
-      statusColor = '#06b6d4'; // cyan
-      iconBg = isDark ? 'rgba(6, 182, 212, 0.15)' : '#ecfeff';
-      iconNode = <Thermometer size={20} color={statusColor} />;
-      break;
-
-    case 'dev-light':
-      formattedValue = device.value === 'on' ? 'On' : 'Off';
-      statusColor = device.value === 'on' ? '#f59e0b' : '#71717a';
-      iconBg =
-        device.value === 'on'
-          ? isDark
-            ? 'rgba(245, 158, 11, 0.15)'
-            : '#fffbeb'
-          : isDark
-          ? '#27272a'
-          : '#f1f5f9';
-      iconNode =
-        device.value === 'on' ? (
-          <Lightbulb size={20} color={statusColor} />
-        ) : (
-          <LightbulbOff size={20} color={statusColor} />
-        );
-      break;
-
-    case 'dev-washer':
-      if (device.value === 'pause') {
-        formattedValue = 'Paused · 4C';
-        statusColor = '#ef4444'; // red error code
-        iconBg = isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2';
-      } else if (device.value === 'run') {
-        formattedValue = 'Running';
-        statusColor = '#3b82f6';
-        iconBg = isDark ? 'rgba(59, 130, 246, 0.15)' : '#eff6ff';
-      } else {
-        formattedValue = String(device.value);
-        statusColor = '#10b981';
-        iconBg = isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5';
-      }
-      iconNode = <WashingMachine size={20} color={statusColor} />;
-      break;
+  // 1. Lock capability (match on capability 'lock', or fallback to id 'dev-lock' / 'lock-*')
+  if (cap === 'lock' || devId === 'dev-lock' || devId.startsWith('lock-')) {
+    const isLocked = device.value === 'locked';
+    formattedValue = isLocked ? 'Locked' : 'Unlocked';
+    statusColor = isLocked ? '#10b981' : '#f59e0b';
+    iconBg = isLocked
+      ? isDark
+        ? 'rgba(16, 185, 129, 0.15)'
+        : '#ecfdf5'
+      : isDark
+      ? 'rgba(245, 158, 11, 0.15)'
+      : '#fffbeb';
+    iconNode = isLocked ? (
+      <Lock size={20} color={statusColor} />
+    ) : (
+      <LockOpen size={20} color={statusColor} />
+    );
+  }
+  // 2. Garage door capability (match on 'garageDoorControl' or 'doorControl', or id 'dev-garage' / 'garage-*')
+  else if (
+    cap === 'garageDoorControl' ||
+    cap === 'doorControl' ||
+    devId === 'dev-garage' ||
+    devId.startsWith('garage-')
+  ) {
+    const isClosed = device.value === 'closed';
+    formattedValue = isClosed ? 'Closed' : 'Open';
+    statusColor = isClosed ? '#10b981' : '#3b82f6';
+    iconBg = isClosed
+      ? isDark
+        ? 'rgba(16, 185, 129, 0.15)'
+        : '#ecfdf5'
+      : isDark
+      ? 'rgba(59, 130, 246, 0.15)'
+      : '#eff6ff';
+    iconNode = isClosed ? (
+      <Warehouse size={20} color={statusColor} />
+    ) : (
+      <DoorOpen size={20} color={statusColor} />
+    );
+  }
+  // 3. Thermostat / AC cooling setpoint (match on 'thermostatCoolingSetpoint', or id 'dev-ac' / 'thermo-*')
+  else if (
+    cap === 'thermostatCoolingSetpoint' ||
+    cap.includes('thermostat') ||
+    devId === 'dev-ac' ||
+    devId.startsWith('thermo-')
+  ) {
+    formattedValue = typeof device.value === 'number' ? `${device.value} °C` : `${device.value}`;
+    statusColor = '#06b6d4'; // cyan
+    iconBg = isDark ? 'rgba(6, 182, 212, 0.15)' : '#ecfeff';
+    iconNode = <Thermometer size={20} color={statusColor} />;
+  }
+  // 4. Switch / Light capability (match on 'switch', or id 'dev-light' / 'switch-*')
+  else if (cap === 'switch' || devId === 'dev-light' || devId.startsWith('switch-')) {
+    const isOn = device.value === 'on';
+    formattedValue = isOn ? 'On' : 'Off';
+    statusColor = isOn ? '#f59e0b' : '#71717a';
+    iconBg = isOn
+      ? isDark
+        ? 'rgba(245, 158, 11, 0.15)'
+        : '#fffbeb'
+      : isDark
+      ? '#27272a'
+      : '#f1f5f9';
+    iconNode = isOn ? (
+      <Lightbulb size={20} color={statusColor} />
+    ) : (
+      <LightbulbOff size={20} color={statusColor} />
+    );
+  }
+  // 5. Washer capability (match on 'washerOperatingState', or id 'dev-washer' / 'washer-*')
+  else if (
+    cap === 'washerOperatingState' ||
+    cap.includes('washer') ||
+    devId === 'dev-washer' ||
+    devId.startsWith('washer-')
+  ) {
+    if (device.value === 'pause') {
+      formattedValue = 'Paused · 4C';
+      statusColor = '#ef4444'; // red error code
+      iconBg = isDark ? 'rgba(239, 68, 68, 0.15)' : '#fee2e2';
+    } else if (device.value === 'run') {
+      formattedValue = 'Running';
+      statusColor = '#3b82f6';
+      iconBg = isDark ? 'rgba(59, 130, 246, 0.15)' : '#eff6ff';
+    } else if (device.value === 'stop') {
+      // Contract: Show stop as "Stopped"
+      formattedValue = 'Stopped';
+      statusColor = isDark ? '#a1a1aa' : '#64748b';
+      iconBg = isDark ? '#27272a' : '#f1f5f9';
+    } else {
+      formattedValue = String(device.value);
+      statusColor = '#10b981';
+      iconBg = isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5';
+    }
+    iconNode = <WashingMachine size={20} color={statusColor} />;
   }
 
   return (
@@ -190,8 +209,9 @@ export const DeviceCard: React.FC<DeviceCardProps> = ({ device, isDark }) => {
           color: isDark ? '#a1a1aa' : '#64748b',
           marginBottom: 2,
         }}
+        numberOfLines={1}
       >
-        {device.label}
+        {device.label || device.device}
       </Text>
 
       <Text
@@ -200,10 +220,10 @@ export const DeviceCard: React.FC<DeviceCardProps> = ({ device, isDark }) => {
           fontWeight: '700',
           color: isDark ? '#fafafa' : '#0f172a',
         }}
+        numberOfLines={1}
       >
         {formattedValue}
       </Text>
     </Animated.View>
   );
 };
-
