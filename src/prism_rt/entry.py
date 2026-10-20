@@ -123,6 +123,7 @@ class Runtime:
         `actions` as the kernel emits them. Returns once the scenario ends.
         """
         meta = meta or {}
+        self._on_step = meta.get("on_step")  # optional host callback(report), e.g. the app event feed
         session = SessionStore.new(self.config, IdGenerator(meta.get("seed", 0)))
         if meta.get("on_session") is not None:
             meta["on_session"](session)  # lets a host read the ledgers when the session ends
@@ -255,6 +256,12 @@ class Runtime:
             return None
         summary.reports.append(report)
         summary.step_count += 1
+        on_step = getattr(self, "_on_step", None)
+        if on_step is not None:
+            try:
+                on_step(report)
+            except Exception:  # noqa: BLE001 - a host callback must never end the scenario
+                _log.exception("janus: on_step callback failed (step %d)", report.step_no)
         return report
 
     async def run_scenario_io(self, io: HarnessIO, meta: dict | None = None) -> RunSummary:

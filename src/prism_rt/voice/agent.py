@@ -40,6 +40,18 @@ Environment:
   JANUS_WHISPER_COMPUTE   CTranslate2 compute type on GPU (default float16; the dev
                           script uses int8_float16 to fit an 8 GB GPU)
   JANUS_DECISION_LOG_DIR  optional: one decision-log JSONL per room
+  JANUS_FDB_RELAXED_HOUSING  1 = the relaxed housing tool contract (Config.fdb_relaxed_housing_schema;
+                          default off; the repro scripts pass it through when set)
+  JANUS_FILLER            1 = speak a short pre-synthesized phrase the moment a worded
+                          turn closes, and drop the kernel's generic ACK that follows
+                          (default on in demo mode, off in fdb mode; the repro scripts set it)
+  JANUS_FILLER_TEXT       the filler phrase (default "Okay, one moment.")
+  JANUS_TTS_CHUNKED       1 = synthesize and play each sentence as soon as it is ready
+                          (default on in demo mode, off in fdb mode; the repro scripts set it)
+  JANUS_AEC_WARMUP_S      seconds of LiveKit's AEC warm-up, during which the agent's first
+                          speech mutes the user's audio to speech-to-text (default off in
+                          fdb mode, LiveKit's 3.0 in demo mode; 0 = off; see
+                          adapters/voice_settings.py)
   GEMINI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 
 Run: python -m prism_rt.voice.agent start
@@ -51,6 +63,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import importlib
 import logging
 import os
@@ -65,16 +78,27 @@ from livekit import rtc
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobExecutorType, JobProcess, cli, stt
 from livekit.plugins import silero
 
+from prism_rt.adapters.event_feed import EventFeed
 from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest
+from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter
 from prism_rt.adapters.voice_bridge import VoiceBridge
+from prism_rt.adapters.voice_settings import aec_warmup_duration
 from prism_rt.devicecare import DeviceCareToolset
 from prism_rt.entry import setup
 from prism_rt.observability.effects import effect_summary, format_effect_summary
 from prism_rt.observability.xray import TracedQueue
 from prism_rt.profiles import demo_config, fdb_v3_config
 from prism_rt.voice.camera import FrameStore, pump_video_track
-from prism_rt.voice.speech import FasterWhisperSTT, KokoroTTS, OpenAITranscribeSTT, load_kokoro, load_whisper
+from config.templates import ACK_DEFAULT
+from prism_rt.voice.speech import (
+    FasterWhisperSTT,
+    KokoroTTS,
+    OpenAITranscribeSTT,
+    load_kokoro,
+    load_whisper,
+    pcm_frames,
+)
 from prism_rt.workers.gateway import GeminiProvider, OpenAIProvider
 
 logger = logging.getLogger("janus.voice")
@@ -113,7 +137,7 @@ def _int_env(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class Toolset:
     manifest: list[dict]
-    make_executor: Callable[[str], Callable[[str, dict], Awaitable[dict]]]
+    make_executor: Callable[..., Callable[[str, dict], Awaitable[dict]]]  # (room_name, on_device_state=None)
 
 
 def vocabulary_hotwords(manifest: list[dict]) -> str:
@@ -131,11 +155,14 @@ def vocabulary_hotwords(manifest: list[dict]) -> str:
     return " ".join(words)
 
 
+RELAXED_HOUSING = os.environ.get("JANUS_FDB_RELAXED_HOUSING") == "1"
+
+
 def fdb_toolset() -> Toolset:
     root = os.environ.get("FDB_V3_ROOT")
     if not root or not os.path.isfile(os.path.join(root, "lk_agent_tool.py")):
         raise RuntimeError("FDB_V3_ROOT must point at the Full-Duplex-Bench v3/ directory")
-    manifest = to_catalog_manifest(introspect_file(os.path.join(root, "lk_agent_tool.py")))
+    manifest = maybe_apply(to_catalog_manifest(introspect_file(os.path.join(root, "lk_agent_tool.py"))), RELAXED_HOUSING)
     schemas = {t["name"]: t["params_schema"] for t in manifest}
     if root not in sys.path:
         sys.path.insert(0, root)
@@ -143,9 +170,12 @@ def fdb_toolset() -> Toolset:
     latency = os.environ.get("JANUS_FDB_LATENCY", "instant")
     log_path = os.environ.get("JANUS_TOOL_LOG", "/tmp/agent_tool_calls.log")
 
-    def make_executor(room_name: str):
+    def make_executor(room_name: str, on_device_state=None):
         registry = mock_apis.MockAPIRegistry(latency_profile=latency, enable_logging=False)
-        return FdbToolAdapter(registry, room_name, log_path=log_path, get_params_schema=schemas.get).execute
+        return FdbToolAdapter(
+            registry, room_name, log_path=log_path, get_params_schema=schemas.get,
+            backend_fills=BACKEND_FILLS if RELAXED_HOUSING else None,
+        ).execute
 
     return Toolset(manifest=manifest, make_executor=make_executor)
 
@@ -161,11 +191,42 @@ if MODE not in ("fdb", "demo"):
     raise SystemExit(f"JANUS_MODE must be 'fdb' or 'demo', not {MODE!r}")
 
 
-def demo_toolset() -> Toolset:
-    from prism_rt.devicecare.tools import MANIFEST
+def _st_backend_label() -> str:
+    from prism_rt.smartthings.factory import backend_mode
 
-    # One toolset (its bookings, its open case) per room, never shared.
-    return Toolset(manifest=MANIFEST, make_executor=lambda room_name: DeviceCareToolset().make_executor())
+    return backend_mode()
+
+
+def _flag_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    return default if raw in (None, "") else raw.strip() == "1"
+
+
+FILLER_ENABLED = _flag_env("JANUS_FILLER", MODE == "demo")
+FILLER_TEXT = os.environ.get("JANUS_FILLER_TEXT") or "Okay, one moment."
+TTS_CHUNKED = _flag_env("JANUS_TTS_CHUNKED", MODE == "demo")
+AEC_WARMUP_S = aec_warmup_duration(MODE, os.environ.get("JANUS_AEC_WARMUP_S"))
+
+
+def demo_toolset() -> Toolset:
+    from prism_rt.smartthings.factory import backend_mode, combine, make_backend
+    from prism_rt.smartthings.tools import SmartThingsToolset
+
+    # One toolset per room, never shared: device care (its bookings, its open
+    # case) plus the SmartThings pack (JANUS_ST_MODE=real|mock, default mock).
+    mode = backend_mode()
+    logger.info("demo toolset: SmartThings backend = %s", mode)
+
+    def make_executor(room_name: str, on_device_state=None):
+        st = SmartThingsToolset(make_backend(), on_device_state=on_device_state)
+        _manifest, execute = combine(DeviceCareToolset(), st)
+        execute.snapshot_states = st.snapshot_states  # the app's initial device tiles
+        return execute
+
+    from prism_rt.devicecare.tools import MANIFEST as CARE_MANIFEST
+    from prism_rt.smartthings.tools import MANIFEST as ST_MANIFEST
+
+    return Toolset(manifest=[*CARE_MANIFEST, *ST_MANIFEST], make_executor=make_executor)
 
 
 # One model set per worker process. Under the default PROCESS executor each
@@ -188,6 +249,10 @@ def _shared_models() -> dict:
             if STT_BACKEND == "local":
                 _SHARED["whisper"] = load_whisper()
             _SHARED["kokoro"] = load_kokoro()
+            if FILLER_ENABLED:
+                # Synthesized once per process, so the filler plays with no
+                # synthesis delay at the end of every turn.
+                _SHARED["filler_pcm"] = _SHARED["kokoro"].synthesize_pcm16(FILLER_TEXT)
             _SHARED["toolset"] = demo_toolset() if MODE == "demo" else fdb_toolset()
         return _SHARED
 
@@ -233,8 +298,9 @@ async def entrypoint(ctx: JobContext) -> None:
     session = AgentSession(
         vad=userdata["vad"],
         stt=stt.StreamAdapter(stt=recognizer, vad=userdata["vad"]),
-        tts=KokoroTTS(userdata["kokoro"]),
+        tts=KokoroTTS(userdata["kokoro"], chunked=TTS_CHUNKED),
         min_interruption_words=_int_env("JANUS_MIN_INTERRUPTION_WORDS", 1 if MODE == "demo" else 2),
+        aec_warmup_duration=AEC_WARMUP_S,
     )
 
     log_dir = os.environ.get("JANUS_DECISION_LOG_DIR")
@@ -261,11 +327,47 @@ async def entrypoint(ctx: JobContext) -> None:
         # acknowledgement would sit until the acknowledgement finished playing.
         session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
 
+    filler_pcm: bytes = userdata.get("filler_pcm") or b""
+    # Device tiles for the app: the executor reports each device state it reads.
+    state_sink: dict = {}
+    executor = toolset.make_executor(
+        room_name, on_device_state=lambda *args: state_sink["fn"](*args) if "fn" in state_sink else None
+    )
+
+    # Companion-app event feed (demo mode): what the agent hears, decides and
+    # does, as JSON on the data topic `janus.events` (app/INTEGRATION.md).
+    # Events are queued and published by one task, so a slow or closed room
+    # never holds up the kernel.
+    feed: EventFeed | None = None
+    event_queue: asyncio.Queue = asyncio.Queue()
+    if MODE == "demo":
+        feed_start = time.monotonic()
+        feed = EventFeed(
+            event_queue.put_nowait,
+            backend=_st_backend_label(),
+            packs=["smartthings", "device_care"],
+            manifest=toolset.manifest,
+            clock_ms=lambda: (time.monotonic() - feed_start) * 1000,
+        )
+
+    async def play_filler() -> None:
+        # Pre-synthesized audio; plain synthesis only if the cache is empty.
+        try:
+            if filler_pcm:
+                session.say(FILLER_TEXT, audio=pcm_frames(filler_pcm), allow_interruptions=True, add_to_chat_ctx=False)
+            else:
+                session.say(FILLER_TEXT, allow_interruptions=True, add_to_chat_ctx=False)
+            if feed is not None:
+                feed.agent_said(FILLER_TEXT, "filler")
+            logger.info("filler played")
+        except Exception:  # noqa: BLE001 - a filler must never break the bridge
+            logger.warning("filler failed", exc_info=True)
+
     bridge = VoiceBridge(
         events=events,
         actions=actions,
         say=say,
-        execute_tool=toolset.make_executor(room_name),
+        execute_tool=executor,
         t_eot_ms=_int_env("JANUS_EOT_MS", 1000),
         # Single-request benchmark recordings: a lone "you"/"Hmm." after the
         # request is Whisper on silence, not a new turn. Kept in demo mode,
@@ -279,6 +381,13 @@ async def entrypoint(ctx: JobContext) -> None:
         # their words are still being transcribed.
         report_user_activity=True,
         stop_speaking=stop_speaking,
+        play_filler=play_filler if FILLER_ENABLED else None,
+        generic_ack_texts=(ACK_DEFAULT,),
+    )
+    logger.info(
+        "filler %s, chunked TTS %s, AEC warm-up %s",
+        "on" if FILLER_ENABLED else "off", "on" if TTS_CHUNKED else "off",
+        f"{AEC_WARMUP_S:g} s" if AEC_WARMUP_S else "off",
     )
     # The recognizer reports each transcription's start and finish, so the
     # turn never closes while one is still running (VoiceBridge.on_recognition).
@@ -302,12 +411,16 @@ async def entrypoint(ctx: JobContext) -> None:
     if MODE == "demo":
         config = demo_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 0))
     else:
-        config = fdb_v3_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 105_000))
+        config = fdb_v3_config(
+            watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 105_000), fdb_relaxed_housing_schema=RELAXED_HOUSING
+        )
     runtime = setup(config=config, provider=provider, blob_resolver=frames.get)
     meta: dict = {"seed": 0}
     held: dict = {}
     if MODE == "demo":
         meta["on_session"] = lambda store: held.update(store=store)
+        meta["on_step"] = lambda report: feed.on_step(report, held["store"]) if "store" in held else None
+        state_sink["fn"] = feed.device_state
     if log_dir:
         meta["log_path"] = os.path.join(log_dir, f"{room_name}.jsonl")
 
@@ -339,6 +452,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("user_state_changed")
     def _on_user_state(ev) -> None:
+        logger.info("user_state %s -> %s", ev.old_state, ev.new_state)  # latency analysis: VAD speech start / end
         if ev.new_state == "speaking":
             _spawn(bridge.on_speech_start())
         elif ev.old_state == "speaking":
@@ -346,6 +460,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("agent_state_changed")
     def _on_agent_state(ev) -> None:
+        logger.info("agent_state %s -> %s", ev.old_state, ev.new_state)  # latency analysis: when audio actually starts
         bridge.on_agent_speaking_changed(ev.new_state == "speaking")
 
     async def _shutdown(*_args) -> None:
@@ -359,6 +474,29 @@ async def entrypoint(ctx: JobContext) -> None:
                 logger.info(format_effect_summary(effect_summary(held["store"])))
 
     ctx.add_shutdown_callback(_shutdown)
+
+    async def _publish_events() -> None:
+        while True:
+            event = await event_queue.get()
+            try:
+                await ctx.room.local_participant.publish_data(
+                    json.dumps(event, separators=(",", ":")).encode(), reliable=True, topic="janus.events"
+                )
+            except Exception:  # noqa: BLE001 - the app feed is optional; never break the conversation
+                logger.warning("could not publish %s event", event.get("type"), exc_info=True)
+
+    async def _announce() -> None:
+        # A late-joining app gets the session badge and the device tiles again.
+        feed.session_started()
+        snapshot = getattr(executor, "snapshot_states", None)
+        if snapshot is not None:
+            with contextlib.suppress(Exception):
+                await snapshot()
+
+    if feed is not None:
+        _spawn(_publish_events())
+        _spawn(_announce())
+        ctx.room.on("participant_connected", lambda p: _spawn(_announce()) if not p.identity.startswith("agent-") else None)
 
     if MODE == "demo":
         frame_interval = float(os.environ.get("JANUS_FRAME_INTERVAL_S", "1.0"))

@@ -76,6 +76,19 @@ export JANUS_WHISPER_COMPUTE="${JANUS_WHISPER_COMPUTE:-float16}"
 # is A B ... C 1 2 3") into separate turns in the 29-30 Sep run; 1500 ms costs
 # ~0.5 s of latency per turn. Override with JANUS_EOT_MS.
 export JANUS_EOT_MS="${JANUS_EOT_MS:-1500}"
+# First-response latency (Round 2): a pre-synthesized filler the moment a turn
+# closes, and sentence-by-sentence speech synthesis. Recorded in manifest.json.
+export JANUS_FILLER="${JANUS_FILLER:-1}"
+export JANUS_TTS_CHUNKED="${JANUS_TTS_CHUNKED:-1}"
+# LiveKit's AEC warm-up mutes the user's audio to speech-to-text while the
+# agent's first speech plays; with the filler that ate words of users who
+# paused mid-sentence (19 Oct full run: finance_04, finance_16). The recording
+# carries no echo, so it is off here (0). Recorded in manifest.json.
+export JANUS_AEC_WARMUP_S="${JANUS_AEC_WARMUP_S:-0}"
+# Relaxed housing tool contract (Config.fdb_relaxed_housing_schema; README,
+# "Benchmark labels"). Judged text replay, housing (26 recordings), 19 Oct:
+# 8/26 off -> 18/26 on, no recording worse. Set 0 for the published contract.
+export JANUS_FDB_RELAXED_HOUSING="${JANUS_FDB_RELAXED_HOUSING:-1}"
 # GPU memory every 10 s for the whole run: the 29-30 Sep run lost its GPU
 # Whisper partway through with nothing in the logs to say why.
 GPU_MON_PID=""

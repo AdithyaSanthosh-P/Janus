@@ -90,7 +90,10 @@ def main() -> None:
 
     from prism_rt.profiles import fdb_v3_config
 
-    cfg = fdb_v3_config(watchdog_timeout_ms=int(os.environ.get("JANUS_WATCHDOG_MS", "105000")))
+    cfg = fdb_v3_config(
+        watchdog_timeout_ms=int(os.environ.get("JANUS_WATCHDOG_MS", "105000")),
+        fdb_relaxed_housing_schema=os.environ.get("JANUS_FDB_RELAXED_HOUSING") == "1",
+    )
     llm_provider = os.environ.get("JANUS_LLM_PROVIDER", "gemini")
     model = os.environ.get("JANUS_LLM_MODEL", "gpt-4.1" if llm_provider == "openai" else "gemini-3.6-flash")
     thinking = os.environ.get("JANUS_THINKING_BUDGET", "0") if llm_provider == "gemini" else "n/a"
@@ -131,6 +134,10 @@ def main() -> None:
             "vad": "Silero VAD (local)",
             "eot_ms": os.environ.get("JANUS_EOT_MS", "1000"),
             "whisper_compute": os.environ.get("JANUS_WHISPER_COMPUTE", "float16"),
+            "filler": os.environ.get("JANUS_FILLER", "0"),
+            "filler_text": os.environ.get("JANUS_FILLER_TEXT", "Okay, one moment."),
+            "tts_chunked": os.environ.get("JANUS_TTS_CHUNKED", "0"),
+            "aec_warmup_s": os.environ.get("JANUS_AEC_WARMUP_S") or "off (fdb default)",
         },
         "profile": "fdb_v3_config",
         "config": {k: v for k, v in dataclasses.asdict(cfg).items() if isinstance(v, (bool, int, float, str, type(None)))},

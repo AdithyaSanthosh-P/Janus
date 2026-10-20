@@ -532,3 +532,156 @@ async def test_running_transcription_keeps_the_user_active_for_the_kernel():
     await asyncio.sleep(0.03)
     kinds = [(e["type"], e["payload"].get("active")) for e in await _drain_nowait(events)]
     assert ("user_speech", False) in kinds and ("end_of_turn", None) in kinds
+
+
+async def test_unconfirmed_tool_outcome_is_delivered_as_status_unknown():
+    """A host executor result with outcome="unconfirmed" (command sent, state
+    not read back) goes to the kernel as status "unknown", result intact."""
+    async def execute_tool(tool_name, args):
+        return {"outcome": "unconfirmed", "sent": True}
+
+    bridge, events, actions, _said = _make_bridge(execute_tool=execute_tool)
+    bridge.start()
+    await actions.put({"action_type": "tool_call", "body": {"call_id": "c-1", "tool_name": "st_lock", "arguments": {}}})
+    await asyncio.sleep(0.01)
+    (item,) = await _drain_nowait(events)
+    assert item["payload"]["status"] == "unknown"
+    assert item["payload"]["result"] == {"outcome": "unconfirmed", "sent": True}
+    await bridge.stop()
+
+
+# ---- WP4: end-of-turn filler -------------------------------------------------
+
+ACK = "Got it, working on it."
+
+
+def _filler_bridge(**kw):
+    bridge, events, actions, said = _make_bridge(t_eot_ms=20, **kw)
+    fillers: list[bool] = []
+
+    async def play_filler() -> None:
+        fillers.append(True)
+
+    bridge.play_filler = play_filler
+    bridge.generic_ack_texts = (ACK,)
+    return bridge, events, actions, said, fillers
+
+
+async def _close_turn(bridge, text="lock the front door please"):
+    await bridge.on_segment_final(text)
+    await asyncio.sleep(0.04)
+
+
+async def test_filler_plays_once_right_after_end_of_turn():
+    bridge, events, _actions, _said, fillers = _filler_bridge()
+    await _close_turn(bridge)
+    assert [e["type"] for e in await _drain_nowait(events)] == ["text_chunk", "end_of_turn"]
+    assert fillers == [True]
+    await asyncio.sleep(0.04)
+    assert fillers == [True]  # once per turn
+
+
+async def test_no_filler_without_the_callback():
+    bridge, events, _actions, said = _make_bridge(t_eot_ms=20)
+    await _close_turn(bridge)
+    assert said == []  # unchanged default behaviour
+
+
+async def test_no_filler_for_a_short_turn():
+    bridge, _events, _actions, _said, fillers = _filler_bridge()
+    await _close_turn(bridge, "thanks")
+    assert fillers == []
+
+
+async def test_no_filler_for_a_wordless_barge_in_turn():
+    bridge, events, _actions, _said, fillers = _filler_bridge()
+    bridge.drop_filler_segments = True
+    bridge.on_agent_speaking_changed(True)
+    await bridge.on_speech_start()
+    bridge.on_agent_speaking_changed(False)
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("Hmm.")  # dropped: no words
+    await asyncio.sleep(0.06)
+    assert "end_of_turn" in [e["type"] for e in await _drain_nowait(events)]
+    assert fillers == []
+
+
+async def test_no_filler_while_the_agent_is_speaking():
+    bridge, _events, _actions, _said, fillers = _filler_bridge()
+    bridge.on_agent_speaking_changed(True)
+    await _close_turn(bridge)
+    assert fillers == []
+
+
+async def test_generic_ack_after_the_filler_is_dropped_but_the_answer_plays():
+    bridge, _events, actions, said, fillers = _filler_bridge()
+    bridge.start()
+    await _close_turn(bridge)
+    await actions.put({"action_type": "speak", "body": {"text": ACK, "kind": "ack"}})
+    await actions.put({"action_type": "final", "body": {"text": "The door is locked."}})
+    await asyncio.sleep(0.01)
+    assert fillers == [True] and said == ["The door is locked."]
+    await bridge.stop()
+
+
+async def test_echo_ack_after_the_filler_still_plays():
+    bridge, _events, actions, said, _fillers = _filler_bridge()
+    bridge.start()
+    await _close_turn(bridge)
+    await actions.put({"action_type": "speak", "body": {"text": "Locking the front door.", "kind": "ack"}})
+    await asyncio.sleep(0.01)
+    assert said == ["Locking the front door."]
+    await bridge.stop()
+
+
+async def test_only_one_generic_ack_is_dropped_per_filler():
+    bridge, _events, actions, said, _fillers = _filler_bridge()
+    bridge.start()
+    await _close_turn(bridge)
+    await actions.put({"action_type": "speak", "body": {"text": ACK, "kind": "ack"}})
+    await actions.put({"action_type": "speak", "body": {"text": ACK, "kind": "ack"}})
+    await asyncio.sleep(0.01)
+    assert said == [ACK]
+    await bridge.stop()
+
+
+async def test_generic_ack_without_a_filler_plays():
+    bridge, _events, actions, said, _fillers = _filler_bridge()
+    bridge.start()
+    await actions.put({"action_type": "speak", "body": {"text": ACK, "kind": "ack"}})
+    await asyncio.sleep(0.01)
+    assert said == [ACK]
+    await bridge.stop()
+
+
+async def test_speech_over_the_filler_is_not_a_barge_in():
+    bridge, events, _actions, _said, _fillers = _filler_bridge()
+    await _close_turn(bridge)
+    await _drain_nowait(events)
+    bridge.on_agent_speaking_changed(True)  # the filler is playing
+    await bridge.on_speech_start()
+    assert [e["type"] for e in await _drain_nowait(events)] == []
+
+
+async def test_speech_over_kernel_speech_after_the_filler_is_a_barge_in():
+    bridge, events, actions, _said, _fillers = _filler_bridge()
+    bridge.start()
+    await _close_turn(bridge)
+    await actions.put({"action_type": "final", "body": {"text": "The door is locked."}})
+    await asyncio.sleep(0.01)
+    await _drain_nowait(events)
+    bridge.on_agent_speaking_changed(True)
+    await bridge.on_speech_start()
+    assert [e["type"] for e in await _drain_nowait(events)] == ["interruption"]
+    await bridge.stop()
+
+
+async def test_after_the_filler_finishes_speech_rules_are_normal_again():
+    bridge, events, _actions, _said, _fillers = _filler_bridge()
+    await _close_turn(bridge)
+    await _drain_nowait(events)
+    bridge.on_agent_speaking_changed(True)
+    bridge.on_agent_speaking_changed(False)  # filler done
+    bridge.on_agent_speaking_changed(True)   # something else speaking
+    await bridge.on_speech_start()
+    assert [e["type"] for e in await _drain_nowait(events)] == ["interruption"]

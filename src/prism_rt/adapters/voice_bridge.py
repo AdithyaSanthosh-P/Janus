@@ -8,8 +8,9 @@ this exact same class -- so the timing logic that runs live (the T_eot
 end-of-turn timer, barge-in detection) is proven by WP5's offline runs
 too, not first exercised live.
 
-Translation only -- this never drops, delays, or rewrites a Janus
-action, and it never decides anything the kernel is supposed to decide
+Translation only -- this never delays or rewrites a Janus action, and
+drops exactly one kind (a generic ACK right after the host's own end-of-turn
+filler, see `play_filler`); it never decides anything the kernel is supposed to decide
 (no commit/settle logic lives here; that's CommitGate's G10/G11). Its
 only piece of owned timing is T_eot: the transport's own "user stopped
 talking" signal, translated into an ordinary `end_of_turn` event -- not
@@ -112,6 +113,16 @@ class VoiceBridge:
     # stops only the utterance playing, so queued speech (an ACK, then the
     # answer to the request just corrected) still played over the user.
     stop_speaking: Callable[[], None] = field(default=lambda: None)
+    # End-of-turn filler (host-side, JANUS_FILLER=1): a short pre-synthesized
+    # phrase played the moment a worded turn closes, so the user hears a
+    # response while the kernel interprets. None = no filler (the default).
+    # The kernel's next speech, if it is a generic ACK (text in
+    # `generic_ack_texts`), is then dropped -- the filler already said it.
+    # Speech that starts while only the filler is audible is not a barge-in:
+    # the kernel never said the filler, so it is not told of an interruption.
+    play_filler: "Callable[[], Awaitable[None]] | None" = None
+    generic_ack_texts: tuple[str, ...] = ()
+    filler_min_words: int = 3
 
     _start_wall: float = field(init=False, repr=False)
     _eot_task: "asyncio.Task | None" = field(default=None, init=False, repr=False)
@@ -131,6 +142,9 @@ class VoiceBridge:
     # whether or not any words follow; that turn must be closed too.
     _barge_in_open: bool = field(default=False, init=False, repr=False)
     _activity_reported: bool = field(default=False, init=False, repr=False)
+    _words_in_turn: int = field(default=0, init=False, repr=False)
+    _filler_turn: bool = field(default=False, init=False, repr=False)  # a generic ACK may still be dropped
+    _filler_active: bool = field(default=False, init=False, repr=False)  # only the filler can be audible
 
     def __post_init__(self) -> None:
         self._start_wall = self.clock()
@@ -174,7 +188,7 @@ class VoiceBridge:
         self._vad_seen = True
         self._cancel_eot_timer()
         await self._report_activity()
-        if self._agent_speaking:
+        if self._agent_speaking and not self._filler_active:
             self._barge_in_open = True
             await self.events.put({"type": "interruption", "ts_us": self.now_us(), "payload": {}})
             self.on_interruption_logged("user started speaking while the agent was speaking")
@@ -215,6 +229,8 @@ class VoiceBridge:
         ):
             await self.events.put({"type": "text_chunk", "ts_us": self.now_us(), "payload": {"text": text.strip()}})
             self._words_since_eot = True
+            self._words_in_turn += len(text.split())
+            self._filler_turn = False  # a new turn: its ACK is its own
             if self._agent_speaking and text.strip():
                 self.stop_speaking()  # real words over the agent: a barge-in
         # A dropped segment (filler, noise) sends no chunk, but it still
@@ -253,6 +269,8 @@ class VoiceBridge:
     def on_agent_speaking_changed(self, speaking: bool) -> None:
         """Wired to the TTS/session's own speaking-state signal so
         `on_speech_start` can tell a barge-in from ordinary silence."""
+        if self._agent_speaking and not speaking:
+            self._filler_active = False  # whatever played (the filler) has finished
         self._agent_speaking = speaking
 
     @staticmethod
@@ -334,11 +352,17 @@ class VoiceBridge:
             await asyncio.sleep(max(0.0, deadline - self._loop_now()))
         except asyncio.CancelledError:
             return
+        words = self._words_in_turn if self._words_since_eot else 0
         self._words_since_eot = False
+        self._words_in_turn = 0
         self._barge_in_open = False
         self._pending_segments = 0  # anything still outstanding was given up on
         await self._report_activity()
         await self.events.put({"type": "end_of_turn", "ts_us": self.now_us(), "payload": {}})
+        if self.play_filler is not None and words >= self.filler_min_words and not self._agent_speaking:
+            self._filler_turn = True
+            self._filler_active = True
+            await self.play_filler()
 
     async def _give_up_at(self, deadline: float) -> None:
         try:
@@ -368,7 +392,17 @@ class VoiceBridge:
             body = action.get("body") or {}
             if action_type in ("speak", "clarify", "final"):
                 text = body.get("text")
+                if (
+                    self._filler_turn
+                    and action_type == "speak"
+                    and body.get("kind") == "ack"
+                    and text in self.generic_ack_texts
+                ):
+                    self._filler_turn = False  # the filler already acknowledged this turn
+                    continue
                 if text:
+                    self._filler_turn = False
+                    self._filler_active = False  # kernel speech queued: speech over it is a barge-in
                     await self.say(text)
                 if action_type == "final":
                     self.on_final()
@@ -385,7 +419,10 @@ class VoiceBridge:
         args = body.get("arguments") or {}
         try:
             result = await self.execute_tool(tool_name, args)
-            payload = {"call_id": call_id, "status": "ok", "result": result}
+            # Host convention: a command that was sent but whose state could
+            # not be read back reports outcome="unconfirmed" (kernel: "unknown").
+            unconfirmed = isinstance(result, dict) and result.get("outcome") == "unconfirmed"
+            payload = {"call_id": call_id, "status": "unknown" if unconfirmed else "ok", "result": result}
         except Exception as exc:  # noqa: BLE001 - one bad call must not kill the bridge
             payload = {"call_id": call_id, "status": "error", "result": {"error": str(exc)}}
         await self.events.put({"type": "tool_result", "ts_us": self.now_us(), "payload": payload})

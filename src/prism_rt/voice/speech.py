@@ -15,6 +15,8 @@ import logging
 import os
 import re
 import threading
+import time
+from typing import AsyncIterator, Iterator
 
 import numpy as np
 from livekit import rtc
@@ -28,6 +30,10 @@ KOKORO_REVISION = "f3ff3571791e39611d31c381e3a41a3af07b4987"
 KOKORO_VOICE = "af_heart"
 KOKORO_SAMPLE_RATE = 24_000
 WHISPER_SAMPLE_RATE = 16_000
+# Sentence boundaries for streamed synthesis. Kokoro's own default splits only
+# on newlines, so a one-line answer was synthesized whole before any audio
+# played; split per sentence, the first sentence plays while the rest renders.
+SENTENCE_SPLIT = r"(?<=[.!?])\s+"
 
 _DASHES = re.compile("[–—―]")
 _SPACES = re.compile(r"\s+")
@@ -329,12 +335,34 @@ class KokoroEngine:
     def synthesize_pcm16(self, text: str) -> bytes:
         chunks = []
         for result in self._pipeline(text, voice=self._voice, speed=self._speed):
-            audio = getattr(result, "audio", None)
-            if audio is None:
-                continue
-            samples = audio.detach().cpu().numpy() if hasattr(audio, "detach") else np.asarray(audio)
-            chunks.append(np.clip(samples * 32767.0, -32768, 32767).astype(np.int16))
+            pcm = _result_pcm16(result)
+            if pcm is not None:
+                chunks.append(pcm)
         return np.concatenate(chunks).tobytes() if chunks else b""
+
+    def iter_pcm16(self, text: str) -> Iterator[bytes]:
+        """One PCM16 chunk per sentence, each as soon as it is synthesized."""
+        for result in self._pipeline(text, voice=self._voice, speed=self._speed, split_pattern=SENTENCE_SPLIT):
+            pcm = _result_pcm16(result)
+            if pcm is not None and len(pcm):
+                yield pcm.tobytes()
+
+
+def _result_pcm16(result):
+    audio = getattr(result, "audio", None)
+    if audio is None:
+        return None
+    samples = audio.detach().cpu().numpy() if hasattr(audio, "detach") else np.asarray(audio)
+    return np.clip(samples * 32767.0, -32768, 32767).astype(np.int16)
+
+
+async def pcm_frames(pcm: bytes, sample_rate: int = KOKORO_SAMPLE_RATE, frame_ms: int = 20) -> AsyncIterator[rtc.AudioFrame]:
+    """Pre-synthesized mono PCM16 as audio frames, for `session.say(audio=...)`
+    (the end-of-turn filler, synthesized once at prewarm)."""
+    step = sample_rate * frame_ms // 1000 * 2
+    for i in range(0, len(pcm), step):
+        chunk = pcm[i:i + step]
+        yield rtc.AudioFrame(chunk, sample_rate, 1, len(chunk) // 2)
 
 
 def load_kokoro(device: str | None = None) -> KokoroEngine:
@@ -366,13 +394,15 @@ def _locked_synthesize(engine: KokoroEngine, text: str) -> bytes:
 
 
 class KokoroTTS(tts.TTS):
-    def __init__(self, engine: KokoroEngine) -> None:
+    def __init__(self, engine: KokoroEngine, *, chunked: bool = False) -> None:
         super().__init__(
             capabilities=tts.TTSCapabilities(streaming=False),
             sample_rate=KOKORO_SAMPLE_RATE,
             num_channels=1,
         )
         self._engine = engine
+        # JANUS_TTS_CHUNKED: push each sentence as it is synthesized.
+        self.chunked = chunked
 
     def synthesize(self, text: str, *, conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS) -> "_KokoroStream":
         return _KokoroStream(tts=self, input_text=text, conn_options=conn_options)
@@ -386,7 +416,44 @@ class _KokoroStream(tts.ChunkedStream):
             num_channels=1,
             mime_type="audio/pcm",
         )
-        pcm = await asyncio.to_thread(_locked_synthesize, self._tts._engine, self.input_text)
-        if pcm:
-            output_emitter.push(pcm)
+        if not self._tts.chunked:
+            pcm = await asyncio.to_thread(_locked_synthesize, self._tts._engine, self.input_text)
+            if pcm:
+                output_emitter.push(pcm)
+            output_emitter.flush()
+            return
+        # Streamed: each sentence is pushed as soon as it exists (the emitter
+        # frames and plays pushed PCM progressively). The GPU lock is held per
+        # sentence, not per utterance, so a transcription can run in between;
+        # an interrupted utterance stops synthesizing at the next sentence.
+        loop = asyncio.get_running_loop()
+        chunks: asyncio.Queue = asyncio.Queue()
+        stop = threading.Event()
+        engine, text = self._tts._engine, self.input_text
+
+        def work() -> None:
+            try:
+                it = engine.iter_pcm16(text)
+                while not stop.is_set():
+                    with _GPU_LOCK:
+                        pcm = next(it, None)
+                    if pcm is None:
+                        break
+                    loop.call_soon_threadsafe(chunks.put_nowait, pcm)
+            finally:
+                loop.call_soon_threadsafe(chunks.put_nowait, None)
+
+        started = time.monotonic()
+        worker = asyncio.ensure_future(asyncio.to_thread(work))
+        try:
+            first = True
+            while (pcm := await chunks.get()) is not None:
+                if first:
+                    logger.info("janus.voice.speech: first audio after %.0f ms (%d chars)",
+                                (time.monotonic() - started) * 1000, len(text))
+                    first = False
+                output_emitter.push(pcm)
+            await worker  # re-raises a synthesis error
+        finally:
+            stop.set()
         output_emitter.flush()
