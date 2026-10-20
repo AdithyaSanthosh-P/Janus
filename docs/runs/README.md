@@ -9,6 +9,10 @@ FDB-v3 voice runs of Janus over LiveKit Cloud, on a cloud RTX 3090 via the nativ
 | `janus_fdbv3_voice_run64_2026-09-30.tgz` | 64 recordings with hosted speech-to-text. **Contaminated:** a stray demo worker on the same LiveKit project took 33 of the 64 rooms (scored 0); 31 recordings are valid | 12 / 64 exact (12 / 31 valid) |
 | `janus_fdbv3_voice_clean41_2026-09-30.tgz` | Clean re-run of the 29 scenario ids that run lost (41 recordings), hosted speech-to-text, judge on | 17 / 41 judged |
 | `janus_fdbv3_voice_verify26_2026-10-02.tgz` | 26 recordings re-run after the turn-ending fix (10 split-turn failures, 5 fragile passes, 3 controls); local Whisper because the hosted key had no credit; judge not run | 16 / 26 exact (the same recordings: 12 / 26 on 30 Sep) |
+| `janus_fdbv3_voice_smoke8_2026-10-19.tgz` | Round 2 smoke test through `./reproduce.sh` (5 ids, 8 recordings): filler, chunked speech synthesis, relaxed housing contract | 8 / 8 judged |
+| `janus_fdbv3_voice_smoke4_2026-10-19.tgz` | ecommerce_01 and housing_05 again, with user/agent state logging | 4 / 4 judged |
+| `janus_fdbv3_voice_full100_2026-10-19.tgz` | All 100 recordings, Round 2 code, through `./reproduce.sh` | **77 / 100 judged**; housing 17 / 26 |
+| `janus_fdbv3_voice_aeccheck3_2026-10-19.tgz` | finance_04, finance_16, travel_10 with LiveKit's AEC warm-up off (`JANUS_AEC_WARMUP_S`) | 3 / 3 judged |
 
 [`BENCHMARKS.md`](../../BENCHMARKS.md) reads all of these (`python benchmarks/collect.py`) together with the local run folders.
 

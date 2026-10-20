@@ -46,6 +46,10 @@ ARCHIVES = [
     ("docs/runs/janus_fdbv3_voice_full100c_2026-10-03.tgz", "janus_fdbv3_voice_full100c_2026-10-03", "cloud_20261003_180457"),
     ("docs/runs/janus_fdbv3_voice_full100d_2026-10-04.tgz", "janus_fdbv3_voice_full100d_2026-10-04", "cloud_20261004_105851"),
     ("docs/runs/janus_fdbv3_voice_docker100_2026-10-04.tgz", "janus_fdbv3_voice_docker100_2026-10-04", "cloud_20261004_151517"),
+    ("docs/runs/janus_fdbv3_voice_smoke8_2026-10-19.tgz", "janus_fdbv3_voice_smoke8_2026-10-19", "cloud_20261019_090519"),
+    ("docs/runs/janus_fdbv3_voice_smoke4_2026-10-19.tgz", "janus_fdbv3_voice_smoke4_2026-10-19", "cloud_20261019_091753"),
+    ("docs/runs/janus_fdbv3_voice_full100_2026-10-19.tgz", "janus_fdbv3_voice_full100_2026-10-19", "cloud_20261019_142138"),
+    ("docs/runs/janus_fdbv3_voice_aeccheck3_2026-10-19.tgz", "janus_fdbv3_voice_aeccheck3_2026-10-19", "cloud_20261019_175544"),
 ]
 
 # run id -> (class, phase, description). class: full100 | subset | debug
@@ -101,6 +105,13 @@ LABELS = {
     "text_textreplay_dash_1003": ("subset", "3 Oct", "The three recordings that dictate codes with \"dash\", after the identifier-joiner rule"),
     "text_textreplay_pets_1003": ("debug", "3 Oct", "Pet-wording prompt line on housing_05/14/15; Gemini was slow, several scenarios hit the 15 s stall salvage"),
     "text_textreplay_pets_base_1003": ("debug", "3 Oct", "Same three ids without the pet-wording line (the A/B baseline); same slowness"),
+    "cloud_20261019_090519": ("subset", "Round 2", "Smoke test of the Round 2 voice settings (filler, chunked speech synthesis, relaxed housing contract) through ./reproduce.sh on an RTX 3090 VM, judged: 8/8"),
+    "cloud_20261019_091753": ("debug", "Round 2", "Smoke re-run of ecommerce_01 and housing_05 with user/agent state logging, judged: 4/4"),
+    "cloud_20261019_142138": ("full100", "Round 2", "All 100 recordings, judged, Round 2 code (confirmation gate, unconfirmed outcomes, SmartThings pack, filler, chunked synthesis, relaxed housing contract) through ./reproduce.sh: 77/100; housing 17/26 (10/26 on 3 Oct), finance 20/25. finance_04/16 lost words spoken over the filler to LiveKit's AEC warm-up (fixed by JANUS_AEC_WARMUP_S, see cloud_20261019_175544)"),
+    "cloud_20261019_175544": ("debug", "Round 2", "finance_04, finance_16 and travel_10 with LiveKit's AEC warm-up off (JANUS_AEC_WARMUP_S): 3/3, the words spoken over the filler are transcribed again"),
+    "text_housing_wp5_off_1019": ("subset", "Round 2", "Housing domain (26 recordings), published housing contract, judged: the baseline for the relaxed contract"),
+    "text_housing_wp5_on_1019": ("subset", "Round 2", "Housing domain, relaxed housing contract (fdb_relaxed_housing_schema): 18/26 against 8/26, no recording worse; enabled for the voice runs"),
+    "text_housing_savedfilter_1020": ("subset", "Round 2", "Tried: a description sentence against repeating a saved filter in the search (reverted: 17/26 vs 18/26; housing_22/24 still repeat it)"),
     "cloud_20261002_061207": ("subset", "Cloud", "26 recordings (10 split-turn failures, 5 fragile passes, 3 controls), local Whisper, after the turn-ending fix"),
 }
 

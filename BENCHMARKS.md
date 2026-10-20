@@ -6,9 +6,9 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 
 | File | One row per | Use it for |
 |---|---|---|
-| `runs.csv` | scored run (88) | score vs time, configuration comparisons |
-| `recordings.csv` | scenario in each text-replay run (2,593) | per-scenario and per-domain pass rates, text-replay latency |
-| `voice_recordings.csv` | recording in each voice run (902) | per-speaker before/after, turn-ending evidence, latency |
+| `runs.csv` | scored run (95) | score vs time, configuration comparisons |
+| `recordings.csv` | scenario in each text-replay run (2,671) | per-scenario and per-domain pass rates, text-replay latency |
+| `voice_recordings.csv` | recording in each voice run (1017) | per-speaker before/after, turn-ending evidence, latency |
 | `failures.csv` | failing recording in an analysed failure set (155) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
 | `other_measurements.csv` | measurement | tests, kernel latency, exploration, speech round trip, reference numbers |
@@ -127,6 +127,9 @@ Voice runs stream FDB's recordings through LiveKit to the Janus worker (speech r
 | 2026-10-03 | `cloud_20261003_180457` | judged | 74/100 | 74.0% | 0.959 | 0.780 | 8.5 s | All 100 recordings, judged, commit e296c85 (bridge waits for running transcriptions, review-pass fixes), same box and providers: 74/100, no turn closed before its transcript, response quality 0.72, turn-taking 100/100. Against the 73% run: 4 recordings better, 3 worse; against the 65% run: 10 better, 1 worse |
 | 2026-10-04 | `cloud_20261004_105851` | judged | 73/100 | 73.0% | 0.953 | 0.767 | 7.5 s | All 100 recordings, judged, commit d1732c5 (conditional-branch, filter-update, identifier and value-form fixes), native path, RTX 3090: 73/100. The judge's OpenAI quota ran out for 53 of 100 response-quality scores (pass/fail and argument scoring unaffected). Against the 74% run: 4 better, 5 worse (two conditional recordings by design, two speech-to-text, one value form since fixed) |
 | 2026-10-04 | `cloud_20261004_151517` | judged | 74/100 | 74.0% | 0.964 | 0.807 | 7.1 s | All 100 recordings, judged, commit 1500c23, through ./reproduce.sh (Docker) on a clean Ubuntu 24.04 VM with an RTX 3090: 74/100, tool selection 0.964, argument accuracy 0.807, response quality 0.69, first word 7.1 s, no client aborts, no API errors |
+| 2026-10-19 | `cloud_20261019_090519` | judged | 8/8 | 100.0% | 1.000 | 1.000 | 6.9 s | Smoke test of the Round 2 voice settings (filler, chunked speech synthesis, relaxed housing contract) through ./reproduce.sh on an RTX 3090 VM, judged: 8/8 |
+| 2026-10-19 | `cloud_20261019_091753` | judged | 4/4 | 100.0% | 1.000 | 1.000 | 6.2 s | Smoke re-run of ecommerce_01 and housing_05 with user/agent state logging, judged: 4/4 |
+| 2026-10-19 | `cloud_20261019_142138` | judged | 77/100 | 77.0% | 0.951 | 0.838 | 6.7 s | All 100 recordings, judged, Round 2 code (confirmation gate, unconfirmed outcomes, SmartThings pack, filler, chunked synthesis, relaxed housing contract) through ./reproduce.sh: 77/100; housing 17/26 (10/26 on 3 Oct), finance 20/25. finance_04/16 lost words spoken over the filler to LiveKit's AEC warm-up (fixed by JANUS_AEC_WARMUP_S, see cloud_20261019_175544) |
 
 Read these with care:
 
@@ -493,3 +496,10 @@ The commit column is the code the run used (`-dirty` means uncommitted changes a
 | 2026-10-04 | `text_textreplay_cond_rule_1004` | text_replay | full100 | judged | 76/100 | 76.0% | 0.970 | 0.813 | gemini-3.6-flash | 8a8122d-dirty |
 | 2026-10-04 | `text_textreplay_finance_typenoun` | text_replay | subset | judged | 25/25 | 100.0% | 1.000 | 1.000 | gemini-3.6-flash | e296c85-dirty |
 | 2026-10-04 | `text_textreplay_travel_typenoun` | text_replay | subset | judged | 19/20 | 95.0% | 1.000 | 0.950 | gemini-3.6-flash | c6d789a-dirty |
+| 2026-10-19 | `cloud_20261019_090519` | voice_cloud | subset | judged | 8/8 | 100.0% | 1.000 | 1.000 | gemini-3.6-flash | f911a194 |
+| 2026-10-19 | `cloud_20261019_091753` | voice_cloud | debug | judged | 4/4 | 100.0% | 1.000 | 1.000 | gemini-3.6-flash | f911a194 |
+| 2026-10-19 | `cloud_20261019_142138` | voice_cloud | full100 | judged | 77/100 | 77.0% | 0.951 | 0.838 | gemini-3.6-flash | f911a194 |
+| 2026-10-19 | `cloud_20261019_175544` | voice_cloud | debug | judged | 3/3 | 100.0% | 1.000 | 1.000 | gemini-3.6-flash | f911a194 |
+| 2026-10-19 | `text_housing_wp5_off_1019` | text_replay | subset | judged | 8/26 | 30.8% | 0.923 | 0.449 | gemini-3.6-flash | f911a19-dirty |
+| 2026-10-19 | `text_housing_wp5_on_1019` | text_replay | subset | judged | 18/26 | 69.2% | 0.923 | 0.814 | gemini-3.6-flash | f911a19-dirty |
+| 2026-10-20 | `text_housing_savedfilter_1020` | text_replay | subset | judged | 17/26 | 65.4% | 0.923 | 0.756 | gemini-3.6-flash | f911a19-dirty |
