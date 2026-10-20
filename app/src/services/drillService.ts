@@ -11,16 +11,18 @@ import {
   DrillPacket,
 } from '../utils/drillBuilder';
 import { livekitService } from './livekitService';
-import { janusStore } from '../store/janusStore';
 
 export class DrillService {
   private state: DrillState = { ...INITIAL_DRILL_STATE };
   private listeners: Array<(state: DrillState, isAnyActive: boolean) => void> = [];
 
   constructor() {
-    // Contract: Reset all toggles and send reset when a new session starts
-    janusStore.onSessionStarted(() => {
-      this.resetAll(true).catch(e => console.warn('[DrillService] Could not reset on session start:', e));
+    // Contract: reset all toggles and send reset when a new session starts.
+    // On a fresh connect, not on session_started: the agent re-sends
+    // session_started whenever anyone joins the room, which would switch a
+    // drill off in the middle of the demo.
+    livekitService.onConnected(() => {
+      this.resetAll(true).catch(e => console.warn('[DrillService] Could not reset on connect:', e));
     });
   }
 
@@ -55,16 +57,12 @@ export class DrillService {
   }
 
   /**
-   * Toggle one drill and publish reliable janus.control packet.
+   * Toggle one drill and publish reliable janus.control packet. The toggle
+   * changes only once the packet was sent; otherwise it stays as it was.
+   * Resolves whether it was sent.
    */
-  public async setDrill(name: keyof DrillState, on: boolean): Promise<void> {
+  public async setDrill(name: keyof DrillState, on: boolean): Promise<boolean> {
     const booleanOn = Boolean(on);
-    this.state = {
-      ...this.state,
-      [name]: booleanOn,
-    };
-    this.notify();
-
     let packet: DrillPacket;
     switch (name) {
       case 'st_unreachable':
@@ -84,23 +82,28 @@ export class DrillService {
         break;
     }
 
-    try {
-      await livekitService.sendDrill(packet);
-    } catch (err) {
-      console.warn('[DrillService] Could not send drill packet:', err);
+    const sent = await livekitService.sendDrill(packet);
+    if (sent) {
+      this.state = {
+        ...this.state,
+        [name]: booleanOn,
+      };
+    } else {
+      console.warn('[DrillService] Drill not sent; toggle left unchanged:', name);
     }
+    this.notify();
+    return sent;
   }
 
   /**
    * One-shot command sent by "someone else" outside Janus.
    */
-  public async sendExternalCommand(command: 'unlock' | 'lock'): Promise<void> {
-    const packet = buildExternalCommandPacket(command);
-    try {
-      await livekitService.sendDrill(packet);
-    } catch (err) {
-      console.warn('[DrillService] Could not send external command:', err);
+  public async sendExternalCommand(command: 'unlock' | 'lock'): Promise<boolean> {
+    const sent = await livekitService.sendDrill(buildExternalCommandPacket(command));
+    if (!sent) {
+      console.warn('[DrillService] External command not sent:', command);
     }
+    return sent;
   }
 
   /**
@@ -111,11 +114,7 @@ export class DrillService {
     this.notify();
 
     if (sendOverLiveKit) {
-      try {
-        await livekitService.sendDrill(buildResetPacket());
-      } catch (err) {
-        console.warn('[DrillService] Could not send reset packet:', err);
-      }
+      await livekitService.sendDrill(buildResetPacket());
     }
   }
 }

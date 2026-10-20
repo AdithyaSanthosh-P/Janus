@@ -10,6 +10,7 @@ export interface LiveKitConnectOptions {
 }
 
 export class LiveKitService {
+  private connectedListeners: Array<() => void> = [];
   private room: any = null;
   private isMicEnabled = false;
   private isCameraEnabled = false;
@@ -127,6 +128,14 @@ export class LiveKitService {
 
       // Connect to the room
       await this.room.connect(this.currentUrl, this.currentToken);
+      janusStore.setConnectionStatus('connected');
+      for (const listener of this.connectedListeners) {
+        try {
+          listener();
+        } catch (e) {
+          console.warn('[LiveKitService] Error in onConnected listener:', e);
+        }
+      }
 
       // Enable microphone if requested
       if (enableMic && this.room.localParticipant) {
@@ -179,13 +188,27 @@ export class LiveKitService {
   }
 
   /**
+   * Run `listener` after every fresh connect (not after a resume: a resumed
+   * session keeps the agent's drill state, a fresh one may not).
+   */
+  public onConnected(listener: () => void): () => void {
+    this.connectedListeners.push(listener);
+    return () => {
+      this.connectedListeners = this.connectedListeners.filter(l => l !== listener);
+    };
+  }
+
+  /**
    * Send a failure drill message over LiveKit data channel.
    * Topic: `janus.control`, reliable: true.
+   * Resolves true only when the packet was handed to LiveKit; false when the
+   * room is not connected or publishing failed, so the caller never shows a
+   * drill as on that the agent never received.
    */
-  public async sendDrill(packet: DrillPacket): Promise<void> {
-    if (!this.room || !this.room.localParticipant) {
+  public async sendDrill(packet: DrillPacket): Promise<boolean> {
+    if (!this.room || !this.room.localParticipant || janusStore.getState().connectionStatus !== 'connected') {
       console.warn('[LiveKitService] Cannot send drill: room is not connected.');
-      return;
+      return false;
     }
     try {
       const encoded = new TextEncoder().encode(JSON.stringify(packet));
@@ -193,9 +216,10 @@ export class LiveKitService {
         reliable: true,
         topic: 'janus.control',
       });
+      return true;
     } catch (err) {
       console.error('[LiveKitService] Error publishing drill:', err);
-      throw err;
+      return false;
     }
   }
 

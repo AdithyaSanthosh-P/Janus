@@ -92,7 +92,6 @@ export class JanusEventReducer {
   private seenSeqs = new Set<number>();
   private state: JanusState = { ...INITIAL_STATE, devices: {} };
   private listeners: Array<(state: JanusState) => void> = [];
-  private sessionStartedListeners: Array<() => void> = [];
 
   public getState(): JanusState {
     return this.state;
@@ -103,13 +102,6 @@ export class JanusEventReducer {
     listener(this.state);
     return () => {
       this.listeners = this.listeners.filter(l => l !== listener);
-    };
-  }
-
-  public onSessionStarted(listener: () => void): () => void {
-    this.sessionStartedListeners.push(listener);
-    return () => {
-      this.sessionStartedListeners = this.sessionStartedListeners.filter(l => l !== listener);
     };
   }
 
@@ -171,13 +163,6 @@ export class JanusEventReducer {
           backend: event.backend || this.state.backend,
           packs: event.packs || this.state.packs,
         };
-        for (const listener of this.sessionStartedListeners) {
-          try {
-            listener();
-          } catch (e) {
-            console.warn('[JanusStore] Error in onSessionStarted listener:', e);
-          }
-        }
         break;
       }
 
