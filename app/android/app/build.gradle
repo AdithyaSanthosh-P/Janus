@@ -1,0 +1,54 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("com.facebook.react")
+}
+
+project.ext.set("hermesEnabled", true)
+project.ext.react = [
+    enableHermes: true
+]
+
+react {
+    autolinkLibrariesWithApp()
+}
+
+android {
+    ndkVersion = "27.1.12297006"
+    compileSdk 35
+    compileSdkVersion 35
+
+    namespace "com.januscompanion"
+    defaultConfig {
+        applicationId "com.januscompanion"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+        }
+    }
+}
+
+dependencies {
+    implementation("com.facebook.react:react-android")
+    implementation("com.facebook.react:hermes-android")
+}

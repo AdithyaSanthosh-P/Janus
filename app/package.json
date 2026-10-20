@@ -1,0 +1,44 @@
+{
+  "name": "JanusCompanion",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "android": "react-native run-android",
+    "ios": "react-native run-ios",
+    "start": "react-native start",
+    "test": "jest",
+    "lint": "eslint .",
+    "postinstall": "node -e \"const fs=require('fs'),path=require('path'),cp=require('child_process'),p='node_modules/@react-native-community/cli-server-api/build/index.js';if(fs.existsSync(p)){let c=fs.readFileSync(p,'utf8');if(!c.includes('exports.indexPageMiddleware')){fs.appendFileSync(p,'\\nexports.indexPageMiddleware=_indexPageMiddleware.default;\\n');}}const svgDir='node_modules/react-native-svg/android/src/main/java/com/facebook/react/uimanager';if(fs.existsSync('node_modules/react-native-svg')){fs.mkdirSync(svgDir,{recursive:true});fs.writeFileSync(path.join(svgDir,'ViewManagerWithGeneratedInterface.java'),'package com.facebook.react.uimanager;\\npublic interface ViewManagerWithGeneratedInterface {}\\n');}const junc='node_modules/react-native-reanimated/android/Common';if(!fs.existsSync(junc)&&fs.existsSync('node_modules/react-native-reanimated/Common')){try{cp.execSync('cmd /c mklink /J \\\"'+path.resolve(junc)+'\\\" \\\"'+path.resolve('node_modules/react-native-reanimated/Common')+'\\\"');}catch(e){}}const rc='node_modules/react-native-reanimated/android/CMakeLists.txt';if(fs.existsSync(rc)){let c=fs.readFileSync(rc,'utf8');if(c.includes('../Common/cpp')){fs.writeFileSync(rc,c.replace('../Common/cpp','Common/cpp'));}}\" && node scripts/patch-codegen.js"
+  },
+  "dependencies": {
+    "@livekit/react-native": "^3.1.0",
+    "@livekit/react-native-webrtc": "^150.1.0",
+    "clsx": "^2.1.1",
+    "livekit-client": "^2.20.0",
+    "lucide-react-native": "^0.454.0",
+    "react": "18.3.1",
+    "react-native": "0.76.2",
+    "react-native-gesture-handler": "^2.21.2",
+    "react-native-reanimated": "3.16.2",
+    "react-native-safe-area-context": "^4.12.0",
+    "react-native-svg": "^15.16.0",
+    "tailwind-merge": "^2.5.4"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@babel/runtime": "^7.25.0",
+    "@react-native-community/cli": "^20.2.0",
+    "@react-native/babel-preset": "0.76.2",
+    "@react-native/metro-config": "0.76.2",
+    "@react-native/typescript-config": "0.76.2",
+    "@types/jest": "^29.5.13",
+    "@types/react": "^18.3.12",
+    "@types/react-test-renderer": "^18.3.0",
+    "jest": "^29.6.3",
+    "typescript": "5.0.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
