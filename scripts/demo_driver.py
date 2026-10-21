@@ -122,6 +122,13 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("video", ""),
         ("settle", 40, 12),
     ],
+    "camera_explain": [
+        ("note", "the camera reads the washer's code and Janus explains it"),
+        ("video", "4C"),
+        ("pause", 3.0),
+        ("say", "My washer stopped and it's showing this error. What does it mean?"),
+        ("settle", 40, 8),
+    ],
     "status": [
         ("say", "Is the front door locked?"),
         ("settle", 30),
