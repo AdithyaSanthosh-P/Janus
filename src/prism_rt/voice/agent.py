@@ -50,7 +50,7 @@ Environment:
                           3 in fdb mode). In demo mode a bare "Yes." to an offer or a question is
                           followed by the write itself and its answer, about 7 s of silence without it
   JANUS_FILLER_PROTECTED  1 = the filler cannot be interrupted (default on in demo mode, off in fdb
-                          mode). LiveKit interrupts the current speech when its own end-of-turn
+                          mode; the user's audio still reaches speech-to-text while it plays). LiveKit interrupts the current speech when its own end-of-turn
                           handling runs (agent_activity._user_turn_completed_impl), which races the
                           filler started on the same transcript; when it lost, the filler was dropped
                           and the first sound came about 3 s later (found live, 21 Oct)
@@ -335,6 +335,11 @@ async def entrypoint(ctx: JobContext) -> None:
         tts=KokoroTTS(userdata["kokoro"], chunked=TTS_CHUNKED),
         min_interruption_words=_int_env("JANUS_MIN_INTERRUPTION_WORDS", 1 if MODE == "demo" else 2),
         aec_warmup_duration=AEC_WARMUP_S,
+        # A protected (uninterruptible) filler must not mute the user: by
+        # default LiveKit replaces their audio with silence while such speech
+        # plays, and a correction spoken over the filler ("...twenty-two.
+        # Actually, make it twenty-one") was never transcribed (live, 21 Oct).
+        **({"discard_audio_if_uninterruptible": False} if FILLER_PROTECTED else {}),
     )
 
     log_dir = os.environ.get("JANUS_DECISION_LOG_DIR")
