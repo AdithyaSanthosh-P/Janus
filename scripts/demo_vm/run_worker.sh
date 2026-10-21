@@ -9,6 +9,6 @@ docker run -d --name janus-demo --gpus all --network host \
   -v "$HOME/janus-demo:/janus" \
   -e LIVEKIT_URL -e LIVEKIT_API_KEY -e LIVEKIT_API_SECRET -e GEMINI_API_KEY -e OPENAI_API_KEY -e ST_PAT \
   -e JANUS_MODE=demo -e JANUS_ST_MODE=real -e JANUS_DRILLS=1 -e JANUS_STT=openai \
-  -e JANUS_WATCHDOG_MS=0 -e JANUS_WORLD_POLL_S=20 -e JANUS_ST_CONFIRM_WAITS=0.5,1,1.5,2 \
+  -e JANUS_WATCHDOG_MS=0 -e JANUS_WORLD_POLL_S=20 -e JANUS_ST_CONFIRM_WAITS=0.5,1,1.5,2 -e JANUS_AEC_WARMUP_S=0 \
   -e JANUS_DECISION_LOG_DIR=/janus/logs "$@" \
   janus-fdb-v3:speech -c "python -m prism_rt.voice.agent start"
