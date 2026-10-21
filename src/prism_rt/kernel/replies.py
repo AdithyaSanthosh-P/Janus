@@ -11,6 +11,8 @@ what actually ran (the call ledger), never from model text.
 
 from __future__ import annotations
 
+import re
+
 from prism_rt.model.types import CallStatus, EffectStatus, FactStatus, GoalStatus, Provenance, StepKind
 
 HONEST_REPLY_KEY = "session.honest_reply"
@@ -55,6 +57,36 @@ def unconfirmed_text(calls: list) -> str:
         values = ", ".join(str(v) for v in call.args.values())
         parts.append(f"{_human(call.tool)} ({values})" if values else _human(call.tool))
     return "I sent " + "; ".join(parts) + ", but I couldn't confirm it went through — please check the device before relying on it."
+
+
+_FAILURE_CLAIM = re.compile(
+    r"\b(fail(?:ed|s|ure)?|could(?:n['\u2019]?t| not)|can(?:not|['\u2019]?t)|unable|did(?:n['\u2019]?t| not)|"
+    r"was(?:n['\u2019]?t| not) able|not able|errors?|unsuccessful(?:ly)?|unfortunately|(?:did|was) not complete|not completed?)\b",
+    re.IGNORECASE,
+)
+
+
+def claims_failure(text: str) -> bool:
+    """Whether a sentence says something did not work. Deliberately broad:
+    it only ever replaces a final whose writes all confirmed, with a line
+    built from what ran, so a false positive costs wording, never truth."""
+    return bool(_FAILURE_CLAIM.search(text or ""))
+
+
+def confirmed_text(store, calls: list) -> str:
+    """"Done: Janus Lock is now locked.": the writes that went through, from
+    their own results when a result names the device and its new state,
+    otherwise from the call itself."""
+    parts = []
+    for call in calls:
+        fact = store.facts.get(f"result.{call.call_id}")
+        result = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
+        if isinstance(result, dict) and result.get("device") and result.get("state") is not None:
+            parts.append(f"{result['device']} is now {result['state']}")
+        else:
+            values = ", ".join(str(v) for v in call.args.values())
+            parts.append(f"{_human(call.tool)} ({values})" if values else _human(call.tool))
+    return "Done: " + "; ".join(parts) + "."
 
 
 def done_summary(store, goal_id: str) -> str:

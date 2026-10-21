@@ -47,7 +47,16 @@ from prism_rt.kernel import evidence
 from prism_rt.kernel.action_plans import step_failed
 from prism_rt.kernel.commit import CommitGate, user_audibly_active
 from prism_rt.kernel.proposals import plain_slot_name
-from prism_rt.kernel.replies import HONEST_REPLY_KEY, done_summary, duplicate_write_text, unconfirmed_text, unconfirmed_writes
+from prism_rt.kernel.replies import (
+    HONEST_REPLY_KEY,
+    claims_failure,
+    confirmed_text,
+    confirmed_writes,
+    done_summary,
+    duplicate_write_text,
+    unconfirmed_text,
+    unconfirmed_writes,
+)
 from prism_rt.kernel.interpret_apply import active_goal_id, grounded_compose_text, user_content_pending
 from prism_rt.model.actions import FinalBody, IntendedAction, SpeakBody
 from prism_rt.model.types import (
@@ -386,6 +395,12 @@ class FastResponder:
             ran = done_summary(store, goal.goal_id)  # the writes that did confirm, if any
             text = f"{ran} {unconfirmed_text(unconfirmed)}" if ran else unconfirmed_text(unconfirmed)
             task_completed = False
+        elif store.config.final_contradiction_guard_enabled and task_completed and claims_failure(text):
+            # The mirror case: every write went through, and the composer
+            # still said it failed. What ran is said instead.
+            writes = confirmed_writes(store, goal.goal_id)
+            if writes and all(self._effect_confirmed(store, call) for call in writes):
+                text = confirmed_text(store, writes)
 
         grade = None
         if store.config.claim_grades_enabled:
@@ -401,6 +416,11 @@ class FastResponder:
                 goal_id=goal.goal_id,
             )
         ]
+
+    @staticmethod
+    def _effect_confirmed(store, call) -> bool:
+        effect = store.effect_ledger.by_fingerprint(call.fingerprint)
+        return effect is not None and effect.status == EffectStatus.CONFIRMED
 
     def _has_confirmed_write(self, store, goal_id: str) -> bool:
         plan = store.plans.current(goal_id)

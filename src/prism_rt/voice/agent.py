@@ -46,6 +46,11 @@ Environment:
                           turn closes, and drop the kernel's generic ACK that follows
                           (default on in demo mode, off in fdb mode; the repro scripts set it)
   JANUS_FILLER_TEXT       the filler phrase (default "Okay, one moment.")
+  JANUS_FILLER_PROTECTED  1 = the filler cannot be interrupted (default on in demo mode, off in fdb
+                          mode). LiveKit interrupts the current speech when its own end-of-turn
+                          handling runs (agent_activity._user_turn_completed_impl), which races the
+                          filler started on the same transcript; when it lost, the filler was dropped
+                          and the first sound came about 3 s later (found live, 21 Oct)
   JANUS_TTS_CHUNKED       1 = synthesize and play each sentence as soon as it is ready
                           (default on in demo mode, off in fdb mode; the repro scripts set it)
   JANUS_AEC_WARMUP_S      seconds of LiveKit's AEC warm-up, during which the agent's first
@@ -211,6 +216,7 @@ def _flag_env(name: str, default: bool) -> bool:
 FILLER_ENABLED = _flag_env("JANUS_FILLER", MODE == "demo")
 FILLER_TEXT = os.environ.get("JANUS_FILLER_TEXT") or "Okay, one moment."
 TTS_CHUNKED = _flag_env("JANUS_TTS_CHUNKED", MODE == "demo")
+FILLER_PROTECTED = _flag_env("JANUS_FILLER_PROTECTED", MODE == "demo")
 AEC_WARMUP_S = aec_warmup_duration(MODE, os.environ.get("JANUS_AEC_WARMUP_S"))
 DRILLS_ENABLED = MODE == "demo" and os.environ.get("JANUS_DRILLS") == "1"
 
@@ -396,10 +402,14 @@ async def entrypoint(ctx: JobContext) -> None:
     async def play_filler() -> None:
         # Pre-synthesized audio; plain synthesis only if the cache is empty.
         try:
+            interruptible = not FILLER_PROTECTED
             if filler_pcm:
-                session.say(FILLER_TEXT, audio=pcm_frames(filler_pcm), allow_interruptions=True, add_to_chat_ctx=False)
+                handle = session.say(FILLER_TEXT, audio=pcm_frames(filler_pcm), allow_interruptions=interruptible,
+                                     add_to_chat_ctx=False)
             else:
-                session.say(FILLER_TEXT, allow_interruptions=True, add_to_chat_ctx=False)
+                handle = session.say(FILLER_TEXT, allow_interruptions=interruptible, add_to_chat_ctx=False)
+            # Whether the filler was actually heard (latency analysis).
+            handle.add_done_callback(lambda h: logger.info("filler %s", "interrupted" if h.interrupted else "finished"))
             if feed is not None:
                 feed.agent_said(FILLER_TEXT, "filler")
             logger.info("filler played")
@@ -429,8 +439,9 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     world_sink["fn"] = bridge.on_world_fact
     logger.info(
-        "filler %s, chunked TTS %s, AEC warm-up %s",
-        "on" if FILLER_ENABLED else "off", "on" if TTS_CHUNKED else "off",
+        "filler %s%s, chunked TTS %s, AEC warm-up %s",
+        "on" if FILLER_ENABLED else "off", " (protected)" if FILLER_ENABLED and FILLER_PROTECTED else "",
+        "on" if TTS_CHUNKED else "off",
         f"{AEC_WARMUP_S:g} s" if AEC_WARMUP_S else "off",
     )
     # The recognizer reports each transcription's start and finish, so the

@@ -219,6 +219,14 @@ class Config:
     # when the device reached the requested state by itself, the write is
     # withdrawn unsent. Demo profile only.
     evidence_bound_confirmation_enabled: bool = False
+    # A final answer may not deny what actually happened. Found live (21 Oct):
+    # SmartThings confirmed the lock (`done: true, state: locked`) and the
+    # composer wrote "I attempted to lock the front door, but the operation
+    # failed to complete." With this on, a completed goal whose writes all
+    # confirmed gets a final built from what ran (replies.confirmed_text)
+    # whenever the composed text claims a failure (replies.claims_failure).
+    # The mirror of the unconfirmed-write rule in responder._final.
+    final_contradiction_guard_enabled: bool = False
     # How long the Q6a re-ask waits after the unclear turn was interpreted,
     # and it is dropped if the user has started another turn by then. Found
     # live (2026-09-27): a hesitant opener ("Um so uh...") followed by a
