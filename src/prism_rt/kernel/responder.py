@@ -50,6 +50,7 @@ from prism_rt.kernel.commit import CommitGate, user_audibly_active
 from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.replies import (
     HONEST_REPLY_KEY,
+    action_phrase,
     claims_failure,
     confirmed_text,
     confirmed_writes,
@@ -82,6 +83,19 @@ _RECONCILE_TEMPLATES = {
     EffectStatus.CONFIRMED: "Just so you know — the earlier {what} request had already gone through before I could cancel it.",
     EffectStatus.UNKNOWN: "I'm not sure whether the earlier {what} request went through — I couldn't get a result back after cancelling.",
 }
+
+
+def _same_args(offered, args) -> bool:
+    """An offer's arguments against the held call's, as the user would hear
+    them: case, spacing and a leading "the"/"my" ignored."""
+    def norm(values) -> dict:
+        out = {}
+        for key, value in (values or {}).items():
+            text = " ".join(str(value).strip().lower().split())
+            out[key] = re.sub(r"^(the|my)\s+", "", text)
+        return out
+
+    return isinstance(offered, dict) and norm(offered) == norm(args)
 
 
 def _is_watchdog_salvage(store) -> bool:
@@ -561,7 +575,7 @@ class FastResponder:
             return [
                 IntendedAction(
                     action_type=ActionType.SPEAK,
-                    body=SpeakBody(text=f"On it — {call.tool.replace('_', ' ')} now.", kind="ack", claim_grade=ClaimGrade.INTENDED),
+                    body=SpeakBody(text=self._intended_text(store, call), kind="ack", claim_grade=ClaimGrade.INTENDED),
                     read_set=EMPTY_READ_SET,
                     rule_id="responder.intended",
                 )
@@ -712,7 +726,14 @@ class FastResponder:
                 text = f"Shall I go ahead and {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
             offer = store.facts.get(f"goal.{goal_id}.offer_text")
             if offer is not None and offer.status != FactStatus.RETRACTED and offer.value:
-                text = offer.value  # Config.proactive_offers_enabled: Janus's own opening question
+                offered = store.facts.get(f"goal.{goal_id}.offer_args")
+                if offered is None or offered.status == FactStatus.RETRACTED or _same_args(offered.value, call.args):
+                    text = offer.value  # Config.proactive_offers_enabled: Janus's own opening question
+                else:
+                    # The offer was corrected ("make it Friday afternoon"): its own
+                    # sentence names the old arguments, so ask about the new ones.
+                    phrase = action_phrase(store, call.tool, call.args)
+                    text = f"Okay — shall I {phrase}?" if phrase else text
             repeat = store.facts.get(f"goal.{goal_id}.repeat_of")
             if repeat is not None and repeat.status != FactStatus.RETRACTED:
                 text = (
@@ -728,6 +749,14 @@ class FastResponder:
                 )
             ]
         return []
+
+    @staticmethod
+    def _intended_text(store, call) -> str:
+        """The notice that a write is going out. With demo speech polish and a
+        manifest label, said as the action ("On it — I'll book a technician for
+        tomorrow morning."); otherwise the tool's name."""
+        phrase = action_phrase(store, call.tool, call.args) if store.config.demo_speech_polish_enabled else None
+        return f"On it — I'll {phrase}." if phrase else f"On it — {call.tool.replace('_', ' ')} now."
 
     def _reask_after_change(self, store, call, goal_id: str, decision, diffs, now_us: int, step_no: int) -> list[IntendedAction]:
         """kernel/evidence.py: what the question rested on changed while Janus

@@ -260,6 +260,9 @@ def demo_toolset() -> Toolset:
         execute.snapshot_states = snapshot_states
         execute.st_backend = backend
         execute.read_target = st.read_target
+        # Appliance offers (adapters/offers.py): the washer's status as the
+        # device-care pack reports it; the read also opens the case a booking needs.
+        execute.read_appliance = lambda device: care._get_device_status({"device_type": device})
         return execute
 
     from prism_rt.devicecare.tools import MANIFEST as CARE_MANIFEST
@@ -597,7 +600,7 @@ async def entrypoint(ctx: JobContext) -> None:
     async def _offer(kind: str) -> None:
         # Janus speaks first, only if the devices give it something to offer.
         try:
-            payload = await build_offer(kind, executor.read_target)
+            payload = await build_offer(kind, executor.read_target, getattr(executor, "read_appliance", None))
             if payload is None:
                 logger.info("offer %s: nothing to offer right now", kind)
                 return

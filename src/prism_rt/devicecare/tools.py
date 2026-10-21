@@ -153,6 +153,8 @@ MANIFEST: list[dict] = [
         "name": "book_technician",
         "description": "Book ONE technician home visit for a diagnosed issue. Only when the user has asked to book.",
         "mutability": "state_changing",
+        # How the action is said and shown on the app's card (replies.action_phrase).
+        "label": "Book a technician for {date} {time_slot}",
         "params_schema": _obj(
             {
                 "date": _str("The day of the visit, for example Friday or 2026-10-02."),

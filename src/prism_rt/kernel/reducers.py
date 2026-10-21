@@ -355,6 +355,10 @@ def _apply_offer(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> Non
     if gid is None:
         return
     txn.facts.set(f"goal.{gid}.offer_text", payload.text, FactStatus.COMMITTED, prov, rule="reducers.offer")
+    # The question names these arguments; once a correction changes them the
+    # responder asks about the new ones instead (survey H2: a yes is bound to
+    # what it was asked about).
+    txn.facts.set(f"goal.{gid}.offer_args", dict(payload.args or {}), FactStatus.COMMITTED, prov, rule="reducers.offer")
     # The offer is its own opening line: no "Got it, working on it" before it.
     txn.facts.set(f"ack.{gid}.compiled", 0, FactStatus.COMMITTED, prov, rule="reducers.offer")
 

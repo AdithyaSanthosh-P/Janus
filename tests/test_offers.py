@@ -180,3 +180,78 @@ def test_an_offer_long_after_the_users_last_words_is_not_salvaged_at_once():
     later = say(h, 30_000_000, "yes please", 34_000_000)
     assert tool_calls(later) == ["st_close_garage"]
     clean(h)
+
+
+# ---- survey B1: the washer's fault, offered as a technician visit ---------------
+
+from prism_rt.devicecare.tools import MANIFEST as CARE_MANIFEST, DeviceCareToolset  # noqa: E402
+
+
+def washer_setup(extra=()):
+    care = DeviceCareToolset()
+    execute = care.make_executor()
+    provider = ScriptedProvider()
+    for key, reply in extra:
+        provider.register("interpret", key, reply)
+    provider.register("interpret", "no thanks", {"act": "deny", "slot_deltas": []})
+    provider.register("interpret", "yes please", {"act": "confirm", "slot_deltas": []})
+    provider.register("compose", "", {"text": "Your technician is booked.", "claims": []})
+    tools = {m["name"]: {"latency_ms": 200, "handler": (lambda args, n=m["name"]: run(execute(n, args)))} for m in CARE_MANIFEST}
+    h = SimHarness(demo_config(), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h.send(0, [manifest_event(CARE_MANIFEST)])
+    payload = run(build_offer("washer_error", None, lambda device: care._get_device_status({"device_type": device})))
+    return h, care, payload
+
+
+def washer_offered(h, payload):
+    actions = push(h, 500_000, [{"type": "offer", "payload": payload}], 2_500_000)
+    assert said(actions) == [payload["text"]]
+    assert tool_calls(actions) == []
+
+
+def test_washer_offer_names_the_code_and_the_visit():
+    _, _, payload = washer_setup()
+    assert payload["tool"] == "book_technician" and payload["args"] == {"date": "tomorrow", "time_slot": "morning"}
+    assert payload["text"] == ("Your washer has stopped with code 4C: water is not being supplied to the drum. "
+                               "Shall I book a technician for tomorrow morning?")
+
+
+def test_washer_offer_yes_books_exactly_one_visit():
+    h, care, payload = washer_setup()
+    washer_offered(h, payload)
+    actions = say(h, 3_000_000, "yes please", 7_000_000)
+    assert tool_calls(actions) == ["book_technician"]
+    assert [(b["issue_id"], b["date"], b["time_slot"]) for b in care.bookings] == [("washer_no_water", "tomorrow", "morning")]
+    clean(h)
+
+
+def test_washer_offer_no_books_nothing():
+    h, care, payload = washer_setup()
+    washer_offered(h, payload)
+    actions = say(h, 3_000_000, "no thanks", 6_000_000)
+    assert tool_calls(actions) == [] and care.bookings == []
+    assert "Okay, nothing was sent." in said(actions)
+    clean(h)
+
+
+def test_washer_offer_corrected_books_the_new_slot_only():
+    fix = {"act": "slot_update", "slot_deltas": [{"name": "date", "scope": "goal", "op": "set", "value": "Friday"},
+                                                 {"name": "time_slot", "scope": "goal", "op": "set", "value": "afternoon"}]}
+    h, care, payload = washer_setup(extra=[("friday afternoon", fix)])
+    washer_offered(h, payload)
+    first = say(h, 3_000_000, "make it friday afternoon", 7_000_000)
+    # The offer's own sentence named tomorrow morning: the question is asked
+    # again about what is now pending, and nothing is booked before the yes.
+    assert said(first) == ["Okay — shall I book a technician for Friday afternoon?"]
+    assert care.bookings == []
+    later = say(h, 7_100_000, "yes please", 11_000_000)
+    assert [(b["date"], b["time_slot"]) for b in care.bookings] == [("Friday", "afternoon")]
+    assert tool_calls(first + later) == ["book_technician"]
+    clean(h)
+
+
+def test_no_washer_offer_without_a_fault():
+    care = DeviceCareToolset()
+    care.status["washer"]["error_code"] = None
+    assert run(build_offer("washer_error", None, lambda device: care._get_device_status({"device_type": device}))) is None
+    assert run(build_offer("washer_error", None)) is None  # no appliance reader: nothing to offer
