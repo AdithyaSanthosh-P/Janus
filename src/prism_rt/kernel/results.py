@@ -131,6 +131,22 @@ class ResultRouter:
         raw_retryable = (result.error or {}).get("retryable")
         retryable = raw_retryable if isinstance(raw_retryable, bool) else None
         store.call_ledger.set_status(call.call_id, CallStatus.FAILED, retryable=retryable)
+        if store.config.demo_speech_polish_enabled:
+            # The tool's own words for what went wrong ("I couldn't reach
+            # SmartThings."), for the failure the user hears
+            # (executor._fail_goal). Hosts put it in `error.message` or, from
+            # a raised exception, `result.error`.
+            message = (result.error or {}).get("message") if isinstance(result.error, dict) else None
+            if not message and isinstance(result.result, dict):
+                message = result.result.get("error")
+            if isinstance(message, str) and message.strip():
+                store.facts.set(
+                    f"error.{call.call_id}",
+                    message.strip(),
+                    FactStatus.COMMITTED,
+                    Provenance(source="tool", event_id=event_id, call_id=call.call_id, step_no=step_no, ts_us=now_us),
+                    rule="results.error_message",
+                )
         if call.kind == StepKind.WRITE:
             effect = store.effect_ledger.by_fingerprint(call.fingerprint)
             if effect is not None and effect.status == EffectStatus.PENDING:

@@ -51,7 +51,31 @@ def unconfirmed_writes(store, goal_id: str) -> list:
     return out
 
 
-def unconfirmed_text(calls: list) -> str:
+NOTHING_PENDING_YES = "There's nothing waiting for a yes right now. What would you like me to do?"
+NOTHING_PENDING_NO = "Okay. Nothing is waiting, so nothing was done."
+
+
+def action_phrase(store, tool: str, args: dict) -> str | None:
+    """"lock the front door": the tool's manifest `label` with its arguments
+    filled in (a leading "the"/"my" in an argument is dropped, the label has
+    its own), first letter lowered. None when the tool declares no label."""
+    spec = store.catalog.get(tool) if store is not None else None
+    if spec is None or not spec.label:
+        return None
+    values = {k: re.sub(r"^(the|my)\s+", "", v.strip(), flags=re.IGNORECASE) if isinstance(v, str) else v
+              for k, v in (args or {}).items()}
+    try:
+        text = spec.label.format(**values)
+    except (KeyError, IndexError, ValueError):
+        return None
+    return text[:1].lower() + text[1:]
+
+
+def unconfirmed_text(calls: list, store=None) -> str:
+    phrases = [action_phrase(store, call.tool, call.args) for call in calls]
+    if all(phrases):
+        return ("I sent the command to " + "; ".join(phrases)
+                + ", but I couldn't confirm it went through — please check the device before relying on it.")
     parts = []
     for call in calls:
         values = ", ".join(str(v) for v in call.args.values())

@@ -57,6 +57,9 @@ Environment:
                           speech mutes the user's audio to speech-to-text (default off in
                           fdb mode, LiveKit's 3.0 in demo mode; 0 = off; see
                           adapters/voice_settings.py)
+  JANUS_ST_CONFIRM_WAITS  demo mode: seconds between SmartThings read-backs after a command, comma-
+                          separated (default 0.5,1,2,4: about 10 s of silence before an honest
+                          "couldn't confirm"; virtual devices confirm within about a second)
   JANUS_WORLD_POLL_S      demo mode: seconds between reads of the device a held write targets, while
                           Janus waits for the user's yes (adapters/world_watch.py; default 10, 0 = off)
   JANUS_DRILLS            1 = demo mode only: accept failure drills from the companion app on the
@@ -234,7 +237,9 @@ def demo_toolset() -> Toolset:
         backend = make_backend()
         if drills is not None:
             backend = DrilledBackend(backend, drills)
-        st = SmartThingsToolset(backend, on_device_state=on_device_state)
+        waits = os.environ.get("JANUS_ST_CONFIRM_WAITS", "").strip()
+        st = SmartThingsToolset(backend, on_device_state=on_device_state,
+                                **({"waits": tuple(float(w) for w in waits.split(","))} if waits else {}))
         care = DeviceCareToolset(on_device_state=on_device_state)
         _manifest, execute = combine(care, st)
 

@@ -133,7 +133,7 @@ def test_lock_and_corrected_setpoint_tell_the_whole_story():
     planned = of(events, "call_planned")
     assert {p["tool"] for p in planned} == {"st_lock", "st_set_cooling_setpoint"}
     lock = next(p for p in planned if p["tool"] == "st_lock")
-    assert lock["label"] == "Lock front door" and lock["kind"] == "write" and lock["security"] is False
+    assert lock["label"] == "Lock the front door" and lock["kind"] == "write" and lock["security"] is False
     sent = of(events, "call_sent")
     assert {e["call_id"] for e in sent} == {p["call_id"] for p in planned}
     results = {e["call_id"]: e for e in of(events, "call_result")}

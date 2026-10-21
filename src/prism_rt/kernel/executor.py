@@ -30,6 +30,7 @@ from prism_rt.kernel.action_plans import (
 )
 from prism_rt.kernel.proposals import plain_slot_name
 from prism_rt.kernel.interpret_apply import active_goal_id
+from prism_rt.kernel import replies
 from prism_rt.kernel.replies import duplicate_write_text
 from prism_rt.model.actions import CancelBody, IntendedAction
 from prism_rt.model.types import (
@@ -141,6 +142,24 @@ def _fingerprint(store, tool: str, args: dict, goal_id: str | None = None) -> st
         # within the same request is still the same write (G5).
         filled = {**filled, "__request": goal_id}
     return fingerprint_for(tool, filled)
+
+
+def _spoken_write_failure(store, call) -> str | None:
+    """Config.demo_speech_polish_enabled: a failed write said in the tool's own
+    words plus what did not happen ("I couldn't reach SmartThings. So I
+    couldn't lock the front door."). None (the generic wording) when the tool
+    gave no message or declares no label."""
+    if not store.config.demo_speech_polish_enabled:
+        return None
+    fact = store.facts.get(f"error.{call.call_id}")
+    message = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
+    action = replies.action_phrase(store, call.tool, call.args)
+    if not message or not action:
+        return None
+    message = message.strip()
+    if message[-1] not in ".!?":
+        message += "."
+    return f"{message} So I couldn't {action}."
 
 
 class PlanExecutor:
@@ -305,6 +324,7 @@ class PlanExecutor:
                         self._fail_goal(
                             store, gid, step, now_us, step_no,
                             reason=f"{step.tool} failed and can't be safely retried",
+                            spoken=_spoken_write_failure(store, latest),
                         )
                         continue
                     max_retries = store.config.max_write_retries
@@ -1102,7 +1122,8 @@ class PlanExecutor:
         )
         return True
 
-    def _fail_goal(self, store, goal_id: str, step, now_us: int, step_no: int, *, reason: str | None = None) -> None:
+    def _fail_goal(self, store, goal_id: str, step, now_us: int, step_no: int, *, reason: str | None = None,
+                   spoken: str | None = None) -> None:
         """A step that can never complete is a genuine task failure, not
         a completion — `goal.status` must become `ABANDONED` (not left
         `ACTIVE`) so `FastResponder._final`'s existing `task_completed =
@@ -1125,7 +1146,7 @@ class PlanExecutor:
         if self._fail_step_only(store, goal_id, step, now_us, step_no, reason):
             return
         store.goals.update(goal_id, status=GoalStatus.ABANDONED, task_state=TaskState.RESPONDING)
-        text = f"I couldn't complete this — {reason}." if reason else f"I couldn't complete this — {step.tool} kept failing."
+        text = spoken or (f"I couldn't complete this — {reason}." if reason else f"I couldn't complete this — {step.tool} kept failing.")
         store.facts.set(
             f"compose.{goal_id}.text",
             text,

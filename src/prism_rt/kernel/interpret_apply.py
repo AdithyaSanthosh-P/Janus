@@ -588,6 +588,13 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             # repro of the identical input returned `slot_update` on 2 of
             # 4 attempts and `new_goal` on the other 2, so this is real
             # response variance, not a one-off.
+            if txn.store.config.demo_speech_polish_enabled and interp.act in (InterpretAct.CONFIRM, InterpretAct.DENY):
+                # A "yes" or "no" with nothing waiting for one (found live, 21
+                # Oct: a bare "Yes." after a withdrawn unlock got "didn't
+                # quite catch that").
+                text = replies.NOTHING_PENDING_YES if interp.act == InterpretAct.CONFIRM else replies.NOTHING_PENDING_NO
+                replies.set_honest_reply(txn, interp.turn_id, text, now_us, step_no, event_id=event_id)
+                return None
             _flag_unclear_no_goal(txn, interp.turn_id, now_us, step_no, event_id=event_id)
             return None
         goal = txn.store.goals.get(gid)

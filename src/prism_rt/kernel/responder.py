@@ -393,7 +393,8 @@ class FastResponder:
         unconfirmed = unconfirmed_writes(store, goal.goal_id)
         if unconfirmed and not is_watchdog_salvage:
             ran = done_summary(store, goal.goal_id)  # the writes that did confirm, if any
-            text = f"{ran} {unconfirmed_text(unconfirmed)}" if ran else unconfirmed_text(unconfirmed)
+            said = unconfirmed_text(unconfirmed, store)
+            text = f"{ran} {said}" if ran else said
             task_completed = False
         elif store.config.final_contradiction_guard_enabled and task_completed and claims_failure(text):
             # The mirror case: every write went through, and the composer

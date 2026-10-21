@@ -227,6 +227,13 @@ class Config:
     # whenever the composed text claims a failure (replies.claims_failure).
     # The mirror of the unconfirmed-write rule in responder._final.
     final_contradiction_guard_enabled: bool = False
+    # Demo speech polish (21 Oct live runs): a failed write is reported in the
+    # tool's own words ("I couldn't reach SmartThings. So I couldn't lock the
+    # front door." instead of "st_lock failed and can't be safely retried");
+    # a "yes" or "no" with nothing waiting for one gets a plain answer instead
+    # of "didn't quite catch that". Action phrases come from the manifest's
+    # `label` (replies.action_phrase), which only the demo packs declare.
+    demo_speech_polish_enabled: bool = False
     # How long the Q6a re-ask waits after the unclear turn was interpreted,
     # and it is dropped if the user has started another turn by then. Found
     # live (2026-09-27): a hesitant opener ("Um so uh...") followed by a
