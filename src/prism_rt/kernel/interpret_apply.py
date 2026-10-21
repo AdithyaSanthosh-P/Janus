@@ -17,6 +17,8 @@ structural change, not currently executing) still replans.
 
 from __future__ import annotations
 
+import re
+
 import dataclasses
 
 from prism_rt.canonical import canonicalize_spoken_id  # re-exported: tests and reducers import it from here
@@ -389,6 +391,13 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
     pending = txn.facts.get(_PENDING)
     if _active(pending) and pending.value == interp.turn_id:
         txn.facts.retract(_PENDING, rule="interpret_apply.consumed")
+
+    if _answers_with_recap(interp, txn.store):
+        # Demo (survey H4): "What did you do?" answered from the ledger, word
+        # for word, whatever the model made of the question (a live run took
+        # "What did you do this morning?" for small talk).
+        replies.set_honest_reply(txn, interp.turn_id, replies.session_recap_text(txn.store), now_us, step_no, event_id=event_id)
+        return active_goal_id(txn.store)
 
     if interp.act == InterpretAct.ABORT:
         gid = active_goal_id(txn.store)
@@ -837,3 +846,28 @@ def _redo_last_goal(txn: StoreTxn, interp: TurnInterpretation) -> TurnInterpreta
 def _awaiting_confirmation(store, goal_id: str) -> bool:
     fact = store.facts.get(f"goal.{goal_id}.awaiting_confirmation")
     return _active(fact) and bool(fact.value)
+
+
+_RECAP_QUESTION = re.compile(
+    r"\bwhat\s+(did|didn'?t|did\s+not|have|haven'?t|has)\s+(you|janus)\s+(do|done|send|sent)\b"
+    r"|\bwhat\s+happened\b|\bdid\s+you\s+(send|do)\s+anything\b",
+    re.IGNORECASE,
+)
+
+
+def _answers_with_recap(interp: TurnInterpretation, store) -> bool:
+    """Demo speech polish with the `session_recap` tool in the manifest: a turn
+    with no actions of its own that asks what Janus did or did not do -- the
+    model's own status question, or the literal question filed as small talk
+    -- while no request is running."""
+    if not store.config.demo_speech_polish_enabled or store.catalog.get("session_recap") is None:
+        return False
+    if interp.actions or active_goal_id(store) is not None:
+        return False
+    if interp.status_question:
+        return True
+    if interp.act not in (InterpretAct.SMALLTALK, InterpretAct.UNCLEAR, InterpretAct.BACKCHANNEL, InterpretAct.NEW_GOAL):
+        return False
+    turn = store.turn_log.get(interp.turn_id)
+    text = " ".join(chunk.text for chunk in turn.chunks) if turn is not None else ""
+    return bool(_RECAP_QUESTION.search(text))

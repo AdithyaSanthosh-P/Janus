@@ -41,6 +41,9 @@ def setup(stuck=()):
     holder: dict = {}
     recap = RecapToolset(lambda: holder["h"].store).make_executor()
     provider = ScriptedProvider()
+    provider.register("interpret", "this morning", {"act": "smalltalk", "slot_deltas": []})
+    provider.register("interpret", "what didn't you do", {"act": "smalltalk", "slot_deltas": [], "status_question": True})
+    provider.register("interpret", "hello there", {"act": "smalltalk", "slot_deltas": []})
     provider.register("interpret", "what did you do", RECAP)
     provider.register("interpret", "lock the front", LOCK)
     provider.register("interpret", "switch on", {"act": "new_goal", "intent": "st_switch", "slot_deltas": [], "commit_intent": True,
@@ -91,3 +94,21 @@ def test_an_unconfirmed_command_is_never_listed_as_done():
     say(h, 100_000, "switch on", 20_000_000)
     actions = say(h, 20_100_000, "what did you do", 24_000_000)
     assert finals(actions) == ["Sent but not confirmed: turn the switch on."]
+
+
+def spoken(actions):
+    return [a.body.text for a in actions if a.action_type in (ActionType.SPEAK, ActionType.FINAL) and getattr(a.body, "text", None)]
+
+
+def test_the_question_filed_as_small_talk_or_as_a_status_question_still_gets_the_recap():
+    h, _ = setup()
+    say(h, 100_000, "lock the front door", 5_000_000)
+    first = spoken(say(h, 5_100_000, "what did you do this morning", 8_000_000))
+    second = spoken(say(h, 8_100_000, "and what didn't you do", 11_000_000))
+    assert first == ["Done: lock the front door."] and second == ["Done: lock the front door."]
+
+
+def test_a_greeting_stays_small_talk():
+    h, _ = setup()
+    lines = spoken(say(h, 100_000, "hello there", 3_000_000))
+    assert not any(t.startswith(("Done", "Nothing yet")) for t in lines)
