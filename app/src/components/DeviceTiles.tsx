@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { DeviceCard } from './DeviceCard';
-import { DeviceStateData } from '../types/janus';
+import { BackendType, DeviceStateData } from '../types/janus';
 import { AppLayoutTransition } from '../theme/motion';
 
 /**
@@ -15,9 +15,10 @@ import { AppLayoutTransition } from '../theme/motion';
 interface DeviceTilesProps {
   devices: Record<string, DeviceStateData>;
   isDark: boolean;
+  backend?: BackendType;
 }
 
-export const DeviceTiles: React.FC<DeviceTilesProps> = ({ devices, isDark }) => {
+export const DeviceTiles: React.FC<DeviceTilesProps> = ({ devices, isDark, backend = 'unknown' }) => {
   const deviceList: DeviceStateData[] = Object.values(devices);
 
   return (
@@ -48,7 +49,7 @@ export const DeviceTiles: React.FC<DeviceTilesProps> = ({ devices, isDark }) => 
             color: isDark ? '#71717a' : '#94a3b8',
           }}
         >
-          SmartThings Connected
+          {backend === 'real' ? 'SmartThings cloud' : backend === 'mock' ? 'Simulated devices' : 'Not connected'}
         </Text>
       </View>
 

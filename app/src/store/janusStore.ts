@@ -70,7 +70,7 @@ export const INITIAL_DEVICES: Record<string, DeviceStateData> = {
 };
 
 export const INITIAL_STATE: JanusState = {
-  backend: 'real',
+  backend: 'unknown',
   packs: ['smartthings', 'device_care'],
   userSpeaking: false,
   captions: [],

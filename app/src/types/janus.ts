@@ -20,7 +20,8 @@ export type EventType =
   | 'goal_finished'
   | 'ledger_summary';
 
-export type BackendType = 'real' | 'mock';
+// 'unknown' until the agent's session_started says which backend it uses.
+export type BackendType = 'real' | 'mock' | 'unknown';
 
 export type AgentSaidKind = 'filler' | 'ack' | 'clarify' | 'inform' | 'final';
 

@@ -94,6 +94,20 @@ export const Header: React.FC<HeaderProps> = ({
       ? 'Connecting...'
       : 'Offline';
 
+  // Never claim a backend the app hasn't been told about: "Not connected"
+  // until the agent's session_started, and a recording is labelled as one.
+  const green = { bg: isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5', border: isDark ? 'rgba(16, 185, 129, 0.3)' : '#a7f3d0', color: '#10b981' };
+  const amber = { bg: isDark ? 'rgba(245, 158, 11, 0.15)' : '#fffbeb', border: isDark ? 'rgba(245, 158, 11, 0.3)' : '#fde68a', color: '#f59e0b' };
+  const grey = { bg: isDark ? '#27272a' : '#f1f5f9', border: isDark ? '#3f3f46' : '#e2e8f0', color: isDark ? '#a1a1aa' : '#64748b' };
+  const badge =
+    connectionStatus === 'demo'
+      ? { ...grey, text: 'DEMO FILE · Recorded' }
+      : backend === 'real'
+      ? { ...green, text: 'REAL · SmartThings Cloud' }
+      : backend === 'mock'
+      ? { ...amber, text: 'MOCK · Simulated' }
+      : { ...grey, text: 'Not connected' };
+
   return (
     <View
       style={{
@@ -134,23 +148,9 @@ export const Header: React.FC<HeaderProps> = ({
               paddingHorizontal: 8,
               paddingVertical: 3,
               borderRadius: 12,
-              backgroundColor:
-                backend === 'real'
-                  ? isDark
-                    ? 'rgba(16, 185, 129, 0.15)'
-                    : '#ecfdf5'
-                  : isDark
-                  ? 'rgba(245, 158, 11, 0.15)'
-                  : '#fffbeb',
+              backgroundColor: badge.bg,
               borderWidth: 1,
-              borderColor:
-                backend === 'real'
-                  ? isDark
-                    ? 'rgba(16, 185, 129, 0.3)'
-                    : '#a7f3d0'
-                  : isDark
-                  ? 'rgba(245, 158, 11, 0.3)'
-                  : '#fde68a',
+              borderColor: badge.border,
             }}
           >
             <Text
@@ -159,12 +159,10 @@ export const Header: React.FC<HeaderProps> = ({
                 fontWeight: '700',
                 textTransform: 'uppercase',
                 letterSpacing: 0.5,
-                color: backend === 'real' ? '#10b981' : '#f59e0b',
+                color: badge.color,
               }}
             >
-              {backend === 'real'
-                ? 'REAL · SmartThings Cloud'
-                : 'MOCK · Simulated'}
+              {badge.text}
             </Text>
           </TouchableOpacity>
 
