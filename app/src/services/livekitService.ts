@@ -97,13 +97,14 @@ export class LiveKitService {
         }
       });
 
-      // Track subscribed: play agent audio track
-      this.room.on(RoomEvent.TrackSubscribed, (track: any, publication: any, participant: any) => {
+      // Track subscribed: on a phone the WebRTC layer plays remote audio by
+      // itself. Calling track.attach() here creates an <audio> element through
+      // `document`, which does not exist in React Native; when the agent is
+      // already in the room the call runs inside connect() and fails the join
+      // ("Property 'document' doesn't exist").
+      this.room.on(RoomEvent.TrackSubscribed, (track: any, _publication: any, participant: any) => {
         if (track.kind === 'audio') {
           console.log('[LiveKitService] Subscribed to agent audio track from:', participant.identity);
-          if (typeof track.attach === 'function') {
-            track.attach();
-          }
         }
       });
 
