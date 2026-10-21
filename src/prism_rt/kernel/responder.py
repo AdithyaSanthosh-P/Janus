@@ -86,6 +86,10 @@ _RECONCILE_TEMPLATES = {
 }
 
 
+def _join_phrases(phrases: list) -> str:
+    return phrases[0] if len(phrases) == 1 else ", ".join(phrases[:-1]) + " and " + phrases[-1]
+
+
 def _same_args(offered, args) -> bool:
     """An offer's arguments against the held call's, as the user would hear
     them: case, spacing and a leading "the"/"my" ignored."""
@@ -231,6 +235,13 @@ class FastResponder:
                 break
         grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
         text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
+        if store.config.demo_speech_polish_enabled and self._ack_outdated(store, goal_id):
+            # Found live (22 Oct): "22... actually, 21" -- the acknowledgement,
+            # held while the user spoke, went out after the 22 call was already
+            # withdrawn and still said "I'll set ... 22". Say what is pending now.
+            phrases = [action_phrase(store, c.tool, c.args) for c in store.call_ledger.proposed()
+                       if c.goal_id == goal_id and c.kind == StepKind.WRITE]
+            text = f"I'll {_join_phrases(phrases)}." if phrases and all(phrases) else ACK_DEFAULT
         goal = store.goals.get(goal_id)
         if (
             text == ACK_DEFAULT and store.config.no_generic_ack_before_question
@@ -248,6 +259,15 @@ class FastResponder:
                 rule_id="responder.ack",
             )
         ]
+
+    @staticmethod
+    def _ack_outdated(store, goal_id: str) -> bool:
+        """Whether a write of this request was withdrawn before it was ever
+        sent (a correction landed before the acknowledgement could be said):
+        the interpreter's ack phrase then names a value that no longer holds."""
+        gone = (CallStatus.CANCELLED, CallStatus.INVALIDATED, CallStatus.STALE, CallStatus.DISCARDED)
+        return any(c.goal_id == goal_id and c.kind == StepKind.WRITE and c.emitted_ts_us is None and c.status in gone
+                   for c in store.call_ledger.all())
 
     def _echo_ack_text(self, store, goal_id: str) -> str | None:
         """Q7 (win_plan §6.2): the Interpreter's own `ack_phrase`, when the

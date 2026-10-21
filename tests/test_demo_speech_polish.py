@@ -27,7 +27,7 @@ async def _no_sleep(_s):
     return None
 
 
-def session(tools_override=None, config=None, mock=None, extra=()):
+def session(tools_override=None, config=None, mock=None, extra=(), latency=None):
     mock = mock or MockSmartThings()
     execute = SmartThingsToolset(mock, sleep=_no_sleep).make_executor()
     provider = ScriptedProvider()
@@ -38,7 +38,7 @@ def session(tools_override=None, config=None, mock=None, extra=()):
     tools = {m["name"]: {"latency_ms": 200, "handler": (lambda args, n=m["name"]: asyncio.run(execute(n, args)))}
              for m in MANIFEST}
     tools.update(tools_override or {})
-    h = SimHarness(config or demo_config(), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h = SimHarness(config or demo_config(), seed=1, provider=provider, tools=tools, worker_latency_us=latency or FAST)
     h.send(0, [manifest_event(MANIFEST)])
     return h, mock
 
@@ -157,4 +157,30 @@ def test_asking_again_for_what_janus_already_did_says_it_was_not_sent_twice():
     finals = [a for a in second if a.action_type == ActionType.FINAL]
     assert spoken(finals) == ["The front door was already locked: I did that earlier, so I didn't send it again."]
     assert len([c for c in mock.commands if c[2] == "lock"]) == 1
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_an_acknowledgement_held_over_a_correction_names_the_corrected_value():
+    """Found live (22 Oct): "Set the thermostat to twenty-two." -- the user
+    keeps talking -- "Actually, make it twenty-one." The acknowledgement for
+    22 was held while the user spoke and went out after the 22 call had been
+    withdrawn, still saying 22. It now names what is pending (21); 22 is
+    never said, never sent."""
+    to22 = {"act": "new_goal", "intent": "st_set_cooling_setpoint", "slot_deltas": [], "commit_intent": True,
+            "ack_phrase": "I'll set the thermostat to 22 degrees.",
+            "actions": [{"tool": "st_set_cooling_setpoint", "args": {"device": "thermostat", "celsius": 22}}]}
+    to21 = {"act": "slot_update", "slot_deltas": [{"name": "celsius", "scope": "goal", "op": "set", "value": 21}]}
+    h, mock = session(extra=[("make it twenty-one", to21), ("twenty-two", to22)],
+                      latency={**FAST, JobKind.INTERPRET: 600_000})  # live: the model answers while the user talks on
+    out = [er.action for er in h.send(100_000, [chunk_event("set the thermostat to twenty-two")]).emit_report.emitted]
+    out += [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted]
+    out += [er.action for er in h.send(160_000, [{"type": "user_speech", "payload": {"active": True}}]).emit_report.emitted]
+    out += drain(h, 1_500_000, stop_on_final=False)  # 22 is interpreted and planned while the user is still talking
+    out += [er.action for er in h.send(1_600_000, [chunk_event("actually make it twenty-one")]).emit_report.emitted]
+    out += [er.action for er in h.send(1_700_000, [{"type": "user_speech", "payload": {"active": False}}]).emit_report.emitted]
+    out += [er.action for er in h.send(1_750_000, [eot_event()]).emit_report.emitted]
+    out += drain(h, 8_000_000, stop_on_final=False)
+    lines = spoken(out)
+    assert not any("22" in t for t in lines), lines
+    assert [c[3] for c in mock.commands if c[2] == "setCoolingSetpoint"] == [[21]]
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
