@@ -11,9 +11,10 @@ import {
   RotateCcw,
   DoorOpen,
   Warehouse,
+  WashingMachine,
 } from 'lucide-react-native';
 import { drillService } from '../services/drillService';
-import { DrillState } from '../utils/drillBuilder';
+import { DrillState, OfferKind } from '../utils/drillBuilder';
 import { tokens, Tone } from '../theme/colors';
 import { type } from '../theme/type';
 import { Press } from './primitives';
@@ -57,7 +58,7 @@ export const DrillDrawer: React.FC<DrillDrawerProps> = ({
     return drillService.sendGarage(command);
   };
 
-  const handleOffer = (kind: 'garage_open' | 'door_unlocked') => {
+  const handleOffer = (kind: OfferKind) => {
     return drillService.sendOffer(kind);
   };
 
@@ -91,6 +92,7 @@ export const DrillDrawer: React.FC<DrillDrawerProps> = ({
     [
       { title: 'Offer: close the garage', onPress: () => handleOffer('garage_open'), Glyph: Warehouse },
       { title: 'Offer: lock the front door', onPress: () => handleOffer('door_unlocked'), Glyph: Lock },
+      { title: 'Offer: book a technician (washer fault)', onPress: () => handleOffer('washer_error'), Glyph: WashingMachine },
     ],
   ];
 

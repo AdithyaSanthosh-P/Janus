@@ -95,7 +95,7 @@ export function buildGaragePacket(command: 'open' | 'close'): DrillPacket {
 
 // Janus speaks first with an offer, if the devices give it something to offer
 // (app/INTEGRATION.md section 6).
-export type OfferKind = 'garage_open' | 'door_unlocked';
+export type OfferKind = 'garage_open' | 'door_unlocked' | 'washer_error';
 
 export function buildOfferPacket(kind: OfferKind): DrillPacket {
   return buildDrillPacket('offer', true, { kind });
