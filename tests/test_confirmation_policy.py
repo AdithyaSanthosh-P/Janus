@@ -137,3 +137,27 @@ def test_fdb_profile_leaves_the_policy_off():
 
     assert fdb_v3_config().confirmation_policy_enabled is False
     assert demo_config().confirmation_policy_enabled is True
+
+
+def test_a_yes_that_changes_the_argument_is_not_a_yes_to_the_old_one():
+    """H2: "Yes... the back door, I mean." The yes and the change arrive in one
+    turn. The grant names the call that was asked about (front door), which the
+    change withdraws unsent; the back door is a new call and is asked again."""
+    both = {"act": "confirm", "slot_deltas": [{"name": "device", "scope": "goal", "op": "set", "value": "back door"}]}
+    h, actions = start(config(), new_goal("st_unlock", "front door"), extra={"i mean": both})
+    actions = say(h, 3_100_000, "yes the back door i mean", 6_000_000)
+    assert calls(actions) == []
+    assert any("back door" in t and "security action" in t for t in speaks(actions))
+    actions = say(h, 6_100_000, "yes please", 10_000_000)
+    assert calls(actions) == [("st_unlock", {"device": "back door"})]
+    assert_clean(h)
+
+
+def test_a_yes_for_the_same_argument_restated_still_counts():
+    """The yes restating the same value ("yes, the front door") is no change:
+    it releases the call that was asked about, once."""
+    same = {"act": "confirm", "slot_deltas": [{"name": "device", "scope": "goal", "op": "set", "value": "front door"}]}
+    h, actions = start(config(), new_goal("st_unlock", "front door"), extra={"yes the front": same})
+    actions = say(h, 3_100_000, "yes the front door", 8_000_000)
+    assert calls(actions) == [("st_unlock", {"device": "front door"})]
+    assert_clean(h)
