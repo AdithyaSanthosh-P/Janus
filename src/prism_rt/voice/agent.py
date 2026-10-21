@@ -46,6 +46,9 @@ Environment:
                           turn closes, and drop the kernel's generic ACK that follows
                           (default on in demo mode, off in fdb mode; the repro scripts set it)
   JANUS_FILLER_TEXT       the filler phrase (default "Okay, one moment.")
+  JANUS_FILLER_MIN_WORDS  words a closed turn needs before the filler plays (default 1 in demo mode,
+                          3 in fdb mode). In demo mode a bare "Yes." to an offer or a question is
+                          followed by the write itself and its answer, about 7 s of silence without it
   JANUS_FILLER_PROTECTED  1 = the filler cannot be interrupted (default on in demo mode, off in fdb
                           mode). LiveKit interrupts the current speech when its own end-of-turn
                           handling runs (agent_activity._user_turn_completed_impl), which races the
@@ -221,6 +224,7 @@ FILLER_ENABLED = _flag_env("JANUS_FILLER", MODE == "demo")
 FILLER_TEXT = os.environ.get("JANUS_FILLER_TEXT") or "Okay, one moment."
 TTS_CHUNKED = _flag_env("JANUS_TTS_CHUNKED", MODE == "demo")
 FILLER_PROTECTED = _flag_env("JANUS_FILLER_PROTECTED", MODE == "demo")
+FILLER_MIN_WORDS = _int_env("JANUS_FILLER_MIN_WORDS", 1 if MODE == "demo" else 3)
 AEC_WARMUP_S = aec_warmup_duration(MODE, os.environ.get("JANUS_AEC_WARMUP_S"))
 DRILLS_ENABLED = MODE == "demo" and os.environ.get("JANUS_DRILLS") == "1"
 
@@ -441,6 +445,7 @@ async def entrypoint(ctx: JobContext) -> None:
         report_user_activity=True,
         stop_speaking=stop_speaking,
         play_filler=play_filler if FILLER_ENABLED else None,
+        filler_min_words=FILLER_MIN_WORDS,
         generic_ack_texts=(ACK_DEFAULT,),
     )
     world_sink["fn"] = bridge.on_world_fact
