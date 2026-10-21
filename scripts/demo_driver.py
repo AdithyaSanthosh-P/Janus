@@ -31,7 +31,8 @@ FRAME_MS = 20
 
 # A step is ("say", text) | ("pause", seconds) | ("settle", max_seconds) |
 # ("drill", name, on, args) | ("note", text).  `settle` waits until the agent
-# has been quiet (no event, no sound) for a few seconds.
+# has been quiet (no event, no sound) for `quiet` seconds (default 5; a read-back
+# or a delayed model is silent for longer, so those scenarios say 15).
 SCENARIOS: dict[str, list[tuple]] = {
     "correction": [
         ("note", "a correction: only the corrected value may reach the device"),
@@ -58,7 +59,7 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("note", "a device that never confirms"),
         ("drill", "st_no_confirm", True, {}),
         ("say", "Turn off the switch."),
-        ("settle", 45),
+        ("settle", 60, 15),
         ("drill", "reset", True, {}),
     ],
     "unreachable": [
@@ -73,7 +74,7 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("drill", "model_down", True, {}),
         ("pause", 1.0),
         ("say", "Turn on the switch."),
-        ("settle", 40),
+        ("settle", 40, 12),
         ("drill", "reset", True, {}),
     ],
     "slowmodel": [
@@ -81,7 +82,7 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("drill", "model_slow", True, {"ms": 4000}),
         ("pause", 1.0),
         ("say", "Turn on the switch."),
-        ("settle", 45),
+        ("settle", 60, 15),
         ("drill", "reset", True, {}),
     ],
     "status": [
@@ -199,7 +200,7 @@ class Driver:
             elif op == "pause":
                 await asyncio.sleep(step[1])
             elif op == "settle":
-                await self.settle(step[1])
+                await self.settle(step[1], step[2] if len(step) > 2 else 5.0)
             elif op == "drill":
                 await self.drill(step[1], step[2], step[3])
             elif op == "note":
