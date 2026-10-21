@@ -83,6 +83,9 @@ class ToolSpec:
     label: str | None = None
     # Spoken after the device's new state ("21" -> "21 degrees"); manifest.
     state_unit: str | None = None
+    # The final for a request made only of such tools is the result's `say`
+    # text, word for word (demo speech polish; replies.said_result_final).
+    say_result: bool = False
 
 
 @dataclass(frozen=True)
@@ -189,6 +192,7 @@ class ToolCatalog:
             done_when=raw.get("done_when") if isinstance(raw.get("done_when"), str) else None,
             label=raw.get("label") if isinstance(raw.get("label"), str) and raw.get("label") else None,
             state_unit=raw.get("state_unit") if isinstance(raw.get("state_unit"), str) else None,
+            say_result=raw.get("say_result") is True,
         )
 
     def get(self, name: str) -> ToolSpec | None:

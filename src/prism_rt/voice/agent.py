@@ -111,6 +111,7 @@ from prism_rt.entry import setup
 from prism_rt.observability.effects import effect_summary, format_effect_summary
 from prism_rt.observability.xray import TracedQueue
 from prism_rt.profiles import demo_config, fdb_v3_config
+from prism_rt.recap import RecapToolset
 from prism_rt.voice.camera import FrameStore, pump_video_track
 from config.templates import ACK_DEFAULT, EVIDENCE_REASK, EVIDENCE_WITHDRAWN
 from prism_rt.voice.speech import (
@@ -255,7 +256,9 @@ def demo_toolset() -> Toolset:
         st = SmartThingsToolset(backend, on_device_state=on_device_state,
                                 **({"waits": tuple(float(w) for w in waits.split(","))} if waits else {}))
         care = DeviceCareToolset(on_device_state=on_device_state)
-        _manifest, execute = combine(care, st)
+        recap = RecapToolset()  # its store getter is set once the kernel session exists
+        _manifest, execute = combine(care, st, recap)
+        execute.recap = recap
 
         async def snapshot_states() -> None:  # the app's initial device tiles
             await care.snapshot_states()
@@ -276,9 +279,10 @@ def demo_toolset() -> Toolset:
         return execute
 
     from prism_rt.devicecare.tools import MANIFEST as CARE_MANIFEST
+    from prism_rt.recap import MANIFEST as RECAP_MANIFEST
     from prism_rt.smartthings.tools import MANIFEST as ST_MANIFEST
 
-    return Toolset(manifest=[*CARE_MANIFEST, *ST_MANIFEST], make_executor=make_executor)
+    return Toolset(manifest=[*CARE_MANIFEST, *ST_MANIFEST, *RECAP_MANIFEST], make_executor=make_executor)
 
 
 # One model set per worker process. Under the default PROCESS executor each
@@ -514,6 +518,8 @@ async def entrypoint(ctx: JobContext) -> None:
     held: dict = {}
     if MODE == "demo":
         meta["on_session"] = lambda store: held.update(store=store)
+        if getattr(executor, "recap", None) is not None:
+            executor.recap.store_getter = lambda: held.get("store")
         meta["on_step"] = lambda report: feed.on_step(report, held["store"]) if "store" in held else None
         state_sink["fn"] = feed.device_state
     if log_dir:

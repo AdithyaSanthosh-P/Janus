@@ -57,6 +57,7 @@ from prism_rt.kernel.replies import (
     device_write_final,
     done_summary,
     duplicate_write_text,
+    said_result_final,
     unconfirmed_text,
     unconfirmed_writes,
 )
@@ -416,6 +417,9 @@ class FastResponder:
         elif store.config.demo_speech_polish_enabled and task_completed and not is_watchdog_salvage \
                 and (built := device_write_final(store, goal.goal_id)) is not None:
             text = built  # device commands, all confirmed: said from the results, not the composer
+        elif store.config.demo_speech_polish_enabled and task_completed and not is_watchdog_salvage \
+                and (built := said_result_final(store, goal.goal_id)) is not None:
+            text = built  # a say_result tool (the recap): its own words, not the composer's
         elif store.config.final_contradiction_guard_enabled and task_completed and claims_failure(text):
             # The mirror case: every write went through, and the composer
             # still said it failed. What ran is said instead.

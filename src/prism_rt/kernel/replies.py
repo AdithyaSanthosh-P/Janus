@@ -365,3 +365,84 @@ def no_second_write_text(calls) -> str:
         f"That's already done — {write_summary(calls)} went through. I can't change it from here, "
         "and I won't make a second one."
     )
+
+_RECAP_TOOL = "session_recap"
+_NEVER_SENT = {CallStatus.CANCELLED, CallStatus.INVALIDATED, CallStatus.STALE, CallStatus.DISCARDED}
+
+
+def _recap_phrase(store, call) -> str:
+    phrase = action_phrase(store, call.tool, call.args)
+    if phrase:
+        return phrase
+    values = ", ".join(str(v) for v in call.args.values())
+    return f"{_human(call.tool)} ({values})" if values else _human(call.tool)
+
+
+def _spoken_list(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + ", and " + items[-1]
+
+
+def session_recap_text(store) -> str:
+    """What this conversation did to the world, and what it did not do, from
+    the call and effect ledgers (the `session_recap` demo tool; survey H4):
+    "Done: set the thermostat to 21 degrees. Never sent: set the thermostat to
+    22 degrees, and close the garage. Sent but not confirmed: turn the switch
+    off." Each action is listed once, under its final outcome; an action
+    withdrawn and then done after all counts as done."""
+    groups: dict[str, list[str]] = {"done": [], "already": [], "unconfirmed": [], "failed": [], "never": []}
+    for call in store.call_ledger.all():
+        if call.kind != StepKind.WRITE or call.tool == _RECAP_TOOL:
+            continue
+        phrase = _recap_phrase(store, call)
+        effect = store.effect_ledger.by_fingerprint(call.fingerprint) if call.emitted_ts_us is not None else None
+        fact = store.facts.get(f"result.{call.call_id}")
+        result = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
+        if call.emitted_ts_us is None:
+            if call.status in _NEVER_SENT:
+                groups["never"].append(phrase)
+            continue
+        if effect is None:
+            continue
+        if effect.status == EffectStatus.UNKNOWN:
+            groups["unconfirmed"].append(phrase)
+        elif effect.status == EffectStatus.FAILED or (isinstance(result, dict) and any(result.get(k) is False for k in ("done", "booked", "opened"))):
+            groups["failed"].append(phrase)
+        elif effect.status == EffectStatus.CONFIRMED:
+            groups["already" if isinstance(result, dict) and result.get("already") else "done"].append(phrase)
+    seen: set[str] = set()
+    for key in ("done", "already", "unconfirmed", "failed", "never"):
+        kept = []
+        for phrase in groups[key]:
+            if phrase.lower() not in seen:
+                seen.add(phrase.lower())
+                kept.append(phrase)
+        groups[key] = kept
+    parts = []
+    for key, head in (("done", "Done"), ("already", "Already that way, so not sent again"),
+                      ("unconfirmed", "Sent but not confirmed"), ("failed", "Failed"), ("never", "Never sent")):
+        if groups[key]:
+            parts.append(f"{head}: {_spoken_list(groups[key])}.")
+    if not parts:
+        return "Nothing yet: I haven't sent or held back any action in this conversation."
+    return " ".join(parts)
+
+
+def said_result_final(store, goal_id: str) -> str | None:
+    """Config.demo_speech_polish_enabled: the final for a request that was only
+    tools declared `say_result` (the recap) is their result's `say` text,
+    word for word -- never the composer's paraphrase of it. None otherwise."""
+    plan = store.plans.current(goal_id)
+    if plan is None or not plan.steps:
+        return None
+    texts = []
+    for step in plan.steps:
+        spec = store.catalog.get(step.tool)
+        call = store.call_ledger.latest_by_step(goal_id, step.step_key)
+        if spec is None or not spec.say_result or call is None or call.status != CallStatus.CONSUMED:
+            return None
+        fact = store.facts.get(f"result.{call.call_id}")
+        result = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
+        if not isinstance(result, dict) or not isinstance(result.get("say"), str) or not result["say"].strip():
+            return None
+        texts.append(result["say"].strip())
+    return " ".join(texts)
