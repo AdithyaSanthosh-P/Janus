@@ -182,17 +182,6 @@ export const CaptionsCard: React.FC<CaptionsCardProps> = ({
                   </Text>
 
 
-                  {caption.kind && !isClarify && (
-                    <Text
-                      style={{
-                        fontSize: 9,
-                        fontWeight: '500',
-                        color: isDark ? '#71717a' : '#94a3b8',
-                      }}
-                    >
-                      [{caption.kind}]
-                    </Text>
-                  )}
 
                   {isInterrupted && (
                     <Text

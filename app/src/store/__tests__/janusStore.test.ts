@@ -183,3 +183,12 @@ describe('JanusStore Event Reducer & Validator', () => {
     expect(user.isInterrupted).toBeFalsy();
   });
 });
+
+describe('Card category wording', () => {
+  it('names the area and kind instead of the raw tool', () => {
+    const { cardCategory } = require('../../utils/labels');
+    expect(cardCategory('st_close_garage', 'write')).toBe('SmartThings · Action');
+    expect(cardCategory('st_get_status', 'read')).toBe('SmartThings · Check');
+    expect(cardCategory('lookup_error_code', 'read')).toBe('Device care · Check');
+  });
+});

@@ -24,6 +24,7 @@ import {
   Activity,
 } from 'lucide-react-native';
 import { ActionCardData } from '../types/janus';
+import { cardCategory } from '../utils/labels';
 import {
   CardEntryTransition,
   AppLayoutTransition,
@@ -202,7 +203,7 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
               letterSpacing: 0.5,
             }}
           >
-            {card.tool}
+            {cardCategory(card.tool, card.kind)}
           </Text>
         </View>
 

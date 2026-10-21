@@ -172,43 +172,6 @@ export const Header: React.FC<HeaderProps> = ({
             </Text>
           </TouchableOpacity>
 
-          {/* DRILL ON Badge: Highlighted when any failure injection toggle is active */}
-          {isDrillActive && (
-            <TouchableOpacity
-              onPress={onOpenDrillDrawer}
-              activeOpacity={0.8}
-              style={{
-                paddingHorizontal: 6,
-                paddingVertical: 2,
-                borderRadius: 8,
-                backgroundColor: 'rgba(239, 68, 68, 0.2)',
-                borderWidth: 1,
-                borderColor: '#ef4444',
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-              }}
-            >
-              <View
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: 3,
-                  backgroundColor: '#ef4444',
-                }}
-              />
-              <Text
-                style={{
-                  fontSize: 10,
-                  fontWeight: '800',
-                  color: '#ef4444',
-                  letterSpacing: 0.5,
-                }}
-              >
-                DRILL ON
-              </Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         {/* Quick controls: Connect, Theme Toggle */}
@@ -379,77 +342,120 @@ export const Header: React.FC<HeaderProps> = ({
           </Animated.View>
         </View>
 
-        {/* Right: Demo playback toolbar */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <TouchableOpacity
-            onPress={onToggleDemoPlay}
-            activeOpacity={0.7}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 4,
-              paddingHorizontal: 9,
-              paddingVertical: 5,
-              borderRadius: 7,
-              backgroundColor: demoPlaying ? '#ef4444' : '#10b981',
-            }}
-          >
-            {demoPlaying ? (
-              <Pause size={12} color="#ffffff" fill="#ffffff" />
-            ) : (
-              <Play size={12} color="#ffffff" fill="#ffffff" />
+        {/* Right: demo playback controls (sample-file mode only; they do nothing live),
+            or, live, the DRILL ON pill while any failure drill is on */}
+        {connectionStatus === 'connected' ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {/* DRILL ON Badge: Highlighted when any failure injection toggle is active */}
+            {isDrillActive && (
+              <TouchableOpacity
+                onPress={onOpenDrillDrawer}
+                activeOpacity={0.8}
+                style={{
+                  paddingHorizontal: 6,
+                  paddingVertical: 2,
+                  borderRadius: 8,
+                  backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                  borderWidth: 1,
+                  borderColor: '#ef4444',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+              >
+                <View
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: '#ef4444',
+                  }}
+                />
+                <Text
+                  style={{
+                    fontSize: 10,
+                    fontWeight: '800',
+                    color: '#ef4444',
+                    letterSpacing: 0.5,
+                  }}
+                >
+                  DRILL ON
+                </Text>
+              </TouchableOpacity>
             )}
-            <Text style={{ fontSize: 11, fontWeight: '700', color: '#ffffff' }}>
-              {demoPlaying ? 'Pause' : 'Play Demo'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={onToggleDemoSpeed}
-            activeOpacity={0.7}
-            style={{
-              paddingHorizontal: 7,
-              paddingVertical: 5,
-              borderRadius: 7,
-              backgroundColor: isDark ? '#27272a' : '#e2e8f0',
-            }}
-          >
-            <Text
+          </View>
+        ) : (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <TouchableOpacity
+              onPress={onToggleDemoPlay}
+              activeOpacity={0.7}
               style={{
-                fontSize: 11,
-                fontWeight: '700',
-                color: isDark ? '#fafafa' : '#334155',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 9,
+                paddingVertical: 5,
+                borderRadius: 7,
+                backgroundColor: demoPlaying ? '#ef4444' : '#10b981',
               }}
             >
-              {demoSpeed}x
-            </Text>
-          </TouchableOpacity>
+              {demoPlaying ? (
+                <Pause size={12} color="#ffffff" fill="#ffffff" />
+              ) : (
+                <Play size={12} color="#ffffff" fill="#ffffff" />
+              )}
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#ffffff' }}>
+                {demoPlaying ? 'Pause' : 'Play Demo'}
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={onResetDemo}
-            activeOpacity={0.7}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 4,
-              paddingHorizontal: 7,
-              paddingVertical: 5,
-              borderRadius: 7,
-              backgroundColor: isDark ? '#27272a' : '#e2e8f0',
-            }}
-          >
-            <RotateCcw size={11} color={isDark ? '#fafafa' : '#334155'} />
-            <Text
+            <TouchableOpacity
+              onPress={onToggleDemoSpeed}
+              activeOpacity={0.7}
               style={{
-                fontSize: 11,
-                fontWeight: '700',
-                color: isDark ? '#fafafa' : '#334155',
+                paddingHorizontal: 7,
+                paddingVertical: 5,
+                borderRadius: 7,
+                backgroundColor: isDark ? '#27272a' : '#e2e8f0',
               }}
             >
-              Reset
-            </Text>
-          </TouchableOpacity>
-        </View>
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: '700',
+                  color: isDark ? '#fafafa' : '#334155',
+                }}
+              >
+                {demoSpeed}x
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={onResetDemo}
+              activeOpacity={0.7}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 7,
+                paddingVertical: 5,
+                borderRadius: 7,
+                backgroundColor: isDark ? '#27272a' : '#e2e8f0',
+              }}
+            >
+              <RotateCcw size={11} color={isDark ? '#fafafa' : '#334155'} />
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: '700',
+                  color: isDark ? '#fafafa' : '#334155',
+                }}
+              >
+                Reset
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     </View>
   );
