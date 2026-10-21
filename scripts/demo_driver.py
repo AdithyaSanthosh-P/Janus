@@ -206,11 +206,34 @@ class Driver:
                 self.log(f"-- {step[1]}")
 
 
+async def _ensure_agent(room: rtc.Room, room_name: str, driver: "Driver") -> None:
+    """LiveKit dispatches the agent only when a room is created. A room left
+    over from a previous run still exists, so ask for the agent explicitly if
+    none joined within a few seconds."""
+    for _ in range(40):
+        if any(p.identity.startswith("agent-") for p in room.remote_participants.values()):
+            driver.log("worker is in the room")
+            return
+        await asyncio.sleep(0.25)
+    driver.log("no worker in the room: requesting one")
+    lk = api.LiveKitAPI(os.environ["LIVEKIT_URL"], os.environ["LIVEKIT_API_KEY"], os.environ["LIVEKIT_API_SECRET"])
+    try:
+        await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(agent_name="janus-demo", room=room_name))
+    finally:
+        await lk.aclose()
+    for _ in range(80):
+        if any(p.identity.startswith("agent-") for p in room.remote_participants.values()):
+            driver.log("worker is in the room")
+            return
+        await asyncio.sleep(0.25)
+    raise SystemExit("no worker joined the room; is the demo worker running?")
+
+
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("scenarios", help="comma-separated: " + ", ".join(SCENARIOS))
     ap.add_argument("--room", default=ROOM)
-    ap.add_argument("--join-wait", type=float, default=25.0, help="seconds to let the worker join before speaking")
+    ap.add_argument("--join-wait", type=float, default=8.0, help="seconds to let the worker join before speaking")
     ap.add_argument("--keep-open", type=float, default=0.0, help="seconds to stay in the room afterwards (for the app)")
     args = ap.parse_args()
     _load_env()
@@ -250,7 +273,8 @@ async def main() -> None:
         rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE),
     )
     pump = asyncio.ensure_future(driver.pump())
-    driver.log(f"joined {args.room}; waiting {args.join_wait:.0f}s for the worker")
+    driver.log(f"joined {args.room}; waiting for the worker")
+    await _ensure_agent(room, args.room, driver)
     await asyncio.sleep(args.join_wait)
     try:
         for name in names:
