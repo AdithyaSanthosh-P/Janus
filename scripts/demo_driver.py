@@ -133,6 +133,22 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "Is the front door locked?"),
         ("settle", 30),
     ],
+    "washer_offer_yes": [
+        ("note", "survey B1: Janus offers a technician for the washer's fault; the user accepts"),
+        ("drill", "offer", True, {"kind": "washer_error"}),
+        ("settle", 20),
+        ("say", "Yes, please."),
+        ("settle", 40),
+    ],
+    "washer_offer_fix": [
+        ("note", "survey B1: the user changes the offered visit; Janus asks again about the new slot"),
+        ("drill", "offer", True, {"kind": "washer_error"}),
+        ("settle", 20),
+        ("say", "Make it Friday afternoon."),
+        ("settle", 25),
+        ("say", "Yes."),
+        ("settle", 40),
+    ],
 }
 
 
