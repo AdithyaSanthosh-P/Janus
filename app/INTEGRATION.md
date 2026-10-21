@@ -127,8 +127,9 @@ Transport: a LiveKit data packet, reliable, **topic `janus.control`**, one UTF-8
 | `model_slow` | toggle | `{"ms": 4000}` (default 4000, max 15000) | Every model call is delayed; the filler covers the wait |
 | `model_down` | toggle | — | Every model call fails; the agent says it can't reach its reasoning service and that nothing was done |
 | `external_command` | `true` (one-shot) | `{"device": "Janus Lock", "capability": "lock", "command": "unlock"}` | One command sent straight to SmartThings by "someone else", outside Janus. A later request for the same state is answered "already", nothing sent |
+| `offer` | `true` (one-shot) | `{"kind": "garage_open"}` or `{"kind": "door_unlocked"}` | Janus speaks first with an offer ("The garage is open. Shall I close it?"), only if the device is in a state worth offering about; the offer then shows up as an ordinary planned call waiting for the user's yes. If someone else gets the device there first, the card ends "Never sent" with the reason |
 | `reset` | `true` | — | Every drill off |
 
-`external_command` values for the demo devices: lock `lock`/`unlock` (capability `lock`), garage `open`/`close` (capability `garageDoorControl` in mock mode, `doorControl` on the real virtual device), switch `on`/`off` (capability `switch`).
+`external_command` values for the demo devices: lock `lock`/`unlock` (capability `lock`), garage `open`/`close` (capability `doorControl`; the agent uses whichever garage capability the device has), switch `on`/`off` (capability `switch`).
 
 The app keeps its own toggle state (the agent sends no drill events). Put the drills in a hidden drawer, and send `reset` when the drawer's "all off" is pressed or a new session starts.

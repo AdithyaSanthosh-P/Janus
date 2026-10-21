@@ -7,6 +7,9 @@ import {
   buildModelSlowPacket,
   buildModelDownPacket,
   buildExternalCommandPacket,
+  buildGaragePacket,
+  buildOfferPacket,
+  OfferKind,
   buildResetPacket,
   DrillPacket,
 } from '../utils/drillBuilder';
@@ -98,6 +101,28 @@ export class DrillService {
   /**
    * One-shot command sent by "someone else" outside Janus.
    */
+  /**
+   * One-shot: someone else opens or closes the garage, outside Janus.
+   */
+  public async sendGarage(command: 'open' | 'close'): Promise<boolean> {
+    const sent = await livekitService.sendDrill(buildGaragePacket(command));
+    if (!sent) {
+      console.warn('[DrillService] Garage command not sent:', command);
+    }
+    return sent;
+  }
+
+  /**
+   * One-shot: ask Janus to speak first with an offer.
+   */
+  public async sendOffer(kind: OfferKind): Promise<boolean> {
+    const sent = await livekitService.sendDrill(buildOfferPacket(kind));
+    if (!sent) {
+      console.warn('[DrillService] Offer not sent:', kind);
+    }
+    return sent;
+  }
+
   public async sendExternalCommand(command: 'unlock' | 'lock'): Promise<boolean> {
     const sent = await livekitService.sendDrill(buildExternalCommandPacket(command));
     if (!sent) {

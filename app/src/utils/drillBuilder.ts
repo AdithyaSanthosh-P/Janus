@@ -5,6 +5,7 @@ export type DrillName =
   | 'model_slow'
   | 'model_down'
   | 'external_command'
+  | 'offer'
   | 'reset';
 
 export interface DrillPacket {
@@ -75,7 +76,7 @@ export function buildModelDownPacket(on: boolean): DrillPacket {
 }
 
 export function buildExternalCommandPacket(
-  command: 'unlock' | 'lock',
+  command: 'unlock' | 'lock' | 'open' | 'close',
   device = 'Janus Lock',
   capability = 'lock'
 ): DrillPacket {
@@ -84,6 +85,20 @@ export function buildExternalCommandPacket(
     capability,
     command,
   });
+}
+
+// Someone else opens or closes the garage. The agent maps doorControl to
+// whichever garage capability the device actually has.
+export function buildGaragePacket(command: 'open' | 'close'): DrillPacket {
+  return buildExternalCommandPacket(command, 'Janus Garage', 'doorControl');
+}
+
+// Janus speaks first with an offer, if the devices give it something to offer
+// (app/INTEGRATION.md section 6).
+export type OfferKind = 'garage_open' | 'door_unlocked';
+
+export function buildOfferPacket(kind: OfferKind): DrillPacket {
+  return buildDrillPacket('offer', true, { kind });
 }
 
 export function buildResetPacket(): DrillPacket {

@@ -163,3 +163,20 @@ describe('Drill Message Builder (topic: janus.control)', () => {
     expect(typeof resetPacket.on).toBe('boolean');
   });
 });
+
+describe('Offer and garage packets', () => {
+  it('builds an offer packet the agent accepts', () => {
+    const { buildOfferPacket } = require('../drillBuilder');
+    expect(buildOfferPacket('garage_open')).toEqual({ v: 1, type: 'drill', name: 'offer', on: true, args: { kind: 'garage_open' } });
+    expect(buildOfferPacket('door_unlocked').args).toEqual({ kind: 'door_unlocked' });
+  });
+
+  it('builds garage commands with the doorControl capability', () => {
+    const { buildGaragePacket } = require('../drillBuilder');
+    expect(buildGaragePacket('open')).toEqual({
+      v: 1, type: 'drill', name: 'external_command', on: true,
+      args: { device: 'Janus Garage', capability: 'doorControl', command: 'open' },
+    });
+    expect(buildGaragePacket('close').args.command).toBe('close');
+  });
+});

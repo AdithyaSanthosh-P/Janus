@@ -57,6 +57,14 @@ export const DrillDrawer: React.FC<DrillDrawerProps> = ({
     drillService.sendExternalCommand('lock');
   };
 
+  const handleGarage = (command: 'open' | 'close') => {
+    drillService.sendGarage(command);
+  };
+
+  const handleOffer = (kind: 'garage_open' | 'door_unlocked') => {
+    drillService.sendOffer(kind);
+  };
+
   const handleResetAll = () => {
     drillService.resetAll(true);
   };
@@ -243,6 +251,62 @@ export const DrillDrawer: React.FC<DrillDrawerProps> = ({
                   <Lock size={16} color="#10b981" />
                   <Text style={[styles.cmdBtnText, { color: textColor }]}>
                     …locks it
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => handleGarage('open')}
+                  style={[styles.cmdBtn, { backgroundColor: isDark ? '#27272a' : '#f1f5f9', borderColor }]}
+                  activeOpacity={0.7}
+                >
+                  <LockOpen size={16} color="#f59e0b" />
+                  <Text style={[styles.cmdBtnText, { color: textColor }]}>
+                    Someone else opens the garage
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => handleGarage('close')}
+                  style={[styles.cmdBtn, { backgroundColor: isDark ? '#27272a' : '#f1f5f9', borderColor }]}
+                  activeOpacity={0.7}
+                >
+                  <Lock size={16} color="#10b981" />
+                  <Text style={[styles.cmdBtnText, { color: textColor }]}>
+                    …closes it
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Section: Janus speaks first */}
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, { color: textColor }]}>
+                Janus Speaks First
+              </Text>
+              <Text style={[styles.sectionSubtitle, { color: subTextColor }]}>
+                Janus offers an action only if the device gives it something to offer.
+              </Text>
+
+              <View style={styles.buttonCol}>
+                <TouchableOpacity
+                  onPress={() => handleOffer('garage_open')}
+                  style={[styles.cmdBtn, { backgroundColor: isDark ? '#27272a' : '#f1f5f9', borderColor }]}
+                  activeOpacity={0.7}
+                >
+                  <ShieldAlert size={16} color="#3b82f6" />
+                  <Text style={[styles.cmdBtnText, { color: textColor }]}>
+                    Offer: close the garage
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => handleOffer('door_unlocked')}
+                  style={[styles.cmdBtn, { backgroundColor: isDark ? '#27272a' : '#f1f5f9', borderColor }]}
+                  activeOpacity={0.7}
+                >
+                  <ShieldAlert size={16} color="#3b82f6" />
+                  <Text style={[styles.cmdBtnText, { color: textColor }]}>
+                    Offer: lock the front door
                   </Text>
                 </TouchableOpacity>
               </View>
