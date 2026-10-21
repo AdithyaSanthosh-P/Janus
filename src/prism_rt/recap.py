@@ -17,7 +17,9 @@ MANIFEST: list[dict] = [
     {
         "name": "session_recap",
         "description": "Say what you did and did not do in this conversation: actions done, never sent, sent but not "
-        "confirmed. Use it when the user asks what you did, what you didn't do, or what happened.",
+        "confirmed. A question about what you have done is a request for this tool, never small talk: use it for "
+        "\"What did you do?\", \"What did you do this morning?\", \"What have you done so far?\", \"What didn't you "
+        "do?\", \"What happened?\", \"Did you send anything?\".",
         "mutability": "read_only",
         "say_result": True,
         "params_schema": {"type": "object", "properties": {}, "required": []},
