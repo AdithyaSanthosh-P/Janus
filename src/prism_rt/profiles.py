@@ -94,10 +94,11 @@ def fdb_v3_config(**overrides) -> Config:
     - vad_floor_enabled: the voice host's `user_speech` reports hold calls and
       speech while the user is speaking or their words are still being
       transcribed -- 29 calls went out mid-speech in the 72 current-code
-      recordings. Not set in demo_config yet: without echo cancellation the
-      agent's own voice reaches the microphone in a live room (see
-      VoiceBridge.drop_foreign_segments) and would hold its next utterance;
-      to be enabled there after a live check.
+      recordings. Also on in demo_config since 21 Oct (a correction lost the
+      race live without it). Condition: no echo of the agent's voice into the
+      microphone (headphones or Galaxy Buds; no laptop or phone loudspeaker),
+      or the echo holds the agent's next write and speech for up to
+      vad_floor_max_ms.
 
     - parallel_independent_actions (also in demo_config): a step no longer
       waits on an earlier one that is waiting for the user's answer, unless
@@ -185,6 +186,11 @@ def demo_config(**overrides) -> Config:
         final_contradiction_guard_enabled=True,
         demo_speech_polish_enabled=True,
         proactive_offers_enabled=True,
+        # Found live, 21 Oct: with the floor off here (unlike fdb_v3_config), a
+        # write for "22" went out while the user was already saying "actually,
+        # make it 21". The voice host's speech reports now hold writes and
+        # speech while the user is audibly speaking, as in the benchmark.
+        vad_floor_enabled=True,
         unclear_reask_delay_ms=2000,
         turn_stall_salvage_ms=15_000,
         clarify_reextract_enabled=True,
