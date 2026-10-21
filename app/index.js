@@ -1,3 +1,4 @@
+import './src/polyfills';
 import 'react-native-reanimated';
 import { registerGlobals } from '@livekit/react-native';
 import { AppRegistry } from 'react-native';
