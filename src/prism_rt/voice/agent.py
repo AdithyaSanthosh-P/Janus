@@ -471,6 +471,7 @@ async def entrypoint(ctx: JobContext) -> None:
         filler_min_words=FILLER_MIN_WORDS,
         filler_min_gap_s=FILLER_MIN_GAP_S,
         interrupt_prefixes=SELF_INTERRUPT_PREFIXES,
+        on_interruption_logged=lambda msg: logger.info("bridge: %s", msg),
         generic_ack_texts=(ACK_DEFAULT,),
     )
     world_sink["fn"] = bridge.on_world_fact
