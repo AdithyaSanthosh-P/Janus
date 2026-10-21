@@ -15,6 +15,7 @@ import { ConnectModal } from './src/components/ConnectModal';
 import { DrillDrawer } from './src/components/DrillDrawer';
 import { deriveOrbState } from './src/orb/orbState';
 import { useAgentSpeaking } from './src/orb/useAgentSpeaking';
+import { useHeldOrbState } from './src/orb/useHeldOrbState';
 import { tokens } from './src/theme/colors';
 import { janusStore, JanusState } from './src/store/janusStore';
 import { demoPlaybackService } from './src/services/demoPlaybackService';
@@ -90,12 +91,13 @@ export default function App() {
 
   const t = tokens(isDark);
   const agentSpeaking = useAgentSpeaking(state.captions);
-  const orbState = deriveOrbState({
+  const liveOrbState = deriveOrbState({
     connectionStatus: state.connectionStatus,
     userSpeaking: state.userSpeaking,
     agentSpeaking,
     actions: state.actions,
   });
+  const orbState = useHeldOrbState(liveOrbState);
 
   return (
     <SafeAreaView

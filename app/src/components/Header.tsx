@@ -131,9 +131,11 @@ export const Header: React.FC<HeaderProps> = ({
               </View>
             )}
             {isDrillActive ? (
-              <Press onPress={onOpenDrillDrawer} style={[chip, { height: 28, paddingHorizontal: 10, backgroundColor: t.negative.bg }]}>
-                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: t.negative.mark }} />
-                <Text style={[type.caption, { color: t.negative.ink, fontWeight: '600' }]}>Drill on</Text>
+              // Neutral, not alarm-red: on camera a red badge reads as "staged"; the
+              // label still says plainly that a fault is being injected.
+              <Press onPress={onOpenDrillDrawer} accessibilityLabel="Stress test on" style={[chip, { height: 28, paddingHorizontal: 10 }]}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: t.caution.mark }} />
+                <Text style={[type.caption, { color: t.ink2, fontWeight: '600' }]}>Stress test</Text>
               </Press>
             ) : (
               <Press onPress={onOpenDrillDrawer} accessibilityLabel="Failure drills" style={[chip, { height: 28, paddingHorizontal: 10 }]} pressedStyle={{ backgroundColor: t.pressed }}>

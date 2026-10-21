@@ -93,9 +93,19 @@ export function buildGaragePacket(command: 'open' | 'close'): DrillPacket {
   return buildExternalCommandPacket(command, 'Janus Garage', 'doorControl');
 }
 
+// Someone else sets the thermostat (another phone, the SmartThings app).
+export function buildThermostatPacket(celsius: number): DrillPacket {
+  return buildDrillPacket('external_command', true, {
+    device: 'Janus Thermostat',
+    capability: 'thermostatCoolingSetpoint',
+    command: 'setCoolingSetpoint',
+    arguments: [celsius],
+  });
+}
+
 // Janus speaks first with an offer, if the devices give it something to offer
 // (app/INTEGRATION.md section 6).
-export type OfferKind = 'garage_open' | 'door_unlocked' | 'washer_error';
+export type OfferKind = 'garage_open' | 'door_unlocked' | 'washer_error' | 'ac_hot';
 
 export function buildOfferPacket(kind: OfferKind): DrillPacket {
   return buildDrillPacket('offer', true, { kind });

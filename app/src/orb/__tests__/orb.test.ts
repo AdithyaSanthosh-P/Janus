@@ -39,3 +39,16 @@ describe('deriveOrbState', () => {
     expect(deriveOrbState({ ...idle, actions: [card('confirmed'), card('cancelled'), card('unconfirmed')] })).toBe('breathing'));
   it('speaks when idle and Janus is talking', () => expect(deriveOrbState({ ...idle, agentSpeaking: true })).toBe('composing'));
 });
+
+
+describe('orb minimum hold', () => {
+  const { holdFor } = require('../useHeldOrbState');
+  it('switches to listening and connecting at once', () => {
+    expect(holdFor('solving', 'listening', 100, 1200)).toBe(0);
+    expect(holdFor('breathing', 'connecting', 0, 1200)).toBe(0);
+  });
+  it('holds any other pattern until it has been up long enough', () => {
+    expect(holdFor('searching', 'solving', 300, 1200)).toBe(900);
+    expect(holdFor('searching', 'breathing', 1500, 1200)).toBe(0);
+  });
+});

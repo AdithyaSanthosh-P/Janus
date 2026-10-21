@@ -166,9 +166,14 @@ describe('Drill Message Builder (topic: janus.control)', () => {
 
 describe('Offer and garage packets', () => {
   it('builds an offer packet the agent accepts', () => {
-    const { buildOfferPacket } = require('../drillBuilder');
+    const { buildOfferPacket, buildThermostatPacket } = require('../drillBuilder');
     expect(buildOfferPacket('garage_open')).toEqual({ v: 1, type: 'drill', name: 'offer', on: true, args: { kind: 'garage_open' } });
     expect(buildOfferPacket('washer_error')).toEqual({ v: 1, type: 'drill', name: 'offer', on: true, args: { kind: 'washer_error' } });
+    expect(buildOfferPacket('ac_hot')).toEqual({ v: 1, type: 'drill', name: 'offer', on: true, args: { kind: 'ac_hot' } });
+    expect(buildThermostatPacket(26)).toEqual({
+      v: 1, type: 'drill', name: 'external_command', on: true,
+      args: { device: 'Janus Thermostat', capability: 'thermostatCoolingSetpoint', command: 'setCoolingSetpoint', arguments: [26] },
+    });
     expect(buildOfferPacket('door_unlocked').args).toEqual({ kind: 'door_unlocked' });
   });
 

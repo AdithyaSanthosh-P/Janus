@@ -8,6 +8,7 @@ import {
   buildModelDownPacket,
   buildExternalCommandPacket,
   buildGaragePacket,
+  buildThermostatPacket,
   buildOfferPacket,
   OfferKind,
   buildResetPacket,
@@ -104,6 +105,17 @@ export class DrillService {
   /**
    * One-shot: someone else opens or closes the garage, outside Janus.
    */
+  /**
+   * One-shot: someone else sets the thermostat, outside Janus.
+   */
+  public async sendThermostat(celsius: number): Promise<boolean> {
+    const sent = await livekitService.sendDrill(buildThermostatPacket(celsius));
+    if (!sent) {
+      console.warn('[DrillService] Thermostat command not sent:', celsius);
+    }
+    return sent;
+  }
+
   public async sendGarage(command: 'open' | 'close'): Promise<boolean> {
     const sent = await livekitService.sendDrill(buildGaragePacket(command));
     if (!sent) {

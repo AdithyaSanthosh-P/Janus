@@ -12,6 +12,7 @@ import {
   DoorOpen,
   Warehouse,
   WashingMachine,
+  Thermometer,
 } from 'lucide-react-native';
 import { drillService } from '../services/drillService';
 import { DrillState, OfferKind } from '../utils/drillBuilder';
@@ -88,8 +89,11 @@ export const DrillDrawer: React.FC<DrillDrawerProps> = ({
       { title: '…locks it', onPress: handleExternalLock, Glyph: Lock },
       { title: 'Someone else opens the garage', onPress: () => handleGarage('open'), Glyph: DoorOpen },
       { title: '…closes it', onPress: () => handleGarage('close'), Glyph: Warehouse },
+      { title: 'Someone else sets the AC to 26', onPress: () => drillService.sendThermostat(26), Glyph: Thermometer },
+      { title: '…sets it to 24', onPress: () => drillService.sendThermostat(24), Glyph: Thermometer },
     ],
     [
+      { title: 'Offer: cool the house (AC to 24)', onPress: () => handleOffer('ac_hot'), Glyph: Thermometer },
       { title: 'Offer: close the garage', onPress: () => handleOffer('garage_open'), Glyph: Warehouse },
       { title: 'Offer: lock the front door', onPress: () => handleOffer('door_unlocked'), Glyph: Lock },
       { title: 'Offer: book a technician (washer fault)', onPress: () => handleOffer('washer_error'), Glyph: WashingMachine },
