@@ -38,7 +38,7 @@ SCENARIOS: dict[str, list[tuple]] = {
     "correction": [
         ("note", "a correction: only the corrected value may reach the device"),
         ("say", "Set the thermostat to twenty-two."),
-        ("pause", 0.9),
+        ("pause", 2.5),  # the rehearsal rule: pause until "Okay, one moment" before the correction
         ("say", "Actually, make it twenty-one."),
         ("settle", 40),
     ],
