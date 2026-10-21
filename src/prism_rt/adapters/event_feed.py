@@ -78,6 +78,20 @@ def _words(tool: str) -> str:
     return tool.removeprefix("st_").replace("_", " ")
 
 
+def _write_key(call) -> tuple:
+    """A write as the user would recognise a repeat of it: the tool and its
+    arguments, case and a leading "the"/"my" ignored ("the front door" ==
+    "Front door")."""
+    def norm(value) -> str:
+        text = " ".join(str(value).strip().lower().split())
+        for lead in ("the ", "my "):
+            if text.startswith(lead):
+                text = text[len(lead):]
+        return text
+
+    return (call.tool, tuple(sorted((k, norm(v)) for k, v in call.args.items())))
+
+
 class EventFeed:
     def __init__(
         self,
@@ -100,6 +114,11 @@ class EventFeed:
         self._asked: set[str] = set()
         self._sent: set[str] = set()
         self._dup_blocked: set[str] = set()
+        # Writes answered "already" (nothing sent), and what our own confirmed
+        # writes did: an "already" that repeats one of them is a duplicate the
+        # user asked for and Janus did not send again (survey A5).
+        self._already: set[str] = set()
+        self._done_writes: set[tuple] = set()
         self._filler_turn = False
         self._turn_ids: dict[str, bool] = {}
 
@@ -272,9 +291,14 @@ class EventFeed:
             outcome, summary = "refused", str(result.get("message") or "The device refused it")
         elif isinstance(result, dict) and result.get("already"):
             outcome, summary = "already", str(result.get("note") or "Already in that state; nothing was sent")
+            self._already.add(call.call_id)
+            if _write_key(call) in self._done_writes:
+                self._dup_blocked.add(call.call_id)
         else:
             outcome = "confirmed"
             summary = " ".join(str(result[k]) for k in ("device", "state") if isinstance(result, dict) and result.get(k) is not None) or "Done"
+            if call.kind == StepKind.WRITE:
+                self._done_writes.add(_write_key(call))
         self._send("call_result", call_id=call.call_id, outcome=outcome, summary=summary)
 
     def _ledger_summary(self, store) -> None:
@@ -282,9 +306,16 @@ class EventFeed:
         from prism_rt.observability.effects import effect_summary
 
         base = effect_summary(store)
+        # The kernel records a write answered "already" as a confirmed effect;
+        # nothing was sent for it, so the app does not count it as committed.
+        already = 0
+        for call_id in self._already:
+            call = store.call_ledger.get(call_id)
+            effect = store.effect_ledger.by_fingerprint(call.fingerprint) if call is not None else None
+            already += effect is not None and effect.status == EffectStatus.CONFIRMED
         self._send(
             "ledger_summary",
-            committed=base["committed"],
+            committed=max(0, base["committed"] - already),
             withdrawn_before_sending=base["withdrawn_before_sending"],
             unconfirmed=sum(e.status == EffectStatus.UNKNOWN for e in store.effect_ledger.all()),
             failed=base["refused_or_failed"],

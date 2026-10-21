@@ -125,7 +125,7 @@ def device_write_final(store, goal_id: str) -> str | None:
     plan = store.plans.current(goal_id)
     if plan is None or not plan.steps:
         return None
-    parts, already_all = [], True
+    parts, already_all, repeats_all = [], True, True
     for step in plan.steps:
         if step.kind != StepKind.WRITE:
             return None
@@ -145,10 +145,38 @@ def device_write_final(store, goal_id: str) -> str | None:
         state = f"{state} {spec.state_unit}" if spec.state_unit else str(state)
         already = bool(result.get("already"))
         already_all = already_all and already
+        repeats_all = repeats_all and already and _repeats_earlier_write(store, call)
         parts.append(f"the {device} {'was already' if already else 'is now'} {state}")
     text = "; ".join(parts)
     text = text[:1].upper() + text[1:]
+    if repeats_all:
+        # Survey A5: the user asked again for something Janus already did.
+        return f"{text}: I did that earlier, so I didn't send it again."
     return f"{text}, so I didn't send anything." if already_all else f"{text}."
+
+
+def _norm_arg(value) -> str:
+    text = " ".join(str(value).strip().lower().split())
+    return re.sub(r"^(the|my)\s+", "", text)
+
+
+def _repeats_earlier_write(store, call) -> bool:
+    """Whether `call` (answered "already") asks for what an earlier request's
+    write of the same tool and arguments did and confirmed in this session --
+    a repeat of our own command, not a device someone else set."""
+    want = {k: _norm_arg(v) for k, v in call.args.items()}
+    for earlier in store.call_ledger.all():
+        if earlier.goal_id == call.goal_id or earlier.tool != call.tool or earlier.status != CallStatus.CONSUMED:
+            continue
+        if {k: _norm_arg(v) for k, v in earlier.args.items()} != want:
+            continue
+        effect = store.effect_ledger.by_fingerprint(earlier.fingerprint)
+        fact = store.facts.get(f"result.{earlier.call_id}")
+        result = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
+        if effect is not None and effect.status == EffectStatus.CONFIRMED and isinstance(result, dict) \
+                and result.get("done") and not result.get("already"):
+            return True
+    return False
 
 
 def done_summary(store, goal_id: str) -> str:

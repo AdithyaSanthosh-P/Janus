@@ -140,7 +140,10 @@ def test_lock_and_corrected_setpoint_tell_the_whole_story():
     assert results[lock["call_id"]]["outcome"] == "confirmed"
     assert of(events, "goal_finished")[0]["completed"] is True
     summary = of(events, "ledger_summary")[-1]
-    assert summary["committed"] == 2 and summary["unconfirmed"] == 0
+    # The mock thermostat is already at 24: that call is "already", nothing was
+    # sent, so only the lock is committed (it used to count as 2).
+    assert results[next(p for p in planned if p["tool"] == "st_set_cooling_setpoint")["call_id"]]["outcome"] == "already"
+    assert summary["committed"] == 1 and summary["unconfirmed"] == 0
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
 
 
@@ -199,6 +202,35 @@ def test_repeat_lock_is_reported_as_already():
     outcomes = [e["outcome"] for e in of(events, "call_result")]
     assert outcomes == ["confirmed", "already"]
 
+
+
+def test_a_repeated_request_is_a_blocked_duplicate_not_a_second_commit():
+    """Survey A5: "Lock the door." ... "Lock the door again." The second one
+    sends nothing (the device is already locked, by us); the ledger counts one
+    command committed and one duplicate blocked, not two commits."""
+    lock = {"act": "new_goal", "intent": "st_lock", "slot_deltas": [], "commit_intent": True,
+            "actions": [{"tool": "st_lock", "args": {"device": "front door"}}]}
+    again = {"act": "new_goal", "intent": "st_lock", "slot_deltas": [], "commit_intent": True,
+             "actions": [{"tool": "st_lock", "args": {"device": "the Front Door"}}]}
+    h, events, _ = session([("lock it again", again), ("lock the door", lock)],
+                           utterances=("lock the door", "lock it again", "lock it again"))
+    assert [e["outcome"] for e in of(events, "call_result")] == ["confirmed", "already", "already"]
+    summary = of(events, "ledger_summary")[-1]
+    assert summary["committed"] == 1 and summary["duplicates_blocked"] == 2
+    check_schema(events)
+
+
+def test_already_in_place_by_someone_else_is_neither_committed_nor_a_duplicate():
+    """The door was locked before Janus was asked: nothing was sent and nothing
+    of ours was repeated."""
+    mock = MockSmartThings()
+    mock._devices["lock-1"][1]["lock"]["lock"] = "locked"
+    lock = {"act": "new_goal", "intent": "st_lock", "slot_deltas": [], "commit_intent": True,
+            "actions": [{"tool": "st_lock", "args": {"device": "front door"}}]}
+    h, events, _ = session([("lock the door", lock)], mock=mock)
+    assert [e["outcome"] for e in of(events, "call_result")] == ["already"]
+    summary = of(events, "ledger_summary")[-1]
+    assert summary["committed"] == 0 and summary["duplicates_blocked"] == 0
 
 # ---- host-side events --------------------------------------------------------------
 

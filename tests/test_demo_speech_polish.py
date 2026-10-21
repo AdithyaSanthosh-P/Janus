@@ -144,3 +144,17 @@ def test_a_read_keeps_the_composers_answer():
     body = _final_for("The front door is unlocked.", actions=[{"tool": "st_get_status", "args": {"device": "front door"}}],
                       utterance="is the front door locked")
     assert body.text == "The front door is unlocked."
+
+
+def test_asking_again_for_what_janus_already_did_says_it_was_not_sent_twice():
+    """Survey A5: "Lock the front door." ... "Lock the front door." The second
+    request finds the door locked by our own first command: said as a repeat,
+    and only one lock command reached the device."""
+    h, mock = session()
+    first = say(h, 100_000, "lock the front door", 6_000_000)
+    assert spoken([a for a in first if a.action_type == ActionType.FINAL]) == ["The front door is now locked."]
+    second = say(h, 6_100_000, "lock the front door", 12_000_000)
+    finals = [a for a in second if a.action_type == ActionType.FINAL]
+    assert spoken(finals) == ["The front door was already locked: I did that earlier, so I didn't send it again."]
+    assert len([c for c in mock.commands if c[2] == "lock"]) == 1
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
