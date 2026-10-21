@@ -81,6 +81,8 @@ class ToolSpec:
     # How the action is said ("Lock the {device}"), from the manifest; also the
     # companion app's card title. replies.action_phrase.
     label: str | None = None
+    # Spoken after the device's new state ("21" -> "21 degrees"); manifest.
+    state_unit: str | None = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +188,7 @@ class ToolCatalog:
             watch=raw.get("watch") if isinstance(raw.get("watch"), str) else None,
             done_when=raw.get("done_when") if isinstance(raw.get("done_when"), str) else None,
             label=raw.get("label") if isinstance(raw.get("label"), str) and raw.get("label") else None,
+            state_unit=raw.get("state_unit") if isinstance(raw.get("state_unit"), str) else None,
         )
 
     def get(self, name: str) -> ToolSpec | None:

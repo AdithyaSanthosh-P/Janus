@@ -113,6 +113,44 @@ def confirmed_text(store, calls: list) -> str:
     return "Done: " + "; ".join(parts) + "."
 
 
+def device_write_final(store, goal_id: str) -> str | None:
+    """Config.demo_speech_polish_enabled: the final for a request that was
+    only device commands, every one confirmed or already in place, built from
+    the results instead of the composer, which twice misread a confirmed
+    result live (21 Oct: "failed to complete"; "reported it is already
+    closed"). "The garage is now closed." / "The front door was already
+    locked, so I didn't send anything." The device is named as the user named
+    it. None (the composer's text stands) for anything else: reads, a step
+    without a watched device, a write not confirmed."""
+    plan = store.plans.current(goal_id)
+    if plan is None or not plan.steps:
+        return None
+    parts, already_all = [], True
+    for step in plan.steps:
+        if step.kind != StepKind.WRITE:
+            return None
+        call = store.call_ledger.latest_by_step(goal_id, step.step_key)
+        spec = store.catalog.get(step.tool)
+        if call is None or call.status != CallStatus.CONSUMED or spec is None or not spec.watch:
+            return None
+        effect = store.effect_ledger.by_fingerprint(call.fingerprint)
+        fact = store.facts.get(f"result.{call.call_id}")
+        result = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
+        if effect is None or effect.status != EffectStatus.CONFIRMED or not isinstance(result, dict) or not result.get("done"):
+            return None
+        device = re.sub(r"^(the|my)\s+", "", str(call.args.get(spec.watch) or "").strip(), flags=re.IGNORECASE)
+        state = result.get("state")
+        if not device or state is None:
+            return None
+        state = f"{state} {spec.state_unit}" if spec.state_unit else str(state)
+        already = bool(result.get("already"))
+        already_all = already_all and already
+        parts.append(f"the {device} {'was already' if already else 'is now'} {state}")
+    text = "; ".join(parts)
+    text = text[:1].upper() + text[1:]
+    return f"{text}, so I didn't send anything." if already_all else f"{text}."
+
+
 def done_summary(store, goal_id: str) -> str:
     """What actually ran for this goal, from the call ledger."""
     unconfirmed = {c.call_id for c in unconfirmed_writes(store, goal_id)}

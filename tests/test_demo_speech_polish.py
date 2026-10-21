@@ -104,3 +104,43 @@ def test_a_status_read_says_which_device_the_user_named():
     mock = MockSmartThings()
     out = asyncio.run(SmartThingsToolset(mock, sleep=_no_sleep).make_executor()("st_get_status", {"device": "front door"}))
     assert out["device"] == "Janus Lock" and "front door" in out["note"]
+
+
+def _final_for(compose_text, *, actions, utterance, mock=None):
+    mock = mock or MockSmartThings()
+    execute = SmartThingsToolset(mock, sleep=_no_sleep).make_executor()
+    provider = ScriptedProvider()
+    provider.register("interpret", utterance[:12], {"act": "new_goal", "intent": actions[0]["tool"], "slot_deltas": [],
+                                                    "commit_intent": True, "actions": actions})
+    provider.register("compose", "", {"text": compose_text, "claims": []})
+    tools = {m["name"]: {"latency_ms": 200, "handler": (lambda args, n=m["name"]: asyncio.run(execute(n, args)))}
+             for m in MANIFEST}
+    h = SimHarness(demo_config(), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h.send(0, [manifest_event(MANIFEST)])
+    actions_out = say(h, 100_000, utterance, 6_000_000)
+    finals = [a for a in actions_out if a.action_type == ActionType.FINAL]
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+    return finals[-1].body
+
+
+def test_a_confirmed_device_command_is_said_from_its_result():
+    body = _final_for("I attempted to lock it, but it failed.",
+                      actions=[{"tool": "st_lock", "args": {"device": "front door"}},
+                               {"tool": "st_set_cooling_setpoint", "args": {"device": "thermostat", "celsius": 21}}],
+                      utterance="lock the front door and set the thermostat to 21")
+    assert body.text == "The front door is now locked; the thermostat is now 21 degrees."
+    assert body.task_completed is True
+
+
+def test_a_device_already_in_place_is_said_so():
+    mock = MockSmartThings()
+    asyncio.run(mock.command("lock-1", "lock", "lock"))
+    body = _final_for("Done.", actions=[{"tool": "st_lock", "args": {"device": "front door"}}],
+                      utterance="lock the front door", mock=mock)
+    assert body.text == "The front door was already locked, so I didn't send anything."
+
+
+def test_a_read_keeps_the_composers_answer():
+    body = _final_for("The front door is unlocked.", actions=[{"tool": "st_get_status", "args": {"device": "front door"}}],
+                      utterance="is the front door locked")
+    assert body.text == "The front door is unlocked."

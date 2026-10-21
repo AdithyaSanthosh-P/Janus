@@ -52,7 +52,9 @@ def run_lock(compose_text: str, *, config=None, mock=None):
 
 def test_a_confirmed_write_is_never_reported_as_failed():
     body, mock = run_lock(FALSE_FAILURE)
-    assert body.text == "Done: Janus Lock is now locked."
+    # Device commands are now said from their results in demo mode
+    # (replies.device_write_final), which also covers this case.
+    assert body.text == "The front door is now locked."
     assert body.task_completed is True
     assert len(mock.commands) == 1
 
@@ -71,7 +73,8 @@ def test_the_guard_is_demo_only():
     assert demo_config().final_contradiction_guard_enabled is True
     assert fdb_v3_config().final_contradiction_guard_enabled is False
     assert Config().final_contradiction_guard_enabled is False
-    off = dataclasses.replace(demo_config(), frame_rendering_enabled=False, final_contradiction_guard_enabled=False)
+    off = dataclasses.replace(demo_config(), frame_rendering_enabled=False, final_contradiction_guard_enabled=False,
+                              demo_speech_polish_enabled=False)
     body, _ = run_lock(FALSE_FAILURE, config=off)
     assert body.text == FALSE_FAILURE  # today's behaviour without the guard
 
@@ -82,3 +85,10 @@ def test_failure_wording_is_recognised():
         assert claims_failure(text), text
     for text in ("The front door is now locked.", "Done. The AC is set to 21 degrees.", "I locked the front door for you."):
         assert not claims_failure(text), text
+
+
+def test_the_guard_alone_replaces_a_false_failure_with_what_ran():
+    """The guard's own wording, with the device-command final switched off."""
+    guard_only = dataclasses.replace(demo_config(), frame_rendering_enabled=False, demo_speech_polish_enabled=False)
+    body, _ = run_lock(FALSE_FAILURE, config=guard_only)
+    assert body.text == "Done: Janus Lock is now locked."
