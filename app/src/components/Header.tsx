@@ -15,6 +15,8 @@ import {
   RotateCcw,
   Mic,
   MicOff,
+  Camera,
+  CameraOff,
 } from 'lucide-react-native';
 import { LUCID_SPRING_CONFIG } from '../theme/motion';
 import { BackendType } from '../types/janus';
@@ -34,6 +36,8 @@ interface HeaderProps {
   demoPlaying: boolean;
   demoSpeed: number;
   isDrillActive?: boolean;
+  isCameraOn?: boolean;
+  onToggleCamera?: () => void;
   onToggleTheme: () => void;
   onOpenConnectModal: () => void;
   onToggleDemoPlay: () => void;
@@ -50,6 +54,8 @@ export const Header: React.FC<HeaderProps> = ({
   demoPlaying,
   demoSpeed,
   isDrillActive = false,
+  isCameraOn = false,
+  onToggleCamera,
   onToggleTheme,
   onOpenConnectModal,
   onToggleDemoPlay,
@@ -295,6 +301,35 @@ export const Header: React.FC<HeaderProps> = ({
               {statusLabel}
             </Text>
           </View>
+
+          {/* Camera: sends the phone's back camera to Janus (device-care scene) */}
+          {connectionStatus === 'connected' && onToggleCamera && (
+            <TouchableOpacity
+              onPress={onToggleCamera}
+              activeOpacity={0.75}
+              accessibilityLabel={isCameraOn ? 'Turn camera off' : 'Turn camera on'}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 5,
+                paddingHorizontal: 8,
+                paddingVertical: 4,
+                borderRadius: 8,
+                backgroundColor: isCameraOn ? (isDark ? 'rgba(59, 130, 246, 0.2)' : '#dbeafe') : isDark ? '#18181b' : '#f1f5f9',
+                borderWidth: 1,
+                borderColor: isCameraOn ? '#3b82f6' : isDark ? '#27272a' : '#e2e8f0',
+              }}
+            >
+              {isCameraOn ? (
+                <Camera size={12} color="#3b82f6" />
+              ) : (
+                <CameraOff size={12} color={isDark ? '#71717a' : '#94a3b8'} />
+              )}
+              <Text style={{ fontSize: 11, fontWeight: '600', color: isCameraOn ? '#3b82f6' : isDark ? '#71717a' : '#94a3b8' }}>
+                {isCameraOn ? 'Camera' : 'Cam off'}
+              </Text>
+            </TouchableOpacity>
+          )}
 
           {/* Dynamic Mic Waveform Pill */}
           <Animated.View

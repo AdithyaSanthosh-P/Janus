@@ -33,6 +33,10 @@ export default function App() {
   const [drillDrawerVisible, setDrillDrawerVisible] = useState(false);
   const [isDrillActive, setIsDrillActive] = useState<boolean>(drillService.isAnyActive());
   const [demoStatus, setDemoStatus] = useState(demoPlaybackService.getStatus());
+  const [isCameraOn, setIsCameraOn] = useState(false);
+
+  // Camera on/off follows the LiveKit service (it resets on disconnect).
+  useEffect(() => livekitService.subscribe(s => setIsCameraOn(s.isCameraOn)), []);
 
   // Subscribe to central Janus store
   useEffect(() => {
@@ -109,6 +113,10 @@ export default function App() {
         demoPlaying={demoStatus.isPlaying}
         demoSpeed={demoStatus.speed}
         isDrillActive={isDrillActive}
+        isCameraOn={isCameraOn}
+        onToggleCamera={() => {
+          livekitService.toggleCamera();
+        }}
         onToggleTheme={handleToggleTheme}
         onOpenConnectModal={() => setConnectModalVisible(true)}
         onToggleDemoPlay={handleToggleDemoPlay}
