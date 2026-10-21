@@ -158,6 +158,14 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "What did you do this morning?"),
         ("settle", 30),
     ],
+    "recap3": [
+        ("say", "What did you do this morning?"),
+        ("settle", 25),
+        ("say", "What have you done so far?"),
+        ("settle", 25),
+        ("say", "And what didn't you do?"),
+        ("settle", 25),
+    ],
     "washer_offer_yes": [
         ("note", "survey B1: Janus offers a technician for the washer's fault; the user accepts"),
         ("drill", "offer", True, {"kind": "washer_error"}),
