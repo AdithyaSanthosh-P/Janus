@@ -193,6 +193,12 @@ class TaskStateMachine:
         turns = store.turn_log.all()
         if turns and turns[-1].chunks:
             last_user_us = max(last_user_us, turns[-1].chunks[-1].ts_us)
+        # An offer (Config.proactive_offers_enabled) starts its own clock: it
+        # is Janus speaking first, often long after the user's last words, and
+        # was otherwise salvaged the moment it was made (found live, 21 Oct).
+        offer = store.facts.get(f"goal.{goal_id}.offer_text")
+        if offer is not None and offer.status != FactStatus.RETRACTED:
+            last_user_us = max(last_user_us, offer.provenance.ts_us)
         due_us = last_user_us + ms * 1000
         store.timers.schedule(f"turn_stall_salvage:{goal_id}", due_us)
         if now_us < due_us:

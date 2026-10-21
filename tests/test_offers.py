@@ -167,3 +167,16 @@ def test_build_offer_only_when_there_is_something_to_offer():
     assert door["tool"] == "st_lock" and door["text"] == "The front door is unlocked. Shall I lock it?"
     assert run(build_offer("door_unlocked", read_open)) is None
     assert run(build_offer("nonsense", read_open)) is None
+
+
+def test_an_offer_long_after_the_users_last_words_is_not_salvaged_at_once():
+    """Found live: the stall salvage measured from the user's last end of
+    turn, so an offer made 20 s later ended at once with "I couldn't finish
+    this in time"."""
+    h, mock = setup()
+    say(h, 100_000, "lock the front door", 4_000_000)  # a request, finished
+    actions = push(h, 25_000_000, [offer_event()], 27_000_000)
+    assert said(actions) == [OFFER["text"]]
+    later = say(h, 30_000_000, "yes please", 34_000_000)
+    assert tool_calls(later) == ["st_close_garage"]
+    clean(h)
