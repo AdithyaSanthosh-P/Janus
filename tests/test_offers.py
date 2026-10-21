@@ -255,3 +255,11 @@ def test_no_washer_offer_without_a_fault():
     care.status["washer"]["error_code"] = None
     assert run(build_offer("washer_error", None, lambda device: care._get_device_status({"device_type": device}))) is None
     assert run(build_offer("washer_error", None)) is None  # no appliance reader: nothing to offer
+
+
+def test_no_washer_offer_once_a_visit_is_booked_for_it():
+    """Found live (21 Oct): a second offer after the visit was booked was
+    refused at once as a repeat; there is nothing left to offer."""
+    care = DeviceCareToolset()
+    status = care._get_device_status({"device_type": "washer"})
+    assert run(build_offer("washer_error", None, lambda device: {**status, "visit_booked": True})) is None

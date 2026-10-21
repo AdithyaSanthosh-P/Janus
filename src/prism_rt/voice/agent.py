@@ -262,7 +262,12 @@ def demo_toolset() -> Toolset:
         execute.read_target = st.read_target
         # Appliance offers (adapters/offers.py): the washer's status as the
         # device-care pack reports it; the read also opens the case a booking needs.
-        execute.read_appliance = lambda device: care._get_device_status({"device_type": device})
+        def read_appliance(device: str) -> dict:
+            status = care._get_device_status({"device_type": device})
+            status["visit_booked"] = any(b["issue_id"] == care.current_issue for b in care.bookings)
+            return status
+
+        execute.read_appliance = read_appliance
         return execute
 
     from prism_rt.devicecare.tools import MANIFEST as CARE_MANIFEST

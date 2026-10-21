@@ -7,8 +7,8 @@ SmartThings pack resolves it (`SmartThingsToolset.read_target`).
 Appliance offers (survey B1) read a device-care appliance instead:
 `read_appliance(device)` returns its status as `get_device_status` does
 (`DeviceCareToolset._get_device_status`), and the washer offer is made only
-while the washer shows an error code ("Your washer has stopped with code
-4C: ... Shall I book a technician for tomorrow morning?"). The visit's day
+while the washer shows an error code and no visit is booked for it ("Your washer has stopped
+with code 4C: ... Shall I book a technician for tomorrow morning?"). The visit's day
 and slot are proposed in the question, so a "yes" books exactly what was
 said and a correction ("make it Friday afternoon") changes it before
 anything is booked."""
@@ -38,8 +38,8 @@ def _appliance_offer(kind: str, read_appliance: Callable[[str], dict] | None) ->
         return None
     status = read_appliance(appliance)
     code = status.get("error_code") if isinstance(status, dict) and status.get("found") else None
-    if not code:
-        return None
+    if not code or status.get("visit_booked"):
+        return None  # no fault, or a visit for it is already booked: nothing to offer
     meaning = str(status.get("error_meaning") or "").strip().rstrip(".")
     reason = f": {meaning[:1].lower()}{meaning[1:]}" if meaning else ""
     text = f"Your {appliance} has stopped with code {code}{reason}. Shall I book a technician for {when}?"
