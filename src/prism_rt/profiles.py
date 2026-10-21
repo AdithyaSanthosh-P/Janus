@@ -186,6 +186,8 @@ def demo_config(**overrides) -> Config:
         final_contradiction_guard_enabled=True,
         demo_speech_polish_enabled=True,
         proactive_offers_enabled=True,
+        merge_split_turns_max_gap_ms=8000,
+        slow_interpret_notice_ms=6000,
         # Found live, 21 Oct: with the floor off here (unlike fdb_v3_config), a
         # write for "22" went out while the user was already saying "actually,
         # make it 21". The voice host's speech reports now hold writes and

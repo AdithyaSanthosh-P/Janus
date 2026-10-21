@@ -170,9 +170,14 @@ class GeminiProvider:
     format — unnecessary complexity for what this needs to do)."""
 
     def __init__(
-        self, model: str = "gemini-3.6-flash", api_key: str | None = None, *, thinking_budget: int | None = None
+        self, model: str = "gemini-3.6-flash", api_key: str | None = None, *, thinking_budget: int | None = None,
+        timeout_s: float = 30.0,
     ) -> None:
         self._model = model
+        # Per attempt; _call_with_retry tries 3 times. The demo worker uses a
+        # shorter one (JANUS_LLM_TIMEOUT_S): a stuck request is better retried
+        # than waited on (found live, 21 Oct: one call took 23.7 s).
+        self._timeout_s = timeout_s
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self._api_key:
             raise RuntimeError("GeminiProvider requires GEMINI_API_KEY (env var or api_key=)")
@@ -213,7 +218,7 @@ class GeminiProvider:
                 headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
                 result = json.loads(resp.read().decode("utf-8"))
             text = result["candidates"][0]["content"]["parts"][0]["text"]
             return json.loads(text)

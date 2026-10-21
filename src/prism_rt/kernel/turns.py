@@ -193,7 +193,7 @@ class TurnManager:
         # Promotion/waiting only when no earlier turn is still outstanding --
         # otherwise this turn would be applied ahead of one the user said
         # first. It queues behind it instead (enqueue_interpretation).
-        if txn.store.config.merge_split_turns_enabled and interpretation_busy(txn.store):
+        if txn.store.config.merge_split_turns_enabled and interpretation_busy(txn.store) and self._within_merge_window(txn, turn):
             # Config.merge_split_turns_enabled: the user kept talking before
             # the earlier part was understood -- interpret it all together.
             merge_outstanding_turns(
@@ -215,6 +215,21 @@ class TurnManager:
             Provenance(source="user", event_id=event_id, turn_id=turn.turn_id, step_no=step_no, ts_us=now_us),
             rule="turns.eot",
         )
+
+    @staticmethod
+    def _within_merge_window(txn: StoreTxn, turn: Turn) -> bool:
+        """Config.merge_split_turns_max_gap_ms: a turn is folded into the one
+        before it only if it began soon after that one ended (a sentence split
+        by a pause), not when it is a new answer given much later."""
+        limit = txn.store.config.merge_split_turns_max_gap_ms
+        if not limit or not turn.chunks:
+            return True
+        turns = txn.store.turn_log.all()
+        earlier = [t for t in turns if t.turn_id != turn.turn_id and t.chunks]
+        if not earlier:
+            return True
+        gap_us = turn.chunks[0].ts_us - earlier[-1].chunks[-1].ts_us
+        return gap_us <= limit * 1000
 
     def _try_promote_speculative(self, txn: StoreTxn, turn: Turn, now_us: int, step_no: int, *, event_id: str) -> bool:
         prefix_fact = txn.facts.get(f"turn.{turn.turn_id}.prefix")

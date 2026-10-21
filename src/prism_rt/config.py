@@ -242,6 +242,16 @@ class Config:
     # reaches that state on its own. Accepted only when no request is
     # running and the user is not speaking. Demo profile only.
     proactive_offers_enabled: bool = False
+    # merge_split_turns_enabled folds a new turn into an earlier one still
+    # awaiting interpretation. With a limit (ms, 0 = none), only when the new
+    # turn began within this long after the earlier one ended: found live,
+    # 21 Oct, a "Yes, please." 23 s after an uninterpreted "No, leave it." was
+    # folded into it and read as a yes to the offer the user had declined.
+    merge_split_turns_max_gap_ms: int = 0
+    # Said once ("Still working on it.") when a turn's interpretation is still
+    # pending this long (ms) after its end of turn; 0 = never. A slow model
+    # call otherwise leaves only the filler and silence.
+    slow_interpret_notice_ms: int = 0
     # How long the Q6a re-ask waits after the unclear turn was interpreted,
     # and it is dropped if the user has started another turn by then. Found
     # live (2026-09-27): a hesitant opener ("Um so uh...") followed by a

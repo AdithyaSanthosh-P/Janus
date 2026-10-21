@@ -41,6 +41,7 @@ from config.templates import (
     EVIDENCE_REASK_QUESTION,
     EVIDENCE_REASK_SECURITY,
     INTERPRET_FAILED,
+    SLOW_INTERPRET,
     UNCLEAR_NO_GOAL,
 )
 from prism_rt.kernel import evidence
@@ -110,6 +111,7 @@ class FastResponder:
         # silently dropped.
         if store.floor_state == FloorState.USER_TURN_OPEN and not store.config.speak_during_open_turn:
             return []
+        slow = self._slow_interpretation(store, now_us, step_no) if not user_audibly_active(store, now_us) else []
         # Same rule before any text exists: the voice host reports the user
         # speaking (Config.vad_floor_enabled). Deferred, never dropped, for
         # the same reason as above.
@@ -132,8 +134,8 @@ class FastResponder:
             and user_content_pending(store)
             and not _is_watchdog_salvage(store)
         ):
-            return []
-        actions: list[IntendedAction] = []
+            return slow
+        actions: list[IntendedAction] = list(slow)
         actions.extend(self._inform_blocked_writes(store, now_us, step_no, skip_call_ids))
         actions.extend(self._inform_write_timeout(store, now_us, step_no))
         actions.extend(self._reconcile_completed_after_cancel(store, now_us, step_no))
@@ -606,6 +608,43 @@ class FastResponder:
                 body=SpeakBody(text=UNCLEAR_NO_GOAL, kind="clarify"),
                 read_set=EMPTY_READ_SET,
                 rule_id="responder.unclear_no_goal",
+            )
+        ]
+
+    def _slow_interpretation(self, store, now_us: int, step_no: int) -> list[IntendedAction]:
+        """Config.slow_interpret_notice_ms: "Still working on it.", once per
+        turn, when the turn is still awaiting interpretation that long after
+        its end of turn (a slow model call; found live, 21 Oct: 23.7 s of
+        silence after the filler). Spoken even under the TRIAGE hold: it
+        claims nothing and cannot go stale."""
+        ms = store.config.slow_interpret_notice_ms
+        if not ms:
+            return []
+        pending = store.facts.get("session.pending_interpretation_turn")
+        turn_id = pending.value if pending is not None and pending.status != FactStatus.RETRACTED and pending.value else None
+        if turn_id is None:
+            for key, fact in store.facts.by_prefix("spec_interpret.").items():
+                if key.endswith(".eot_waiting") and fact.status != FactStatus.RETRACTED and fact.value:
+                    turn_id = key[len("spec_interpret."):-len(".eot_waiting")]
+                    break
+        last_eot = store.facts.get("session.last_eot_ts")
+        if turn_id is None or last_eot is None or last_eot.status == FactStatus.RETRACTED:
+            return []
+        sent = store.facts.get(f"interpret.{turn_id}.slow_notice_sent")
+        if sent is not None and sent.status != FactStatus.RETRACTED:
+            return []
+        due_us = last_eot.value + ms * 1000
+        if now_us < due_us:
+            store.timers.schedule(f"slow_interpret:{turn_id}", due_us)
+            return []
+        store.facts.set(f"interpret.{turn_id}.slow_notice_sent", True, FactStatus.COMMITTED,
+                        Provenance(source="system", step_no=step_no, ts_us=now_us), rule="responder.slow_interpret")
+        return [
+            IntendedAction(
+                action_type=ActionType.SPEAK,
+                body=SpeakBody(text=SLOW_INTERPRET, kind="filler"),
+                read_set=EMPTY_READ_SET,
+                rule_id="responder.slow_interpret",
             )
         ]
 

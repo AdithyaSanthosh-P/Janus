@@ -21,6 +21,8 @@ Environment:
   JANUS_TOOL_LOG          tool-call log FDB's runner reads (default /tmp/agent_tool_calls.log)
   JANUS_LLM_PROVIDER      gemini (default, declared) or openai (reads OPENAI_API_KEY)
   JANUS_LLM_MODEL         default gemini-3.6-flash (gpt-4.1 when the provider is openai)
+  JANUS_LLM_TIMEOUT_S     seconds per model request attempt (3 attempts; default 8 in demo mode, 30 in
+                          fdb mode)
   JANUS_THINKING_BUDGET   default 0 (thinking off); "" omits the field (flash-lite rejects it)
   JANUS_EOT_MS            silence that closes a user turn (default 1000)
   JANUS_WATCHDOG_MS       whole-session budget before a salvage FINAL (default 105000, as
@@ -477,6 +479,7 @@ async def entrypoint(ctx: JobContext) -> None:
         provider = GeminiProvider(
             model=os.environ.get("JANUS_LLM_MODEL", "gemini-3.6-flash"),
             thinking_budget=int(thinking) if thinking not in (None, "") else None,
+            timeout_s=float(os.environ.get("JANUS_LLM_TIMEOUT_S") or (8 if MODE == "demo" else 30)),
         )
     if drills is not None:
         provider = DrilledProvider(provider, drills)
