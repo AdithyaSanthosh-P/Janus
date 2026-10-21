@@ -123,6 +123,11 @@ class VoiceBridge:
     play_filler: "Callable[[], Awaitable[None]] | None" = None
     generic_ack_texts: tuple[str, ...] = ()
     filler_min_words: int = 3
+    # No second filler within this many seconds of the last one (0 = no
+    # limit): a correction spoken right after a request ("...twenty-two.
+    # Actually, make it twenty-one.") otherwise got "Okay, one moment." twice.
+    filler_min_gap_s: float = 0.0
+    _last_filler_at: "float | None" = field(default=None, init=False, repr=False)
 
     _start_wall: float = field(init=False, repr=False)
     _eot_task: "asyncio.Task | None" = field(default=None, init=False, repr=False)
@@ -369,9 +374,12 @@ class VoiceBridge:
         self._pending_segments = 0  # anything still outstanding was given up on
         await self._report_activity()
         await self.events.put({"type": "end_of_turn", "ts_us": self.now_us(), "payload": {}})
-        if self.play_filler is not None and words >= self.filler_min_words and not self._agent_speaking:
+        recent = (self.filler_min_gap_s and self._last_filler_at is not None
+                  and self._loop_now() - self._last_filler_at < self.filler_min_gap_s)
+        if self.play_filler is not None and words >= self.filler_min_words and not self._agent_speaking and not recent:
             self._filler_turn = True
             self._filler_active = True
+            self._last_filler_at = self._loop_now()
             await self.play_filler()
 
     async def _give_up_at(self, deadline: float) -> None:

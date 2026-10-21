@@ -581,6 +581,25 @@ async def test_filler_plays_once_right_after_end_of_turn():
     assert fillers == [True]  # once per turn
 
 
+async def test_no_second_filler_within_the_gap():
+    """A correction right after a request ("...twenty-two. Actually, make it
+    twenty-one.") got "Okay, one moment." twice live (21 Oct)."""
+    bridge, _events, _actions, _said, fillers = _filler_bridge()
+    bridge.filler_min_gap_s = 5.0
+    await _close_turn(bridge, "set the thermostat to twenty two")
+    await _close_turn(bridge, "actually make it twenty one")
+    assert fillers == [True]
+
+
+async def test_a_filler_again_after_the_gap():
+    bridge, _events, _actions, _said, fillers = _filler_bridge()
+    bridge.filler_min_gap_s = 0.05
+    await _close_turn(bridge, "set the thermostat to twenty two")
+    await asyncio.sleep(0.06)
+    await _close_turn(bridge, "now lock the front door")
+    assert fillers == [True, True]
+
+
 async def test_no_filler_without_the_callback():
     bridge, events, _actions, said = _make_bridge(t_eot_ms=20)
     await _close_turn(bridge)
