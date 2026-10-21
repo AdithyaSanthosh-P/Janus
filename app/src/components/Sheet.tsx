@@ -30,7 +30,7 @@ export const Sheet: React.FC<SheetProps> = ({ visible, t, title, subtitle, onClo
             <X size={16} color={t.ink2} />
           </Press>
         </View>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 32, gap: 22 }}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 72, gap: 22 }}>
           {children}
         </ScrollView>
       </View>
