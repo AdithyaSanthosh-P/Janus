@@ -113,7 +113,7 @@ def test_another_change_voids_the_yes_and_asks_again():
     actions = push(h, 4_000_000, [world_event("front door", "jammed")], 5_000_000)
     reask = [t for t in said(actions) if t.startswith("Heads up")]
     assert reask == ["Heads up: The front door changed from locked to jammed since I asked. It's a security action, so I need "
-                     "your yes again: shall I still unlock (front door)?"]
+                     "your yes again: shall I still unlock the front door?"]  # demo speech polish: said from the label
     actions = say(h, 5_100_000, "yes please", 9_000_000)
     assert tool_calls(actions) == ["st_unlock"]
     clean(h)
@@ -200,7 +200,7 @@ def washer_booking(codes):
 def test_the_code_clears_on_camera_and_janus_asks_again_before_booking():
     h, tk, actions = washer_booking(["4C", "none"])
     reask = [t for t in said(actions) if t.startswith("Heads up")]
-    assert reask == ["Heads up: The code changed from 4C to none since I asked. Shall I still book technician (Thursday, morning)?"]
+    assert reask == ["Heads up: The code changed from 4C to none since I asked. Shall I still book a technician for Thursday morning?"]
     assert tk.bookings == []
     later = say(h, 9_100_000, "yes go ahead", 14_000_000)
     assert tool_calls(later) == ["book_technician"] and len(tk.bookings) == 1

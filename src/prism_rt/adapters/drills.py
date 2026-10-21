@@ -88,7 +88,14 @@ class DrillState:
                 return None
             if not all(isinstance(args.get(k), str) and args[k] for k in ("device", "capability", "command")):
                 raise ValueError("external_command needs device, capability and command")
-            return {k: args[k] for k in ("device", "capability", "command")}
+            out = {k: args[k] for k in ("device", "capability", "command")}
+            if "arguments" in args:
+                # Command arguments, e.g. [26] for setCoolingSetpoint: plain numbers or strings only.
+                if not isinstance(args["arguments"], list) or len(args["arguments"]) > 4 or not all(
+                        isinstance(a, (int, float, str)) and not isinstance(a, bool) for a in args["arguments"]):
+                    raise ValueError("external_command arguments must be a short list of numbers or strings")
+                out["arguments"] = list(args["arguments"])
+            return out
         elif name == "offer":
             if not on:
                 return None
@@ -179,11 +186,12 @@ async def run_external_command(backend, args: dict, on_device_state: Callable | 
     if capability in _GARAGE and capability not in caps:
         capability = next((c for c in _GARAGE if c in caps), capability)
     args = {**args, "capability": capability}
-    await raw.command(device["deviceId"], args["capability"], args["command"], [])
+    await raw.command(device["deviceId"], args["capability"], args["command"], list(args.get("arguments") or []))
     if on_device_state is not None:
         status = await raw.status(device["deviceId"])
         attrs = status.get("components", {}).get("main", {}).get(args["capability"], {})
         for attribute, body in attrs.items():
             on_device_state(device["deviceId"], device["label"], args["capability"], attribute, body.get("value"))
             break
-    return f"external_command: {args['command']} sent to {device['label']} as someone else"
+    extra = f" {args['arguments']}" if args.get("arguments") else ""
+    return f"external_command: {args['command']}{extra} sent to {device['label']} as someone else"

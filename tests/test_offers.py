@@ -263,3 +263,63 @@ def test_no_washer_offer_once_a_visit_is_booked_for_it():
     care = DeviceCareToolset()
     status = care._get_device_status({"device_type": "washer"})
     assert run(build_offer("washer_error", None, lambda device: {**status, "visit_booked": True})) is None
+
+
+# ---- the AC offer: someone else changes the thermostat while Janus waits -------
+
+def ac_setup(setpoint=27):
+    mock = MockSmartThings()
+    run(mock.command("thermo-1", "thermostatCoolingSetpoint", "setCoolingSetpoint", [setpoint]))
+    mock.commands.clear()
+    toolset = SmartThingsToolset(mock, sleep=_no_sleep)
+    execute = toolset.make_executor()
+    provider = ScriptedProvider()
+    provider.register("interpret", "no leave it", {"act": "deny", "slot_deltas": []})
+    provider.register("interpret", "yes please", {"act": "confirm", "slot_deltas": []})
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    tools = {m["name"]: {"latency_ms": 200, "handler": (lambda args, n=m["name"]: run(execute(n, args)))} for m in MANIFEST}
+    h = SimHarness(demo_config(), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h.send(0, [manifest_event(MANIFEST)])
+    payload = run(build_offer("ac_hot", toolset.read_target, None, toolset.read_temperature))
+    return h, mock, payload
+
+
+def thermostat_fact(value):
+    return {"type": "world_fact", "payload": {"key": world_target_key("thermostat"), "value": value}}
+
+
+def test_ac_offer_names_the_room_and_the_target():
+    _, _, payload = ac_setup()
+    assert payload["text"] == "It's 29 degrees inside. Shall I set the AC to 24?"
+    assert payload["tool"] == "st_set_cooling_setpoint" and payload["args"] == {"device": "thermostat", "celsius": 24}
+    _, _, none = ac_setup(setpoint=24)
+    assert none is None  # already at 24: nothing to offer
+
+
+def test_ac_offer_someone_else_sets_26_and_janus_asks_again():
+    h, mock, payload = ac_setup()
+    actions = push(h, 500_000, [{"type": "offer", "payload": payload}], 2_500_000)
+    assert said(actions) == [payload["text"]]
+    push(h, 2_600_000, [thermostat_fact(27)], 2_800_000)  # baseline when the question was asked
+    run(mock.command("thermo-1", "thermostatCoolingSetpoint", "setCoolingSetpoint", [26]))  # someone else
+    mock.commands.clear()
+    actions = push(h, 3_500_000, [thermostat_fact(26)], 4_500_000)
+    lines = said(actions)
+    assert any(t.startswith("Heads up: The thermostat changed from 27 to 26") and "Shall I still set the thermostat to 24 degrees?" in t
+               for t in lines), lines
+    assert tool_calls(actions) == []
+    later = say(h, 5_000_000, "no leave it", 8_000_000)
+    assert tool_calls(later) == [] and mock.commands == []
+    assert "Okay, nothing was sent." in said(later)
+    clean(h)
+
+
+def test_ac_offer_someone_else_sets_24_and_the_offer_withdraws_itself():
+    h, mock, payload = ac_setup()
+    push(h, 500_000, [{"type": "offer", "payload": payload}], 2_500_000)
+    push(h, 2_600_000, [thermostat_fact(27)], 2_800_000)
+    actions = push(h, 3_500_000, [thermostat_fact(24)], 4_500_000)
+    assert EVIDENCE_WITHDRAWN.format(device="the thermostat", value=24) in said(actions)
+    later = say(h, 5_000_000, "yes please", 8_000_000)
+    assert tool_calls(actions + later) == [] and mock.commands == []
+    clean(h)

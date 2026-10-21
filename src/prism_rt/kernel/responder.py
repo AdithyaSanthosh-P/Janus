@@ -780,6 +780,9 @@ class FastResponder:
         what = "; ".join(f"{evidence.describe(store, call, key)} changed from {old} to {new}" for key, old, new in diffs)
         tool = store.catalog.get(call.tool)
         action, args = evidence.action_words(call)
+        phrase = action_phrase(store, call.tool, call.args) if store.config.demo_speech_polish_enabled else None
+        if phrase:
+            action, args = phrase, ""  # demo speech polish: "set the thermostat to 24 degrees", not "set cooling setpoint (…)"
         template = EVIDENCE_REASK_SECURITY if tool is not None and tool.requires_confirmation else EVIDENCE_REASK_QUESTION
         question = template.format(action=action, args=args)
         return [

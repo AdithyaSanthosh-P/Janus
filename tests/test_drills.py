@@ -89,6 +89,21 @@ def test_external_command_is_returned_not_applied():
     assert out == {"device": "Janus Lock", "capability": "lock", "command": "unlock"} and s == DrillState()
 
 
+def test_external_command_carries_command_arguments():
+    """Someone else sets the AC to 26 (setCoolingSetpoint takes the value)."""
+    s = DrillState()
+    msg = drill("external_command", device="Janus Thermostat", capability="thermostatCoolingSetpoint",
+                command="setCoolingSetpoint", arguments=[26])
+    assert s.apply(msg)["arguments"] == [26]
+    for bad in ("26", [True], [[26]], list(range(5))):
+        with pytest.raises(ValueError):
+            s.apply(drill("external_command", device="x", capability="y", command="z", arguments=bad))
+    _s, mock, backend, _e, _ = drilled()
+    note = run(run_external_command(backend, {"device": "janus thermostat", "capability": "thermostatCoolingSetpoint",
+                                              "command": "setCoolingSetpoint", "arguments": [26]}))
+    assert mock.commands == [("thermo-1", "thermostatCoolingSetpoint", "setCoolingSetpoint", [26])] and "[26]" in note
+
+
 # ---- SmartThings faults ----------------------------------------------------------
 
 def test_no_drill_passes_through():

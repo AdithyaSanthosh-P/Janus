@@ -704,3 +704,49 @@ async def test_after_the_filler_finishes_speech_rules_are_normal_again():
     bridge.on_agent_speaking_changed(True)   # something else speaking
     await bridge.on_speech_start()
     assert [e["type"] for e in await _drain_nowait(events)] == ["interruption"]
+
+
+# Demo mode: Janus takes back what it is saying when the world changes
+# mid-sentence ("Never mind: ..." / "Heads up: ..."), so the rest of the stale
+# sentence is cut before it is said.
+
+async def test_a_withdrawal_while_speaking_cuts_the_current_sentence():
+    stops = []
+    bridge, _events, actions, said = _make_bridge()
+    bridge.stop_speaking = lambda: stops.append(True)
+    bridge.interrupt_prefixes = ("Never mind:", "Heads up:")
+    bridge.start()
+    bridge.on_agent_speaking_changed(True)
+    await actions.put({"action_type": "final", "body": {"text": "Never mind: the garage is already closed."}})
+    await asyncio.sleep(0.01)
+    assert stops == [True] and said == ["Never mind: the garage is already closed."]
+    await bridge.stop()
+
+
+async def test_a_withdrawal_while_silent_or_without_the_setting_cuts_nothing():
+    stops = []
+    bridge, _events, actions, said = _make_bridge()
+    bridge.stop_speaking = lambda: stops.append(True)
+    bridge.interrupt_prefixes = ("Never mind:",)
+    bridge.start()
+    await actions.put({"action_type": "final", "body": {"text": "Never mind: the garage is already closed."}})
+    await asyncio.sleep(0.01)
+    bridge.interrupt_prefixes = ()
+    bridge.on_agent_speaking_changed(True)
+    await actions.put({"action_type": "final", "body": {"text": "Never mind: the door is already locked."}})
+    await asyncio.sleep(0.01)
+    assert stops == [] and len(said) == 2
+    await bridge.stop()
+
+
+async def test_ordinary_speech_while_speaking_cuts_nothing():
+    stops = []
+    bridge, _events, actions, said = _make_bridge()
+    bridge.stop_speaking = lambda: stops.append(True)
+    bridge.interrupt_prefixes = ("Never mind:", "Heads up:")
+    bridge.start()
+    bridge.on_agent_speaking_changed(True)
+    await actions.put({"action_type": "speak", "body": {"text": "The garage is now closed.", "kind": "inform"}})
+    await asyncio.sleep(0.01)
+    assert stops == [] and said == ["The garage is now closed."]
+    await bridge.stop()

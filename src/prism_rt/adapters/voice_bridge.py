@@ -113,6 +113,11 @@ class VoiceBridge:
     # stops only the utterance playing, so queued speech (an ACK, then the
     # answer to the request just corrected) still played over the user.
     stop_speaking: Callable[[], None] = field(default=lambda: None)
+    # Kernel speech that takes back what Janus is saying ("Never mind: ...",
+    # "Heads up: ..."; demo mode): if it arrives while Janus is still
+    # speaking, the current sentence is cut before it is said -- the world
+    # changed mid-sentence, so the rest of that sentence is stale. Empty = never.
+    interrupt_prefixes: tuple[str, ...] = ()
     # End-of-turn filler (host-side, JANUS_FILLER=1): a short pre-synthesized
     # phrase played the moment a worded turn closes, so the user hears a
     # response while the kernel interprets. None = no filler (the default).
@@ -421,6 +426,9 @@ class VoiceBridge:
                 if text:
                     self._filler_turn = False
                     self._filler_active = False  # kernel speech queued: speech over it is a barge-in
+                    if self.interrupt_prefixes and self._agent_speaking and text.startswith(self.interrupt_prefixes):
+                        self.stop_speaking()
+                        self.on_interruption_logged("agent cut its own sentence: " + text[:40])
                     await self.say(text)
                 if action_type == "final":
                     self.on_final()

@@ -174,6 +174,12 @@ class SmartThingsToolset:
         self._report(device, capability, attribute, value)
         return value
 
+    async def read_temperature(self, spoken="thermostat") -> object:
+        """The room temperature the thermostat reports (temperatureMeasurement),
+        or None when it reports none. For offers (adapters/offers.py)."""
+        device = await self._resolve(spoken, ("thermostatCoolingSetpoint",), "thermostat")
+        return attribute_value(await self.backend.status(device["deviceId"]), "temperatureMeasurement", "temperature")
+
     # ---- reads --------------------------------------------------------------
     async def _st_list_devices(self, a: dict) -> dict:
         devices = await self._all_devices(refresh=True)

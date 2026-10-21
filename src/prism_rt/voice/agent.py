@@ -112,7 +112,7 @@ from prism_rt.observability.effects import effect_summary, format_effect_summary
 from prism_rt.observability.xray import TracedQueue
 from prism_rt.profiles import demo_config, fdb_v3_config
 from prism_rt.voice.camera import FrameStore, pump_video_track
-from config.templates import ACK_DEFAULT
+from config.templates import ACK_DEFAULT, EVIDENCE_REASK, EVIDENCE_WITHDRAWN
 from prism_rt.voice.speech import (
     FasterWhisperSTT,
     KokoroTTS,
@@ -232,6 +232,10 @@ FILLER_MIN_WORDS = _int_env("JANUS_FILLER_MIN_WORDS", 1 if MODE == "demo" else 3
 FILLER_MIN_GAP_S = float(os.environ.get("JANUS_FILLER_MIN_GAP_S") or (5 if MODE == "demo" else 0))
 AEC_WARMUP_S = aec_warmup_duration(MODE, os.environ.get("JANUS_AEC_WARMUP_S"))
 DRILLS_ENABLED = MODE == "demo" and os.environ.get("JANUS_DRILLS") == "1"
+# Demo mode: a withdrawal or re-ask arriving while Janus is still speaking cuts
+# its current sentence first (VoiceBridge.interrupt_prefixes).
+SELF_INTERRUPT_PREFIXES: tuple[str, ...] = (
+    tuple(t.split("{")[0].strip() for t in (EVIDENCE_WITHDRAWN, EVIDENCE_REASK)) if MODE == "demo" else ())
 
 
 def demo_toolset() -> Toolset:
@@ -260,6 +264,7 @@ def demo_toolset() -> Toolset:
         execute.snapshot_states = snapshot_states
         execute.st_backend = backend
         execute.read_target = st.read_target
+        execute.read_temperature = st.read_temperature
         # Appliance offers (adapters/offers.py): the washer's status as the
         # device-care pack reports it; the read also opens the case a booking needs.
         def read_appliance(device: str) -> dict:
@@ -465,6 +470,7 @@ async def entrypoint(ctx: JobContext) -> None:
         play_filler=play_filler if FILLER_ENABLED else None,
         filler_min_words=FILLER_MIN_WORDS,
         filler_min_gap_s=FILLER_MIN_GAP_S,
+        interrupt_prefixes=SELF_INTERRUPT_PREFIXES,
         generic_ack_texts=(ACK_DEFAULT,),
     )
     world_sink["fn"] = bridge.on_world_fact
@@ -605,7 +611,8 @@ async def entrypoint(ctx: JobContext) -> None:
     async def _offer(kind: str) -> None:
         # Janus speaks first, only if the devices give it something to offer.
         try:
-            payload = await build_offer(kind, executor.read_target, getattr(executor, "read_appliance", None))
+            payload = await build_offer(kind, executor.read_target, getattr(executor, "read_appliance", None),
+                                        getattr(executor, "read_temperature", None))
             if payload is None:
                 logger.info("offer %s: nothing to offer right now", kind)
                 return

@@ -24,6 +24,13 @@ OFFERS = {
     "door_unlocked": ("st_lock", "front door", "locked", "The front door is unlocked. Shall I lock it?"),
 }
 
+# The AC offer (demo): "It's 29 degrees inside. Shall I set the AC to 24?",
+# made only while the thermostat is set above AC_TARGET. While Janus waits,
+# a change made by someone else (another phone, the SmartThings app) is a
+# change in what the question rested on: the kernel withdraws the offer if it
+# reached 24 anyway, or asks again (kernel/evidence.py).
+AC_TARGET = 24
+
 # kind -> (appliance, write tool, its arguments, how the visit is said)
 APPLIANCE_OFFERS = {
     "washer_error": ("washer", "book_technician", {"date": "tomorrow", "time_slot": "morning"}, "tomorrow morning"),
@@ -46,13 +53,35 @@ def _appliance_offer(kind: str, read_appliance: Callable[[str], dict] | None) ->
     return {"offer_id": f"{kind}-{next(_ids)}", "text": text, "tool": tool, "args": dict(args)}
 
 
+async def _ac_offer(read_target, read_temperature) -> dict | None:
+    tool = "st_set_cooling_setpoint"
+    try:
+        setpoint = float(await read_target(tool, "thermostat"))
+    except (TypeError, ValueError):
+        return None
+    if setpoint <= AC_TARGET:
+        return None
+    inside = None
+    if read_temperature is not None:
+        try:
+            inside = float(await read_temperature())
+        except (TypeError, ValueError):
+            inside = None
+    reading = f"It's {inside:g} degrees inside" if inside is not None else f"The AC is set to {setpoint:g}"
+    return {"offer_id": f"ac_hot-{next(_ids)}", "text": f"{reading}. Shall I set the AC to {AC_TARGET}?",
+            "tool": tool, "args": {"device": "thermostat", "celsius": AC_TARGET}}
+
+
 async def build_offer(kind: str, read_target: Callable[[str, str], Awaitable[object]],
-                      read_appliance: Callable[[str], dict] | None = None) -> dict | None:
+                      read_appliance: Callable[[str], dict] | None = None,
+                      read_temperature: Callable[[], Awaitable[object]] | None = None) -> dict | None:
     """The `offer` event payload for `kind`, or None when the device is already
     in the state the offer would put it in, the appliance shows no fault, or
     `kind` is unknown."""
     if kind in APPLIANCE_OFFERS:
         return _appliance_offer(kind, read_appliance)
+    if kind == "ac_hot":
+        return await _ac_offer(read_target, read_temperature)
     spec = OFFERS.get(kind)
     if spec is None:
         return None
