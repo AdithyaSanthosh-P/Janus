@@ -44,6 +44,7 @@ _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "worker_result": ("job_id", "kind", "status"),
     "video_frame": ("frame_id",),
     "world_fact": ("key",),
+    "offer": ("offer_id", "text", "tool"),
     "audio_clip": ("clip_id",),
     "timer_fired": ("timer_id", "timer_kind"),
     "watchdog": ("wall_elapsed_s",),

@@ -16,6 +16,8 @@ ordinary handling of a failure:
   model_down        every model call fails as a connection error
   external_command  one command sent straight to the backend by "someone else",
                     outside the kernel and its ledger
+  offer             one-shot: Janus speaks first with an offer (args.kind,
+                    adapters/offers.py), if the devices give it something to offer
   reset             every drill off
 
 The benchmark (fdb mode) never builds any of this.
@@ -36,6 +38,7 @@ from prism_rt.smartthings.client import SmartThingsError
 log = logging.getLogger("janus.drills")
 
 CONTROL_TOPIC = "janus.control"
+_GARAGE = ("garageDoorControl", "doorControl")
 _MAX_DELAY_MS = 15_000
 _TOGGLES = ("st_unreachable", "st_no_confirm", "st_latency", "model_slow", "model_down")
 
@@ -86,6 +89,12 @@ class DrillState:
             if not all(isinstance(args.get(k), str) and args[k] for k in ("device", "capability", "command")):
                 raise ValueError("external_command needs device, capability and command")
             return {k: args[k] for k in ("device", "capability", "command")}
+        elif name == "offer":
+            if not on:
+                return None
+            if not isinstance(args.get("kind"), str) or not args["kind"]:
+                raise ValueError("offer needs a kind")
+            return {"offer": args["kind"]}
         else:
             raise ValueError(f"unknown drill {name!r}")
         return None
@@ -163,6 +172,13 @@ async def run_external_command(backend, args: dict, on_device_state: Callable | 
     if len(match) != 1:
         raise ValueError(f"external_command: no single device matches {args['device']!r}")
     device = match[0]
+    # A garage is garageDoorControl on some devices and doorControl on others;
+    # the app cannot know which, so either name means the one the device has.
+    caps = {c["id"] for comp in device.get("components", []) for c in comp.get("capabilities", [])}
+    capability = args["capability"]
+    if capability in _GARAGE and capability not in caps:
+        capability = next((c for c in _GARAGE if c in caps), capability)
+    args = {**args, "capability": capability}
     await raw.command(device["deviceId"], args["capability"], args["command"], [])
     if on_device_state is not None:
         status = await raw.status(device["deviceId"])

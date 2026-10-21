@@ -310,3 +310,19 @@ def test_external_command_reports_the_tile_even_while_smartthings_is_drilled_dow
 
 def test_failure_notice_never_denies_earlier_work():
     assert "anything" not in INTERPRET_FAILED and "reach" not in INTERPRET_FAILED
+
+
+def test_offer_drill_is_returned_for_the_worker():
+    s = DrillState()
+    assert s.apply(drill("offer", kind="garage_open")) == {"offer": "garage_open"}
+    assert s.apply(drill("offer", on=False, kind="garage_open")) is None
+    assert s == DrillState()
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        s.apply(drill("offer"))
+
+
+def test_external_garage_command_works_whichever_capability_the_device_has():
+    _s, mock, backend, _e, _ = drilled()  # the mock garage is garageDoorControl
+    run(run_external_command(backend, {"device": "Janus Garage", "capability": "doorControl", "command": "open"}))
+    assert mock.commands == [("garage-1", "garageDoorControl", "open", [])]

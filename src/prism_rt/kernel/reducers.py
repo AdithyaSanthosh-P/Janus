@@ -15,6 +15,7 @@ from prism_rt.kernel.audio import AsrScheduler
 from prism_rt.kernel.frames import FrameScheduler
 from prism_rt.kernel.interpret_apply import (
     _abandon_goal,
+    user_content_pending,
     active_goal_id,
     advance_interpretation_queue,
     apply_interpretation,
@@ -47,6 +48,7 @@ from prism_rt.model.events import (
     VideoFramePayload,
     WorkerResultPayload,
     WorldFactPayload,
+    OfferPayload,
 )
 from prism_rt.model.types import (
     BindingKind,
@@ -60,6 +62,9 @@ from prism_rt.model.types import (
     StepKind,
     TaskState,
     ToolMutability,
+    ActionSpec,
+    InterpretAct,
+    TurnInterpretation,
 )
 from prism_rt.store.session import StoreTxn
 
@@ -293,6 +298,11 @@ def _apply_user_speech(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) 
     """Config.vad_floor_enabled: records whether the user currently holds the
     floor audibly. Turns stay text-driven (TurnManager); this only feeds the
     holds in CommitGate and FastResponder (`kernel/commit.py.user_audibly_active`)."""
+    if txn.store.config.proactive_offers_enabled:
+        # Read only by _apply_offer: Janus never speaks first over the user.
+        txn.facts.set("offer.user_speaking", env.payload.active is True, FactStatus.COMMITTED,
+                      Provenance(source="user", event_id=env.event_id, step_no=step_no, ts_us=now_us),
+                      rule="voice.user_speech.offer")
     if not txn.store.config.vad_floor_enabled:
         return
     active = env.payload.active is True
@@ -304,6 +314,49 @@ def _apply_user_speech(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) 
         txn.store.timers.schedule("user_active_cap", now_us + txn.store.config.vad_floor_max_ms * 1000)
     else:
         txn.store.timers.cancel("user_active_cap")
+
+
+def _apply_offer(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
+    """Config.proactive_offers_enabled: Janus speaks first. The offer becomes
+    an ordinary new goal with one compiled write and no go-ahead, exactly what
+    the Interpreter would produce for a request the user has not yet
+    confirmed, so everything a held write already does applies: CommitGate
+    G4 holds it, the responder asks (with the offer's own sentence), "yes"
+    sends it once, "no" withdraws it, and evidence-bound confirmation
+    withdraws it when the device gets there on its own. Dropped (and
+    recorded) when a request is running, the user is speaking or still being
+    understood, or the tool is not a known write."""
+    if not txn.store.config.proactive_offers_enabled:
+        return
+    payload: OfferPayload = env.payload
+    prov = Provenance(source="system", event_id=env.event_id, step_no=step_no, ts_us=now_us)
+    spec = txn.store.catalog.get(payload.tool)
+    speaking = txn.facts.get("offer.user_speaking")
+    reason = None
+    if spec is None or spec.mutability != ToolMutability.STATE_CHANGING:
+        reason = "not a known write"
+    elif active_goal_id(txn.store) is not None:
+        reason = "a request is running"
+    elif (speaking is not None and speaking.status != FactStatus.RETRACTED and speaking.value is True) \
+            or txn.store.turn_log.open_turn_id() is not None or user_content_pending(txn.store):
+        reason = "the user is speaking"
+    if reason is not None:
+        txn.facts.set(f"offer.{payload.offer_id}.dropped", reason, FactStatus.COMMITTED, prov, rule="reducers.offer_dropped")
+        return
+    interp = TurnInterpretation(
+        turn_id=f"offer.{payload.offer_id}",
+        input_digest="offer",
+        act=InterpretAct.NEW_GOAL,
+        intent=payload.tool,
+        actions=(ActionSpec(tool=payload.tool, args=dict(payload.args or {})),),
+        commit_intent=False,
+    )
+    gid = apply_interpretation(interp, txn, now_us, step_no, event_id=env.event_id)
+    if gid is None:
+        return
+    txn.facts.set(f"goal.{gid}.offer_text", payload.text, FactStatus.COMMITTED, prov, rule="reducers.offer")
+    # The offer is its own opening line: no "Got it, working on it" before it.
+    txn.facts.set(f"ack.{gid}.compiled", 0, FactStatus.COMMITTED, prov, rule="reducers.offer")
 
 
 def _apply_world_fact(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:
@@ -719,6 +772,7 @@ _HANDLERS = {
     "text_chunk": _apply_text_chunk,
     "video_frame": _apply_video_frame,
     "world_fact": _apply_world_fact,
+    "offer": _apply_offer,
     "audio_clip": _apply_audio_clip,
     "end_of_turn": _apply_end_of_turn,
     "interruption": _apply_interruption,

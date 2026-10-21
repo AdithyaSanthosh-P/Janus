@@ -184,6 +184,7 @@ def demo_config(**overrides) -> Config:
         evidence_bound_confirmation_enabled=True,
         final_contradiction_guard_enabled=True,
         demo_speech_polish_enabled=True,
+        proactive_offers_enabled=True,
         unclear_reask_delay_ms=2000,
         turn_stall_salvage_ms=15_000,
         clarify_reextract_enabled=True,

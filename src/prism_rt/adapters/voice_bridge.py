@@ -184,6 +184,11 @@ class VoiceBridge:
         evidence-bound confirmation (kernel/evidence.py)."""
         await self.events.put({"type": "world_fact", "ts_us": self.now_us(), "payload": {"key": key, "value": value}})
 
+    async def on_offer(self, payload: dict) -> None:
+        """Janus speaks first with an offer (Config.proactive_offers_enabled;
+        payload from adapters/offers.py.build_offer)."""
+        await self.events.put({"type": "offer", "ts_us": self.now_us(), "payload": payload})
+
     async def on_speech_start(self) -> None:
         """User speech started (VAD). Cancels any pending end-of-turn
         countdown (the user is still talking); if the agent was speaking,

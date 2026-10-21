@@ -97,6 +97,7 @@ from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter
 from prism_rt.adapters.voice_bridge import VoiceBridge
 from prism_rt.adapters.voice_settings import aec_warmup_duration
+from prism_rt.adapters.offers import build_offer
 from prism_rt.adapters.world_watch import WorldWatcher
 from prism_rt.devicecare import DeviceCareToolset
 from prism_rt.entry import setup
@@ -576,6 +577,18 @@ async def entrypoint(ctx: JobContext) -> None:
         except Exception:  # noqa: BLE001 - a drill must never break the conversation
             logger.warning("external_command drill failed", exc_info=True)
 
+    async def _offer(kind: str) -> None:
+        # Janus speaks first, only if the devices give it something to offer.
+        try:
+            payload = await build_offer(kind, executor.read_target)
+            if payload is None:
+                logger.info("offer %s: nothing to offer right now", kind)
+                return
+            logger.info("offer %s: %s", kind, payload["text"])
+            await bridge.on_offer(payload)
+        except Exception:  # noqa: BLE001 - a drill must never break the conversation
+            logger.warning("offer drill failed", exc_info=True)
+
     def _on_data(packet) -> None:
         if packet.topic != CONTROL_TOPIC:
             return
@@ -589,7 +602,9 @@ async def entrypoint(ctx: JobContext) -> None:
             logger.warning("drill refused from %s: %s", sender, exc)
             return
         logger.info("drill from %s; active: %s", sender, ", ".join(drills.active()) or "none")
-        if external is not None:
+        if external is not None and "offer" in external:
+            _spawn(_offer(external["offer"]))
+        elif external is not None:
             _spawn(_external_command(external))
 
     if drills is not None:

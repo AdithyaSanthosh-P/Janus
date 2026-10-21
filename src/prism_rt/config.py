@@ -234,6 +234,14 @@ class Config:
     # of "didn't quite catch that". Action phrases come from the manifest's
     # `label` (replies.action_phrase), which only the demo packs declare.
     demo_speech_polish_enabled: bool = False
+    # Proactive offers: the host may ask Janus to speak first ("The garage is
+    # open. Shall I close it?"), as an `offer` event naming one write. The
+    # offer becomes an ordinary goal whose write waits for the user's yes
+    # (CommitGate G4): "yes" sends it once, "no" withdraws it, and with
+    # evidence_bound_confirmation_enabled it withdraws itself when the device
+    # reaches that state on its own. Accepted only when no request is
+    # running and the user is not speaking. Demo profile only.
+    proactive_offers_enabled: bool = False
     # How long the Q6a re-ask waits after the unclear turn was interpreted,
     # and it is dropped if the user has started another turn by then. Found
     # live (2026-09-27): a hesitant opener ("Um so uh...") followed by a

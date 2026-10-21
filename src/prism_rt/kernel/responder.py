@@ -667,6 +667,9 @@ class FastResponder:
                 text = CONFIRM_SECURITY.format(action=call.tool.removeprefix("st_").replace("_", " "), args=f" ({values})" if values else "")
             else:
                 text = f"Shall I go ahead and {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
+            offer = store.facts.get(f"goal.{goal_id}.offer_text")
+            if offer is not None and offer.status != FactStatus.RETRACTED and offer.value:
+                text = offer.value  # Config.proactive_offers_enabled: Janus's own opening question
             repeat = store.facts.get(f"goal.{goal_id}.repeat_of")
             if repeat is not None and repeat.status != FactStatus.RETRACTED:
                 text = (
