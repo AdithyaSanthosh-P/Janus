@@ -521,9 +521,18 @@ async def entrypoint(ctx: JobContext) -> None:
 
     ctx.add_shutdown_callback(_shutdown)
 
+    async def _until_connected() -> None:
+        # The kernel's first events (the session badge, the device tiles) are
+        # queued before `session.start` connects the room; publishing then
+        # fails ("cannot access local participant before connecting") and the
+        # events are lost. Found on the first live run, 21 Oct.
+        while not ctx.room.isconnected():
+            await asyncio.sleep(0.1)
+
     async def _publish_events() -> None:
         while True:
             event = await event_queue.get()
+            await _until_connected()
             try:
                 await ctx.room.local_participant.publish_data(
                     json.dumps(event, separators=(",", ":")).encode(), reliable=True, topic="janus.events"
@@ -532,7 +541,9 @@ async def entrypoint(ctx: JobContext) -> None:
                 logger.warning("could not publish %s event", event.get("type"), exc_info=True)
 
     async def _announce() -> None:
-        # A late-joining app gets the session badge and the device tiles again.
+        # A late-joining app gets the session badge and the device tiles again;
+        # one already in the room when the agent connects gets them here too.
+        await _until_connected()
         feed.session_started()
         snapshot = getattr(executor, "snapshot_states", None)
         if snapshot is not None:
