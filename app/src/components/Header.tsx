@@ -1,37 +1,19 @@
 import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withSpring,
-  withRepeat,
-} from 'react-native-reanimated';
-import {
-  Sun,
-  Moon,
-  Radio,
-  Play,
-  Pause,
-  RotateCcw,
-  Mic,
-  MicOff,
-  Camera,
-  CameraOff,
-} from 'lucide-react-native';
-import { LUCID_SPRING_CONFIG } from '../theme/motion';
+import { View, Text } from 'react-native';
+import { Sun, Moon, Play, Pause, RotateCcw, Camera, CameraOff } from 'lucide-react-native';
 import { BackendType } from '../types/janus';
-
-/**
- * 3-Bullet Architecture Plan:
- * - Primitives: Header container with vector action icons, status pills, and controls.
- * - Animation: Reanimated 3 with scale pulse on active mic status and spring transitions on mode switch.
- * - Theming: Native dark (bg-zinc-950, border-zinc-800) and light (bg-white, border-slate-200) support.
- */
+import { tokens } from '../theme/colors';
+import { type } from '../theme/type';
+import { Press } from './primitives';
+import { ThinkingOrb } from '../orb/ThinkingOrb';
+import { OrbState } from '../orb/types';
+import { WaveformIndicator } from './WaveformIndicator';
 
 interface HeaderProps {
   backend: BackendType;
   connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'demo' | 'error';
   userSpeaking: boolean;
+  orbState: OrbState;
   isDark: boolean;
   demoPlaying: boolean;
   demoSpeed: number;
@@ -50,6 +32,7 @@ export const Header: React.FC<HeaderProps> = ({
   backend,
   connectionStatus,
   userSpeaking,
+  orbState,
   isDark,
   demoPlaying,
   demoSpeed,
@@ -63,397 +46,118 @@ export const Header: React.FC<HeaderProps> = ({
   onResetDemo,
   onOpenDrillDrawer,
 }) => {
-  const micPulse = useSharedValue(1);
+  const t = tokens(isDark);
+  const live = connectionStatus === 'connected';
 
-  React.useEffect(() => {
-    if (userSpeaking) {
-      micPulse.value = withRepeat(
-        withSpring(1.15, LUCID_SPRING_CONFIG),
-        -1,
-        true
-      );
-    } else {
-      micPulse.value = withSpring(1.0, LUCID_SPRING_CONFIG);
-    }
-  }, [userSpeaking]);
-
-  const micAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: micPulse.value }],
-  }));
-
-  // Connection badge color
-  const statusColor =
-    connectionStatus === 'connected'
-      ? '#10b981'
+  const connection =
+    live
+      ? { dot: t.positive.mark, text: 'Live' }
       : connectionStatus === 'demo'
-      ? '#8b5cf6'
+      ? { dot: t.neutral.mark, text: 'Demo file' }
       : connectionStatus === 'connecting'
-      ? '#f59e0b'
-      : '#71717a';
-
-  const statusLabel =
-    connectionStatus === 'connected'
-      ? 'Live'
-      : connectionStatus === 'demo'
-      ? 'Demo Mode'
-      : connectionStatus === 'connecting'
-      ? 'Connecting...'
-      : 'Offline';
+      ? { dot: t.caution.mark, text: 'Connecting…' }
+      : { dot: t.ink3, text: 'Offline' };
 
   // Never claim a backend the app hasn't been told about: "Not connected"
   // until the agent's session_started, and a recording is labelled as one.
-  const green = { bg: isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5', border: isDark ? 'rgba(16, 185, 129, 0.3)' : '#a7f3d0', color: '#10b981' };
-  const amber = { bg: isDark ? 'rgba(245, 158, 11, 0.15)' : '#fffbeb', border: isDark ? 'rgba(245, 158, 11, 0.3)' : '#fde68a', color: '#f59e0b' };
-  const grey = { bg: isDark ? '#27272a' : '#f1f5f9', border: isDark ? '#3f3f46' : '#e2e8f0', color: isDark ? '#a1a1aa' : '#64748b' };
-  const badge =
+  const backendText =
     connectionStatus === 'demo'
-      ? { ...grey, text: 'DEMO FILE · Recorded' }
+      ? 'Recorded session'
       : backend === 'real'
-      ? { ...green, text: 'REAL · SmartThings Cloud' }
+      ? 'Real · SmartThings Cloud'
       : backend === 'mock'
-      ? { ...amber, text: 'MOCK · Simulated' }
-      : { ...grey, text: 'Not connected' };
+      ? 'Mock · Simulated'
+      : live
+      ? 'Waiting for the agent'
+      : '';
+  const backendInk = backend === 'mock' && connectionStatus !== 'demo' ? t.caution.ink : t.ink2;
+
+  const iconButton = { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: t.surface } as const;
+  const chip = { height: 32, paddingHorizontal: 12, borderRadius: 16, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: t.surface } as const;
 
   return (
-    <View
-      style={{
-        backgroundColor: isDark ? '#09090b' : '#ffffff',
-        borderBottomWidth: 1,
-        borderBottomColor: isDark ? '#27272a' : '#e2e8f0',
-        paddingHorizontal: 16,
-        paddingTop: 12,
-        paddingBottom: 10,
-      }}
-    >
-      {/* Top row: App branding, Backend Badge, Theme Toggle */}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
+    <View style={{ backgroundColor: t.ground, paddingHorizontal: 20, paddingTop: 14, paddingBottom: 12 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text
-            style={{
-              fontSize: 22,
-              fontWeight: '800',
-              letterSpacing: -0.5,
-              color: isDark ? '#fafafa' : '#0f172a',
-            }}
-          >
-            Janus
-          </Text>
-
-          {/* Backend Badge per contract: Long-press in live mode opens Failure Drills drawer */}
-          <TouchableOpacity
-            onLongPress={connectionStatus !== 'demo' ? onOpenDrillDrawer : undefined}
-            delayLongPress={500}
-            activeOpacity={connectionStatus !== 'demo' ? 0.75 : 1}
-            style={{
-              paddingHorizontal: 8,
-              paddingVertical: 3,
-              borderRadius: 12,
-              backgroundColor: badge.bg,
-              borderWidth: 1,
-              borderColor: badge.border,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 10,
-                fontWeight: '700',
-                textTransform: 'uppercase',
-                letterSpacing: 0.5,
-                color: badge.color,
-              }}
-            >
-              {badge.text}
-            </Text>
-          </TouchableOpacity>
-
+          <ThinkingOrb state={orbState} size={34} dark={isDark} label={`Janus, ${orbState}`} />
+          <Text style={[type.largeTitle, { color: t.ink }]}>Janus</Text>
         </View>
 
-        {/* Quick controls: Connect, Theme Toggle */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <TouchableOpacity
-            onPress={onOpenConnectModal}
-            activeOpacity={0.7}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 5,
-              paddingHorizontal: 10,
-              paddingVertical: 6,
-              borderRadius: 8,
-              backgroundColor: isDark ? '#27272a' : '#f1f5f9',
-            }}
-          >
-            <Radio size={13} color={isDark ? '#fafafa' : '#334155'} />
-            <Text
-              style={{
-                fontSize: 12,
-                fontWeight: '600',
-                color: isDark ? '#fafafa' : '#334155',
-              }}
+          {live && onToggleCamera && (
+            <Press
+              onPress={onToggleCamera}
+              accessibilityLabel={isCameraOn ? 'Turn camera off' : 'Turn camera on'}
+              style={[iconButton, isCameraOn && { backgroundColor: t.info.bg }]}
+              pressedStyle={{ backgroundColor: t.pressed }}
             >
-              Connect
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
+              {isCameraOn ? <Camera size={17} color={t.info.ink} /> : <CameraOff size={17} color={t.ink2} />}
+            </Press>
+          )}
+          <Press
             onPress={onToggleTheme}
-            activeOpacity={0.7}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: isDark ? '#27272a' : '#f1f5f9',
-            }}
+            accessibilityLabel={isDark ? 'Light appearance' : 'Dark appearance'}
+            style={iconButton}
+            pressedStyle={{ backgroundColor: t.pressed }}
           >
-            {isDark ? (
-              <Sun size={16} color="#fbbf24" />
-            ) : (
-              <Moon size={16} color="#6366f1" />
-            )}
-          </TouchableOpacity>
+            {isDark ? <Sun size={17} color={t.ink2} /> : <Moon size={17} color={t.ink2} />}
+          </Press>
+          <Press onPress={onOpenConnectModal} style={[chip, { height: 36, borderRadius: 18, paddingHorizontal: 14 }]} pressedStyle={{ backgroundColor: t.pressed }}>
+            <Text style={[type.subhead, { color: t.ink, fontWeight: '600' }]}>{live ? 'Connected' : 'Connect'}</Text>
+          </Press>
         </View>
       </View>
 
-      {/* Secondary Row: Connection status, Mic indicator, Demo controls */}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginTop: 8,
-        }}
-      >
-        {/* Left: Connection pill + Live Mic Status */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 5,
-              paddingHorizontal: 8,
-              paddingVertical: 4,
-              borderRadius: 8,
-              backgroundColor: isDark ? '#18181b' : '#f1f5f9',
-              borderWidth: 1,
-              borderColor: isDark ? '#27272a' : '#e2e8f0',
-            }}
-          >
-            <View
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: 4,
-                backgroundColor: statusColor,
-              }}
-            />
-            <Text
-              style={{
-                fontSize: 11,
-                fontWeight: '600',
-                color: isDark ? '#e4e4e7' : '#334155',
-              }}
-            >
-              {statusLabel}
-            </Text>
-          </View>
+      {/* Status line: connection and backend (long-press opens the failure drills live) */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, minHeight: 32 }}>
+        <Press
+          onLongPress={connectionStatus !== 'demo' ? onOpenDrillDrawer : undefined}
+          delayLongPress={500}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}
+        >
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: connection.dot }} />
+          <Text style={[type.footnote, { color: t.ink, fontWeight: '600' }]}>{connection.text}</Text>
+          <Text style={[type.footnote, { color: backendInk, flexShrink: 1 }]} numberOfLines={1}>
+            {backendText}
+          </Text>
+        </Press>
 
-          {/* Camera: sends the phone's back camera to Janus (device-care scene) */}
-          {connectionStatus === 'connected' && onToggleCamera && (
-            <TouchableOpacity
-              onPress={onToggleCamera}
-              activeOpacity={0.75}
-              accessibilityLabel={isCameraOn ? 'Turn camera off' : 'Turn camera on'}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 5,
-                paddingHorizontal: 8,
-                paddingVertical: 4,
-                borderRadius: 8,
-                backgroundColor: isCameraOn ? (isDark ? 'rgba(59, 130, 246, 0.2)' : '#dbeafe') : isDark ? '#18181b' : '#f1f5f9',
-                borderWidth: 1,
-                borderColor: isCameraOn ? '#3b82f6' : isDark ? '#27272a' : '#e2e8f0',
-              }}
-            >
-              {isCameraOn ? (
-                <Camera size={12} color="#3b82f6" />
-              ) : (
-                <CameraOff size={12} color={isDark ? '#71717a' : '#94a3b8'} />
-              )}
-              <Text style={{ fontSize: 11, fontWeight: '600', color: isCameraOn ? '#3b82f6' : isDark ? '#71717a' : '#94a3b8' }}>
-                {isCameraOn ? 'Camera' : 'Cam off'}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Dynamic Mic Waveform Pill */}
-          <Animated.View
-            style={[
-              {
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 5,
-                paddingHorizontal: 8,
-                paddingVertical: 4,
-                borderRadius: 8,
-                backgroundColor: userSpeaking
-                  ? isDark
-                    ? 'rgba(16, 185, 129, 0.2)'
-                    : '#dcfce7'
-                  : isDark
-                  ? '#18181b'
-                  : '#f1f5f9',
-                borderWidth: 1,
-                borderColor: userSpeaking
-                  ? '#10b981'
-                  : isDark
-                  ? '#27272a'
-                  : '#e2e8f0',
-              },
-              micAnimatedStyle,
-            ]}
-          >
-            {userSpeaking ? (
-              <Mic size={12} color="#10b981" />
-            ) : (
-              <MicOff size={12} color={isDark ? '#71717a' : '#94a3b8'} />
+        {live ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {userSpeaking && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <WaveformIndicator active size="sm" color={t.ink} />
+                <Text style={[type.footnote, { color: t.ink2 }]}>Listening</Text>
+              </View>
             )}
-            <Text
-              style={{
-                fontSize: 11,
-                fontWeight: '600',
-                color: userSpeaking
-                  ? '#10b981'
-                  : isDark
-                  ? '#71717a'
-                  : '#94a3b8',
-              }}
-            >
-              {userSpeaking ? 'Listening' : 'Muted'}
-            </Text>
-          </Animated.View>
-        </View>
-
-        {/* Right: demo playback controls (sample-file mode only; they do nothing live),
-            or, live, the DRILL ON pill while any failure drill is on */}
-        {connectionStatus === 'connected' ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            {/* DRILL ON Badge: Highlighted when any failure injection toggle is active */}
-            {isDrillActive && (
-              <TouchableOpacity
-                onPress={onOpenDrillDrawer}
-                activeOpacity={0.8}
-                style={{
-                  paddingHorizontal: 6,
-                  paddingVertical: 2,
-                  borderRadius: 8,
-                  backgroundColor: 'rgba(239, 68, 68, 0.2)',
-                  borderWidth: 1,
-                  borderColor: '#ef4444',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 4,
-                }}
-              >
-                <View
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: 3,
-                    backgroundColor: '#ef4444',
-                  }}
-                />
-                <Text
-                  style={{
-                    fontSize: 10,
-                    fontWeight: '800',
-                    color: '#ef4444',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  DRILL ON
-                </Text>
-              </TouchableOpacity>
+            {isDrillActive ? (
+              <Press onPress={onOpenDrillDrawer} style={[chip, { height: 28, paddingHorizontal: 10, backgroundColor: t.negative.bg }]}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: t.negative.mark }} />
+                <Text style={[type.caption, { color: t.negative.ink, fontWeight: '600' }]}>Drill on</Text>
+              </Press>
+            ) : (
+              <Press onPress={onOpenDrillDrawer} accessibilityLabel="Failure drills" style={[chip, { height: 28, paddingHorizontal: 10 }]} pressedStyle={{ backgroundColor: t.pressed }}>
+                <Text style={[type.caption, { color: t.ink2, fontWeight: '600' }]}>Drills</Text>
+              </Press>
             )}
           </View>
         ) : (
+          // Sample-file playback controls; they do nothing live, so live hides them.
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <TouchableOpacity
+            <Press
               onPress={onToggleDemoPlay}
-              activeOpacity={0.7}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                paddingHorizontal: 9,
-                paddingVertical: 5,
-                borderRadius: 7,
-                backgroundColor: demoPlaying ? '#ef4444' : '#10b981',
-              }}
+              style={[chip, { backgroundColor: t.inverseFill }]}
+              accessibilityLabel={demoPlaying ? 'Pause' : 'Play Demo'}
             >
-              {demoPlaying ? (
-                <Pause size={12} color="#ffffff" fill="#ffffff" />
-              ) : (
-                <Play size={12} color="#ffffff" fill="#ffffff" />
-              )}
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#ffffff' }}>
-                {demoPlaying ? 'Pause' : 'Play Demo'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={onToggleDemoSpeed}
-              activeOpacity={0.7}
-              style={{
-                paddingHorizontal: 7,
-                paddingVertical: 5,
-                borderRadius: 7,
-                backgroundColor: isDark ? '#27272a' : '#e2e8f0',
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 11,
-                  fontWeight: '700',
-                  color: isDark ? '#fafafa' : '#334155',
-                }}
-              >
-                {demoSpeed}x
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={onResetDemo}
-              activeOpacity={0.7}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                paddingHorizontal: 7,
-                paddingVertical: 5,
-                borderRadius: 7,
-                backgroundColor: isDark ? '#27272a' : '#e2e8f0',
-              }}
-            >
-              <RotateCcw size={11} color={isDark ? '#fafafa' : '#334155'} />
-              <Text
-                style={{
-                  fontSize: 11,
-                  fontWeight: '700',
-                  color: isDark ? '#fafafa' : '#334155',
-                }}
-              >
-                Reset
-              </Text>
-            </TouchableOpacity>
+              {demoPlaying ? <Pause size={13} color={t.inverseInk} fill={t.inverseInk} /> : <Play size={13} color={t.inverseInk} fill={t.inverseInk} />}
+              <Text style={[type.footnote, { color: t.inverseInk, fontWeight: '600' }]}>{demoPlaying ? 'Pause' : 'Play Demo'}</Text>
+            </Press>
+            <Press onPress={onToggleDemoSpeed} style={chip} pressedStyle={{ backgroundColor: t.pressed }}>
+              <Text style={[type.footnote, { color: t.ink, fontWeight: '600', fontVariant: ['tabular-nums'] }]}>{demoSpeed}x</Text>
+            </Press>
+            <Press onPress={onResetDemo} style={[chip, { width: 32, paddingHorizontal: 0, justifyContent: 'center' }]} pressedStyle={{ backgroundColor: t.pressed }} accessibilityLabel="Reset">
+              <RotateCcw size={14} color={t.ink2} />
+            </Press>
           </View>
         )}
       </View>

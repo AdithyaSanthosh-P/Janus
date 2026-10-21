@@ -13,17 +13,13 @@ import { DeviceTiles } from './src/components/DeviceTiles';
 import { LedgerFooter } from './src/components/LedgerFooter';
 import { ConnectModal } from './src/components/ConnectModal';
 import { DrillDrawer } from './src/components/DrillDrawer';
+import { deriveOrbState } from './src/orb/orbState';
+import { useAgentSpeaking } from './src/orb/useAgentSpeaking';
+import { tokens } from './src/theme/colors';
 import { janusStore, JanusState } from './src/store/janusStore';
 import { demoPlaybackService } from './src/services/demoPlaybackService';
 import { livekitService } from './src/services/livekitService';
 import { drillService } from './src/services/drillService';
-
-/**
- * 3-Bullet Architecture Plan:
- * - Primitives: SafeAreaView phone portrait container with Header, Captions, Timeline, Tiles, and Ledger Footer.
- * - Animation: Reanimated 3 with continuous layout transitions and Lucid spring physics.
- * - Theming: Full dynamic dark and light mode theme support (Galaxy clean minimalist aesthetic).
- */
 
 export default function App() {
   const systemColorScheme = useColorScheme();
@@ -92,16 +88,25 @@ export default function App() {
     await livekitService.disconnect();
   };
 
+  const t = tokens(isDark);
+  const agentSpeaking = useAgentSpeaking(state.captions);
+  const orbState = deriveOrbState({
+    connectionStatus: state.connectionStatus,
+    userSpeaking: state.userSpeaking,
+    agentSpeaking,
+    actions: state.actions,
+  });
+
   return (
     <SafeAreaView
       style={{
         flex: 1,
-        backgroundColor: isDark ? '#09090b' : '#f8fafc',
+        backgroundColor: t.ground,
       }}
     >
       <StatusBar
         barStyle={isDark ? 'light-content' : 'dark-content'}
-        backgroundColor={isDark ? '#09090b' : '#ffffff'}
+        backgroundColor={t.ground}
       />
 
       {/* Top Header: Branding, Backend Badge, Mic indicator, Controls, Drill On Badge */}
@@ -109,6 +114,7 @@ export default function App() {
         backend={state.backend}
         connectionStatus={state.connectionStatus}
         userSpeaking={state.userSpeaking}
+        orbState={orbState}
         isDark={isDark}
         demoPlaying={demoStatus.isPlaying}
         demoSpeed={demoStatus.speed}
@@ -130,7 +136,7 @@ export default function App() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           padding: 16,
-          gap: 16,
+          gap: 24,
           paddingBottom: 24,
         }}
         style={{ flex: 1 }}

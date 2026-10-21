@@ -7,7 +7,7 @@ import Animated, {
   withSpring,
   withDelay,
 } from 'react-native-reanimated';
-import { LUCID_SPRING_CONFIG } from '../theme/motion';
+import { SPRING } from '../theme/motion';
 
 /**
  * 3-Bullet Architecture Plan:
@@ -56,7 +56,7 @@ export const WaveformIndicator: React.FC<WaveformIndicatorProps> = ({
       });
     } else {
       barHeights.forEach(height => {
-        height.value = withSpring(0.2, LUCID_SPRING_CONFIG);
+        height.value = withSpring(0.2, SPRING);
       });
     }
   }, [active]);
@@ -82,7 +82,7 @@ export const WaveformIndicator: React.FC<WaveformIndicatorProps> = ({
           style={[
             {
               width: barWidth,
-              backgroundColor: active ? color : '#71717a',
+              backgroundColor: color, opacity: active ? 1 : 0.4,
               borderRadius: barWidth / 2,
             },
             style,

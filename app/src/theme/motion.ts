@@ -1,54 +1,31 @@
 import {
   FadeIn,
   FadeInDown,
-  FadeInUp,
   FadeOut,
-  FadeOutUp,
   LinearTransition,
 } from 'react-native-reanimated';
 
 /**
- * Lucid Motion Physics Configurations (as per SKILL.md)
- * Organic, fluid, snappy spring configurations.
+ * Springs as damping ratio + response (seconds), mapped to Reanimated's
+ * mass/stiffness/damping: stiffness = (2π / response)², damping = 4πζ / response.
+ * Everything is critically damped (ζ = 1): no overshoot unless a gesture
+ * carried momentum, and nothing in this app is thrown.
  */
-export const LUCID_SPRING_CONFIG = {
-  damping: 15,
-  stiffness: 120,
-  mass: 0.5,
-};
+const spring = (response: number, dampingRatio = 1) => ({
+  mass: 1,
+  stiffness: Math.round((2 * Math.PI / response) ** 2),
+  damping: Math.round((4 * Math.PI * dampingRatio) / response),
+});
 
-export const GENTLE_SPRING_CONFIG = {
-  damping: 20,
-  stiffness: 90,
-  mass: 0.8,
-};
+export const SPRING = spring(0.38); // layout, state changes
+export const SPRING_QUICK = spring(0.2); // press feedback
 
-export const SNAPPY_SPRING_CONFIG = {
-  damping: 12,
-  stiffness: 150,
-  mass: 0.4,
-};
+const springify = <T extends { springify: () => any }>(anim: T, s = SPRING) =>
+  anim.springify().mass(s.mass).stiffness(s.stiffness).damping(s.damping);
 
-// Reusable Reanimated Layout Transitions
-export const AppLayoutTransition = LinearTransition.springify()
-  .damping(LUCID_SPRING_CONFIG.damping)
-  .stiffness(LUCID_SPRING_CONFIG.stiffness)
-  .mass(LUCID_SPRING_CONFIG.mass);
-
-export const CardEntryTransition = FadeInDown.springify()
-  .damping(LUCID_SPRING_CONFIG.damping)
-  .stiffness(LUCID_SPRING_CONFIG.stiffness)
-  .mass(LUCID_SPRING_CONFIG.mass);
-
-export const CardExitTransition = FadeOutUp.springify()
-  .damping(LUCID_SPRING_CONFIG.damping)
-  .stiffness(LUCID_SPRING_CONFIG.stiffness)
-  .mass(LUCID_SPRING_CONFIG.mass);
-
-export const BubbleEntryTransition = FadeInUp.springify()
-  .damping(SNAPPY_SPRING_CONFIG.damping)
-  .stiffness(SNAPPY_SPRING_CONFIG.stiffness)
-  .mass(SNAPPY_SPRING_CONFIG.mass);
+export const AppLayoutTransition = springify(LinearTransition);
+export const CardEntryTransition = springify(FadeInDown);
+export const BubbleEntryTransition = springify(FadeIn);
 
 export const FadeQuick = FadeIn.duration(200);
 export const FadeOutQuick = FadeOut.duration(200);

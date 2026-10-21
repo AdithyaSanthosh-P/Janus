@@ -1,24 +1,11 @@
 import React, { useRef, useEffect } from 'react';
 import { View, Text, ScrollView } from 'react-native';
-import Animated, {
-  FadeInUp,
-  LinearTransition,
-} from 'react-native-reanimated';
-import {
-  MessageSquareText,
-  User,
-  Sparkles,
-  HelpCircle,
-} from 'lucide-react-native';
+import Animated from 'react-native-reanimated';
 import { CaptionEntry } from '../types/janus';
-import { LUCID_SPRING_CONFIG } from '../theme/motion';
-
-/**
- * 3-Bullet Architecture Plan:
- * - Primitives: Conversational chat bubbles with speaker icons and live typography.
- * - Animation: Reanimated 3 with springified layout transitions and FadeInUp entry on streaming speech.
- * - Theming: Distinct styling for user, agent, and highlighted clarify queries across dark and light tokens.
- */
+import { tokens } from '../theme/colors';
+import { type } from '../theme/type';
+import { AppLayoutTransition, BubbleEntryTransition } from '../theme/motion';
+import { SectionHeader } from './primitives';
 
 interface CaptionsCardProps {
   captions: CaptionEntry[];
@@ -26,11 +13,9 @@ interface CaptionsCardProps {
   userSpeaking: boolean;
 }
 
-export const CaptionsCard: React.FC<CaptionsCardProps> = ({
-  captions,
-  isDark,
-  userSpeaking,
-}) => {
+/** The conversation as a transcript: your words in a bubble on the right, Janus's on the left. */
+export const CaptionsCard: React.FC<CaptionsCardProps> = ({ captions, isDark, userSpeaking }) => {
+  const t = tokens(isDark);
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
@@ -38,185 +23,41 @@ export const CaptionsCard: React.FC<CaptionsCardProps> = ({
   }, [captions.length, userSpeaking]);
 
   return (
-    <View
-      style={{
-        backgroundColor: isDark ? '#18181b' : '#ffffff',
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: isDark ? '#27272a' : '#e2e8f0',
-        padding: 12,
-        maxHeight: 180,
-      }}
-    >
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 8,
-        }}
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <MessageSquareText size={14} color={isDark ? '#a1a1aa' : '#64748b'} />
-          <Text
-            style={{
-              fontSize: 12,
-              fontWeight: '700',
-              textTransform: 'uppercase',
-              letterSpacing: 0.8,
-              color: isDark ? '#a1a1aa' : '#64748b',
-            }}
-          >
-            Live Conversation
-          </Text>
-        </View>
-
-        {userSpeaking && (
-          <Text
-            style={{
-              fontSize: 11,
-              fontWeight: '600',
-              color: '#3b82f6',
-            }}
-          >
-            User Speaking...
-          </Text>
-        )}
-      </View>
-
-      <ScrollView
-        ref={scrollViewRef}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ gap: 8, paddingBottom: 4 }}
-      >
-        {captions.length === 0 ? (
-          <Text
-            style={{
-              fontSize: 13,
-              fontStyle: 'italic',
-              color: isDark ? '#71717a' : '#94a3b8',
-              textAlign: 'center',
-              paddingVertical: 14,
-            }}
-          >
-            Waiting for speech or starting demo playback...
-          </Text>
-        ) : (
-          captions.map(caption => {
-            const isUser = caption.sender === 'user';
-            const isClarify = caption.kind === 'clarify';
-            const isInterrupted = caption.isInterrupted;
-
-            return (
-              <Animated.View
-                key={caption.id}
-                entering={FadeInUp.springify()
-                  .damping(LUCID_SPRING_CONFIG.damping)
-                  .stiffness(LUCID_SPRING_CONFIG.stiffness)
-                  .mass(LUCID_SPRING_CONFIG.mass)}
-                layout={LinearTransition.springify()
-                  .damping(LUCID_SPRING_CONFIG.damping)
-                  .stiffness(LUCID_SPRING_CONFIG.stiffness)
-                  .mass(LUCID_SPRING_CONFIG.mass)}
-                style={{
-                  alignSelf: isUser ? 'flex-end' : 'flex-start',
-                  maxWidth: '88%',
-                  backgroundColor: isUser
-                    ? isDark
-                      ? '#27272a'
-                      : '#e0e7ff'
-                    : isClarify
-                    ? isDark
-                      ? 'rgba(14, 165, 233, 0.2)'
-                      : '#e0f2fe'
-                    : isDark
-                    ? '#222227'
-                    : '#f1f5f9',
-                  borderRadius: 12,
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  borderWidth: isClarify ? 1.5 : 1,
-                  borderColor: isClarify
-                    ? '#0284c7'
-                    : isUser
-                    ? isDark
-                      ? '#3f3f46'
-                      : '#c7d2fe'
-                    : isDark
-                    ? '#2e2e33'
-                    : '#e2e8f0',
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 5,
-                    marginBottom: 3,
-                  }}
+    <View>
+      <SectionHeader t={t} title="Conversation" />
+      <View style={{ backgroundColor: t.surface, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 12, maxHeight: 210 }}>
+        <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 2 }}>
+          {captions.length === 0 ? (
+            <Text style={[type.subhead, { color: t.ink3, paddingVertical: 12 }]}>
+              Say something to Janus, or play the demo file.
+            </Text>
+          ) : (
+            captions.map(caption => {
+              const isUser = caption.sender === 'user';
+              const isClarify = caption.kind === 'clarify';
+              return (
+                <Animated.View
+                  key={caption.id}
+                  entering={BubbleEntryTransition}
+                  layout={AppLayoutTransition}
+                  style={
+                    isUser
+                      ? { alignSelf: 'flex-end', maxWidth: '84%', backgroundColor: t.raised, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8 }
+                      : { alignSelf: 'flex-start', maxWidth: '92%', paddingVertical: 2 }
+                  }
                 >
-                  {isUser ? (
-                    <User size={11} color={isDark ? '#93c5fd' : '#3b82f6'} />
-                  ) : isClarify ? (
-                    <HelpCircle size={11} color="#0284c7" />
-                  ) : (
-                    <Sparkles size={11} color={isDark ? '#a1a1aa' : '#64748b'} />
-                  )}
-                  <Text
-                    style={{
-                      fontSize: 10,
-                      fontWeight: '700',
-                      textTransform: 'uppercase',
-                      color: isUser
-                        ? isDark
-                          ? '#93c5fd'
-                          : '#3b82f6'
-                        : isClarify
-                        ? '#0284c7'
-                        : isDark
-                        ? '#a1a1aa'
-                        : '#64748b',
-                    }}
-                  >
-                    {isUser ? 'You' : isClarify ? 'Janus (Clarification)' : 'Janus'}
+                  <Text style={[type.body, { color: isClarify ? t.info.ink : t.ink, fontWeight: isClarify ? '500' : '400' }]}>
+                    {caption.text}
                   </Text>
-
-
-
-                  {isInterrupted && (
-                    <Text
-                      style={{
-                        fontSize: 9,
-                        fontWeight: '700',
-                        color: '#ef4444',
-                      }}
-                    >
-                      [Interrupted]
-                    </Text>
+                  {caption.isInterrupted && (
+                    <Text style={[type.caption, { color: t.ink3, marginTop: 2 }]}>Interrupted</Text>
                   )}
-                </View>
-
-                <Text
-                  style={{
-                    fontSize: 13,
-                    lineHeight: 18,
-                    fontWeight: isClarify ? '600' : '400',
-                    color: isClarify
-                      ? isDark
-                        ? '#38bdf8'
-                        : '#0369a1'
-                      : isDark
-                      ? '#f4f4f5'
-                      : '#0f172a',
-                  }}
-                >
-                  {caption.text}
-                </Text>
-              </Animated.View>
-            );
-          })
-        )}
-      </ScrollView>
+                </Animated.View>
+              );
+            })
+          )}
+        </ScrollView>
+      </View>
     </View>
   );
 };
