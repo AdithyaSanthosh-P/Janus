@@ -30,7 +30,8 @@ ROOM = "janus-demo-room"
 FRAME_MS = 20
 
 # A step is ("say", text) | ("pause", seconds) | ("settle", max_seconds) |
-# ("drill", name, on, args) | ("note", text).  `settle` waits until the agent
+# ("drill", name, on, args) | ("note", text) | ("video", text): what our
+# synthetic "camera" shows (a washer display with `text`, "" for a blank one).  `settle` waits until the agent
 # has been quiet (no event, no sound) for `quiet` seconds (default 5; a read-back
 # or a delayed model is silent for longer, so those scenarios say 15).
 SCENARIOS: dict[str, list[tuple]] = {
@@ -112,6 +113,15 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "No, leave it."),
         ("settle", 30),
     ],
+    "camera": [
+        ("note", "the camera reads the washer's code; the code clears while the booking waits"),
+        ("video", "4C"),
+        ("pause", 3.0),
+        ("say", "My washer is showing this error code. Should I get a technician for Thursday morning?"),
+        ("settle", 40, 8),
+        ("video", ""),
+        ("settle", 40, 12),
+    ],
     "status": [
         ("say", "Is the front door locked?"),
         ("settle", 30),
@@ -130,6 +140,26 @@ def _load_env() -> None:
                     os.environ[key.strip()] = value.strip().strip('"').strip("'")
 
 
+def washer_frame(text: str, width: int = 640, height: int = 480) -> bytes:
+    """An RGBA frame of a washer's control panel whose display shows `text`."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    img = Image.new("RGBA", (width, height), (225, 228, 232, 255))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((60, 90, 580, 390), radius=24, fill=(40, 44, 52, 255))
+    d.ellipse((90, 160, 250, 320), outline=(150, 155, 165, 255), width=10)
+    d.rectangle((300, 170, 540, 290), fill=(8, 10, 12, 255))
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 88)
+        small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
+    except OSError:
+        font = small = ImageFont.load_default()
+    if text:
+        d.text((420, 230), text, fill=(255, 70, 50, 255), font=font, anchor="mm")
+    d.text((320, 120), "WASHER", fill=(200, 205, 210, 255), font=small, anchor="mm")
+    return img.tobytes()
+
+
 class Driver:
     def __init__(self, voice, room: rtc.Room, source: rtc.AudioSource) -> None:
         self.voice = voice
@@ -140,6 +170,8 @@ class Driver:
         self.last_activity = time.monotonic()
         self.marker: float | None = None  # end of our last line
         self.first_sound: float | None = None
+        self.video: rtc.VideoSource | None = None
+        self.video_frame = washer_frame("")
 
     def log(self, text: str) -> None:
         print(f"+{time.monotonic() - self.t0:7.2f}s  {text}", flush=True)
@@ -158,6 +190,12 @@ class Driver:
             chunk, pending = (pending[:step], pending[step:]) if pending else (silence, b"")
             chunk = chunk.ljust(step, b"\x00")
             await self.source.capture_frame(rtc.AudioFrame(chunk, KOKORO_SAMPLE_RATE, 1, step // 2))
+
+    async def pump_video(self) -> None:
+        while True:
+            if self.video is not None:
+                self.video.capture_frame(rtc.VideoFrame(640, 480, rtc.VideoBufferType.RGBA, self.video_frame))
+            await asyncio.sleep(0.5)
 
     async def say(self, text: str) -> None:
         pcm = await asyncio.to_thread(self.voice.synthesize_pcm16, text)
@@ -230,6 +268,16 @@ class Driver:
                 await self.settle(step[1], step[2] if len(step) > 2 else 5.0)
             elif op == "drill":
                 await self.drill(step[1], step[2], step[3])
+            elif op == "video":
+                if self.video is None:
+                    self.video = rtc.VideoSource(640, 480)
+                    await self.room.local_participant.publish_track(
+                        rtc.LocalVideoTrack.create_video_track("camera", self.video),
+                        rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_CAMERA),
+                    )
+                    asyncio.ensure_future(self.pump_video())
+                self.video_frame = washer_frame(step[1])
+                self.log(f"CAMERA   shows {step[1]!r}" if step[1] else "CAMERA   shows a blank display")
             elif op == "note":
                 self.log(f"-- {step[1]}")
 
