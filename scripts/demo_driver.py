@@ -133,6 +133,26 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "Is the front door locked?"),
         ("settle", 30),
     ],
+    "garage_self_interrupt": [
+        ("note", "Janus offers to close the garage; someone else closes it while Janus is still asking"),
+        ("drill", "external_command", True, {"device": "Janus Garage", "capability": "doorControl", "command": "open"}),
+        ("settle", 15),
+        ("drill", "offer", True, {"kind": "garage_open"}),
+        ("await_agent", 15),
+        ("pause", 1.2),
+        ("drill", "external_command", True, {"device": "Janus Garage", "capability": "doorControl", "command": "close"}),
+        ("settle", 20),
+    ],
+    "barge_in": [
+        ("note", "the camera reads 4C; the user cuts Janus off mid-explanation and changes what they want"),
+        ("video", "4C"),
+        ("pause", 3.0),
+        ("say", "My washer stopped and it's showing this error. What does it mean?"),
+        ("await_agent", 30),
+        ("pause", 2.5),
+        ("say", "Wait, just book a technician. Friday afternoon."),
+        ("settle", 40, 8),
+    ],
     "washer_offer_yes": [
         ("note", "survey B1: Janus offers a technician for the washer's fault; the user accepts"),
         ("drill", "offer", True, {"kind": "washer_error"}),
@@ -195,6 +215,8 @@ class Driver:
         self.first_sound: float | None = None
         self.video: rtc.VideoSource | None = None
         self.video_frame = washer_frame("")
+        self.agent_lines = 0  # agent_said lines that are real speech (not filler or ack)
+        self.mark = 0  # agent_lines at the last say/drill, for "await_agent"
 
     def log(self, text: str) -> None:
         print(f"+{time.monotonic() - self.t0:7.2f}s  {text}", flush=True)
@@ -223,6 +245,7 @@ class Driver:
     async def say(self, text: str) -> None:
         pcm = await asyncio.to_thread(self.voice.synthesize_pcm16, text)
         self.log(f"YOU SAY  {text!r} ({len(pcm) / 2 / KOKORO_SAMPLE_RATE:.1f}s)")
+        self.mark = self.agent_lines
         self.first_sound = None
         self.marker = None
         self.queue.put_nowait(pcm)
@@ -249,6 +272,8 @@ class Driver:
         if kind in ("user_speaking", "turn_closed"):
             return
         self.last_activity = time.monotonic()
+        if kind == "agent_said" and ev.get("kind") not in ("filler", "ack"):
+            self.agent_lines += 1
         detail = {
             "heard": lambda: repr(ev.get("text")),
             "agent_said": lambda: f"[{ev.get('kind')}] {ev.get('text')!r}",
@@ -276,6 +301,7 @@ class Driver:
 
     async def drill(self, name: str, on: bool, args: dict) -> None:
         self.log(f"DRILL    {name} on={on} {args or ''}")
+        self.mark = self.agent_lines
         packet = {"v": 1, "type": "drill", "name": name, "on": on, "args": args}
         await self.room.local_participant.publish_data(json.dumps(packet).encode(), reliable=True, topic="janus.control")
         self.last_activity = time.monotonic()
@@ -301,6 +327,13 @@ class Driver:
                     asyncio.ensure_future(self.pump_video())
                 self.video_frame = washer_frame(step[1])
                 self.log(f"CAMERA   shows {step[1]!r}" if step[1] else "CAMERA   shows a blank display")
+            elif op == "await_agent":
+                # Wait until Janus says a real line after our last say/drill (it
+                # is speaking from about now on), so the next step lands over it.
+                start = time.monotonic()
+                while self.agent_lines <= self.mark and time.monotonic() - start < step[1]:
+                    await asyncio.sleep(0.05)
+                self.log("  (await_agent: Janus is speaking)" if self.agent_lines > self.mark else "  (await_agent: timed out)")
             elif op == "note":
                 self.log(f"-- {step[1]}")
 
