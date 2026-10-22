@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 
+from prism_rt.canonical import social_kind
 from prism_rt.model.types import CallStatus, EffectStatus, FactStatus, GoalStatus, Provenance, StepKind
 
 HONEST_REPLY_KEY = "session.honest_reply"
@@ -287,6 +288,26 @@ def salvage_text(store, goal_id: str) -> str:
 
 
 POLITE_REPLY = "Happy to help — what would you like me to do?"
+
+
+def social_reply(text: str) -> str | None:
+    """Demo speech polish: a reply that fits a greeting, thanks or goodbye
+    (canonical.social_kind) -- "You're welcome." to "Thank you.", not an
+    invitation to make a request. None for anything else."""
+    kind = social_kind(text)
+    if kind is None:
+        return None
+    lower = text.lower()
+    if kind == "thanks":
+        return "You're welcome. Bye for now." if re.search(r"\bbye\b|goodbye", lower) else "You're welcome."
+    if kind == "bye":
+        return "Bye for now."
+    if kind == "how":
+        return "I'm doing well, thanks. What can I do for you?"
+    if kind == "greeting":
+        part = re.search(r"good (morning|afternoon|evening)", lower)
+        return f"Good {part.group(1)}! What can I do for you?" if part else "Hi! What can I do for you?"
+    return "Anything else I can do?"
 
 
 def set_honest_reply(txn, turn_id: str, text: str, now_us: int, step_no: int, *, event_id: str) -> None:

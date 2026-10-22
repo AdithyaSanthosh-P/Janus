@@ -185,3 +185,37 @@ def test_an_acknowledgement_held_over_a_correction_names_the_corrected_value():
     assert "Okay, 21, not 22: I'll set the thermostat to 21 degrees." in lines, lines
     assert [c[3] for c in mock.commands if c[2] == "setCoolingSetpoint"] == [[21]]
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def at_eot(h, ts, text):
+    """What is said in the very step that closes the turn."""
+    h.send(ts, [chunk_event(text)])
+    return spoken([er.action for er in h.send(ts + 50_000, [eot_event()]).emit_report.emitted])
+
+
+def test_a_greeting_or_thanks_is_answered_at_once_without_the_model():
+    # Answered in the step that closes the turn: no wait for an interpretation.
+    h, mock = session()
+    assert at_eot(h, 100_000, "Hello Janus, good morning.") == ["Good morning! What can I do for you?"]
+    drain(h, 2_000_000, stop_on_final=False)
+    assert at_eot(h, 2_100_000, "Thank you.") == ["You're welcome."]
+    drain(h, 4_000_000, stop_on_final=False)
+    assert at_eot(h, 4_100_000, "Thanks, bye!") == ["You're welcome. Bye for now."]
+    later = drain(h, 6_000_000, stop_on_final=False)
+    assert spoken(later) == [] and mock.commands == []  # said once, nothing else
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_a_greeting_with_a_request_in_it_goes_to_the_model():
+    h, mock = session(extra=[("lock the front door", LOCK)])
+    actions = say(h, 100_000, "Hello, lock the front door", 5_000_000)
+    assert [c[2] for c in mock.commands] == ["lock"]
+    assert not any(t.startswith("Hi!") for t in spoken(actions))
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_without_the_polish_a_greeting_is_interpreted_as_before():
+    off = dataclasses.replace(demo_config(), demo_speech_polish_enabled=False)
+    h, _ = session(config=off)
+    assert at_eot(h, 100_000, "Thank you.") == []
+    assert "You're welcome." not in spoken(drain(h, 2_000_000, stop_on_final=False))

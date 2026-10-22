@@ -10,6 +10,7 @@ mechanism as everything else, with no special-casing.
 from __future__ import annotations
 
 from prism_rt.canonical import compute_digest, normalize_value
+from prism_rt.kernel import replies
 from prism_rt.kernel.detector import QuickDetector, is_inert_tail
 from prism_rt.kernel.interpret_apply import (
     active_goal_id,
@@ -180,6 +181,17 @@ class TurnManager:
                 and goal.task_state in (TaskState.PLANNING, TaskState.EXECUTING, TaskState.RESPONDING)
                 and self._quick_detector.detect(full_text).is_backchannel
             ):
+                return
+
+        # Demo speech polish: a greeting, thanks or goodbye with nothing
+        # running is answered at once, with no model call ("Thank you." ->
+        # "You're welcome." about 2 s sooner; nothing in it can be a request).
+        config = txn.store.config
+        if (config.demo_speech_polish_enabled and config.conversational_replies_enabled and gid is None
+                and not interpretation_busy(txn.store)):
+            social = replies.social_reply(full_text)
+            if social is not None:
+                replies.set_honest_reply(txn, turn.turn_id, social, now_us, step_no, event_id=event_id)
                 return
 
         # Phase 6 (docs/prompt 2.txt §11.3): if a speculative INTERPRET

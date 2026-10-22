@@ -34,6 +34,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
+from prism_rt.canonical import social_kind
+
 
 # Whole-segment transcripts that are Whisper's well-known output on silence
 # or breath rather than speech. Found in the 29-30 Sep full voice run: "you"
@@ -44,18 +46,10 @@ from typing import Awaitable, Callable
 _FILLER_ONLY = re.compile(r"^(?:you|thank you|thanks|bye|hmm+|mm+|m+hm+|um+|uh+|huh|ah+|oh|okay|so)$")
 
 
-_SOCIAL = re.compile(
-    r"(?:(?:hi|hello|hey|hiya|yo|good (?:morning|afternoon|evening|night)|thanks?|thank you(?: (?:so|very) much)?|"
-    r"thanks a lot|cheers|bye|goodbye|see you(?: later)?|cool|great|nice|awesome|perfect|got it|"
-    r"how are you(?: doing)?|there|janus)\W*)+",
-    re.IGNORECASE,
-)
-
-
 def is_social_turn(text: str) -> bool:
     """A greeting, thanks or goodbye and nothing else ("Hey Janus, good
     morning!", "Thanks."): no request, so nothing to wait for."""
-    return bool(text.strip()) and _SOCIAL.fullmatch(text.strip().strip(".!?, ")) is not None
+    return social_kind(text) is not None
 
 
 def is_filler_segment(text: str) -> bool:

@@ -22,6 +22,32 @@ ABSENT = "__ABSENT__"
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
+_SOCIAL = re.compile(
+    r"(?:(?:hi|hello|hey|hiya|yo|good (?:morning|afternoon|evening|night)|thanks?|thank you(?: (?:so|very) much)?|"
+    r"thanks a lot|cheers|bye|goodbye|see you(?: later)?|cool|great|nice|awesome|perfect|got it|"
+    r"how are you(?: doing)?|there|janus)\W*)+",
+    re.IGNORECASE,
+)
+
+
+def social_kind(text) -> str | None:
+    """"thanks", "bye", "how", "greeting" for a turn that is only a greeting,
+    thanks or goodbye ("Hey Janus, good morning!", "Thanks."); None for
+    anything with a request, an answer ("yes") or other words in it."""
+    clean = str(text or "").strip().strip(".!?, ").lower()
+    if not clean or _SOCIAL.fullmatch(clean) is None:
+        return None
+    if re.search(r"\bthank|\bcheers\b", clean):
+        return "thanks"
+    if re.search(r"\bbye\b|goodbye|see you", clean):
+        return "bye"
+    if "how are you" in clean:
+        return "how"
+    if re.search(r"\b(?:hi|hello|hey|hiya|yo)\b|good (?:morning|afternoon|evening)", clean):
+        return "greeting"
+    return "other"  # "cool", "great": an acknowledgement
+
+
 def world_target_key(spoken) -> str:
     """The key a device is watched under (`kernel/evidence.py`), from the
     device as the user named it: "Front door" and "front  door" are one key.

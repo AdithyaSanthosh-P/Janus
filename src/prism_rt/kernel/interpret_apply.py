@@ -756,7 +756,11 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         if idle_replies and interp.act in (InterpretAct.SMALLTALK, InterpretAct.BACKCHANNEL):
             # "thank you" deserves a reply, not "I didn't catch that" -- the
             # polite one still invites a request that was misread as chat.
-            replies.set_honest_reply(txn, interp.turn_id, replies.POLITE_REPLY, now_us, step_no, event_id=event_id)
+            text = replies.POLITE_REPLY
+            if txn.store.config.demo_speech_polish_enabled:
+                turn = txn.store.turn_log.get(interp.turn_id)
+                text = replies.social_reply(" ".join(c.text for c in turn.chunks) if turn is not None else "") or text
+            replies.set_honest_reply(txn, interp.turn_id, text, now_us, step_no, event_id=event_id)
         elif idle_replies and txn.store.goals.all() and _turn_word_count(txn.store, interp.turn_id) >= 3:
             # An unclear turn right after a finished task is most often about
             # that task ("has it been booked?" -- the status_question flag is
