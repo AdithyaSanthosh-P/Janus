@@ -191,4 +191,34 @@ describe('Card category wording', () => {
     expect(cardCategory('st_get_status', 'read')).toBe('SmartThings · Check');
     expect(cardCategory('lookup_error_code', 'read')).toBe('Device care · Check');
   });
+
+  it('keeps the read-set X-ray: what a card was built on, and what changed to withdraw it', () => {
+    const store = new JanusEventReducer();
+    store.processEvent({
+      v: 1, seq: 1, t_ms: 10, type: 'call_planned', call_id: 'c-1', tool: 'book_technician',
+      label: 'Book a technician for tomorrow morning', kind: 'write', args: {}, security: false,
+      based_on: [{ what: 'date', value: 'tomorrow', source: 'offer' }],
+    } as JanusEvent);
+    expect(store.getState().actions[0].basedOn).toEqual([{ what: 'date', value: 'tomorrow', source: 'offer' }]);
+    store.processEvent({
+      v: 1, seq: 2, t_ms: 20, type: 'call_cancelled', call_id: 'c-1', reason: 'Washer error code cleared while waiting',
+      based_on: [{ what: 'date', value: 'tomorrow', source: 'offer' }, { what: 'washer', value: '4C', source: 'world' }],
+      changed: [{ what: 'washer', was: '4C', now: 'clear', source: 'world' }],
+    } as JanusEvent);
+    const card = store.getState().actions[0];
+    expect(card.status).toBe('cancelled');
+    expect(card.basedOn?.length).toBe(2);
+    expect(card.changed).toEqual([{ what: 'washer', was: '4C', now: 'clear', source: 'world' }]);
+  });
+
+  it('a card from an agent without the X-ray fields has none', () => {
+    const store = new JanusEventReducer();
+    store.processEvent({
+      v: 1, seq: 1, t_ms: 10, type: 'call_planned', call_id: 'c-1', tool: 'st_lock', label: 'Lock the front door',
+      kind: 'write', args: {}, security: false,
+    } as JanusEvent);
+    store.processEvent({ v: 1, seq: 2, t_ms: 20, type: 'call_cancelled', call_id: 'c-1', reason: 'x' } as JanusEvent);
+    expect(store.getState().actions[0].basedOn).toBeUndefined();
+    expect(store.getState().actions[0].changed).toBeUndefined();
+  });
 });

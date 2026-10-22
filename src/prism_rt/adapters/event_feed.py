@@ -17,10 +17,11 @@ Imports no livekit.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Callable
 
 from config.templates import ACK_DEFAULT
-from prism_rt.model.types import ActionType, CallStatus, StepKind
+from prism_rt.model.types import ActionType, CallStatus, FactStatus, StepKind
 
 log = logging.getLogger("prism_rt.event_feed")
 
@@ -76,6 +77,51 @@ class _Safe(dict):
 
 def _words(tool: str) -> str:
     return tool.removeprefix("st_").replace("_", " ")
+
+
+_SLOT = re.compile(r"^slot\.[^.]+\.(?:a\d+\.)?([A-Za-z_]\w*)$")
+_SOURCE = {"user": "you", "perception": "camera"}
+
+
+def _live(fact) -> bool:
+    return fact is not None and fact.status != FactStatus.RETRACTED
+
+
+def why(call, store) -> dict:
+    """The read-set X-ray (app/INTEGRATION.md, `based_on` / `changed`): the
+    facts this call was built on, as the kernel recorded them -- the values
+    the user gave (or an offer proposed), and, for a write held for a yes,
+    the device or camera reading when the question was asked -- and which of
+    them no longer hold. Read-only."""
+    based_on, changed = [], []
+    offer = store.facts.get(f"goal.{call.goal_id}.offer_args")
+    offered = offer.value if _live(offer) and isinstance(offer.value, dict) else {}
+    for entry in call.read_set.entries:
+        match = _SLOT.match(entry.key)
+        if match is None:
+            continue
+        name = match.group(1)
+        value = call.args.get(name)
+        if value is None:
+            continue
+        fact = store.facts.get(entry.key)
+        source = "offer" if name in offered and str(offered[name]) == str(value) else _SOURCE.get(
+            fact.provenance.source if fact is not None else "", "you")
+        what = name.replace("_", " ")
+        based_on.append({"what": what, "value": str(value), "source": source})
+        if _live(fact) and fact.ver != entry.version and str(fact.value) != str(value):
+            changed.append({"what": what, "was": str(value), "now": str(fact.value), "source": "you"})
+    snapshot = store.facts.get(f"confirm.{call.call_id}.evidence")
+    for key, old in (snapshot.value if _live(snapshot) and isinstance(snapshot.value, list) else []):
+        if old is None:
+            continue
+        what = key.removeprefix("world.target.") if key.startswith("world.") else key.rsplit(".", 1)[-1].replace("_", " ")
+        source = "world" if key.startswith("world.") else "camera"
+        based_on.append({"what": what, "value": str(old), "source": source})
+        fact = store.facts.get(key)
+        if _live(fact) and str(fact.value).strip().lower() != str(old).strip().lower():
+            changed.append({"what": what, "was": str(old), "now": str(fact.value), "source": source})
+    return {"based_on": based_on, "changed": changed}
 
 
 def _write_key(call) -> tuple:
@@ -208,6 +254,7 @@ class EventFeed:
                 "call_planned", call_id=call.call_id, tool=call.tool, label=self._label(call.tool, call.args),
                 kind="write" if call.kind == StepKind.WRITE else "read", args=dict(call.args),
                 security=bool(spec is not None and spec.requires_confirmation),
+                based_on=why(call, store)["based_on"],
             )
 
     def _held_event(self, rejection) -> None:
@@ -225,7 +272,8 @@ class EventFeed:
                 self._cancelled.add(call.call_id)
                 withdrawn = store.facts.get(f"withdrawn.{call.call_id}.reason") if store is not None else None
                 reason = (str(withdrawn.value)[0].upper() + str(withdrawn.value)[1:]) if withdrawn is not None and withdrawn.value else self._cancel_reason(call, calls)
-                self._send("call_cancelled", call_id=call.call_id, reason=reason)
+                extra = why(call, store) if store is not None else {}
+                self._send("call_cancelled", call_id=call.call_id, reason=reason, **extra)
 
     @staticmethod
     def _cancel_reason(call, calls) -> str:
@@ -299,7 +347,8 @@ class EventFeed:
             summary = " ".join(str(result[k]) for k in ("device", "state") if isinstance(result, dict) and result.get(k) is not None) or "Done"
             if call.kind == StepKind.WRITE:
                 self._done_writes.add(_write_key(call))
-        self._send("call_result", call_id=call.call_id, outcome=outcome, summary=summary)
+        self._send("call_result", call_id=call.call_id, outcome=outcome, summary=summary,
+                   based_on=why(call, store)["based_on"])
 
     def _ledger_summary(self, store) -> None:
         from prism_rt.model.types import EffectStatus

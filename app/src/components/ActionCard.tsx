@@ -1,8 +1,8 @@
 import React, { useEffect } from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
-import { Lock, Thermometer, Lightbulb, Warehouse, WashingMachine, Activity, ShieldAlert } from 'lucide-react-native';
-import { ActionCardData } from '../types/janus';
+import { Lock, Thermometer, Lightbulb, Warehouse, WashingMachine, Activity, ShieldAlert, ChevronDown } from 'lucide-react-native';
+import { ActionCardData, WhyChange, WhyFact } from '../types/janus';
 import { cardCategory } from '../utils/labels';
 import { statusTone, Tokens, tokens, Tone } from '../theme/colors';
 import { type } from '../theme/type';
@@ -151,6 +151,48 @@ const detailFor = (card: ActionCardData): { text: string; note?: string } | null
   }
 };
 
+const SOURCE_TEXT: Record<string, string> = {
+  you: 'you said',
+  offer: 'Janus offered',
+  camera: 'camera',
+  world: 'seen when it asked',
+};
+
+/**
+ * The read-set X-ray: the facts this action was built on, as the kernel
+ * recorded them, and which of them changed. A changed fact is what withdrew
+ * a Never-sent action ("celsius 22 → 21", "washer 4C → clear").
+ */
+const WhyPanel: React.FC<{ basedOn: WhyFact[]; changed: WhyChange[]; t: Tokens }> = ({ basedOn, changed, t }) => {
+  const changes = new Map(changed.map(c => [`${c.what}|${c.was}`, c]));
+  return (
+    <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: t.hairline, gap: 6 }}>
+      <Text style={[type.caption, { color: t.ink2, textTransform: 'uppercase' }]}>Built on</Text>
+      {basedOn.map((fact, i) => {
+        const change = changes.get(`${fact.what}|${fact.value}`);
+        return (
+          <View key={`${fact.what}-${i}`} style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+            <Text style={[type.footnote, { color: t.ink2, minWidth: 72 }]}>{fact.what}</Text>
+            {change ? (
+              <>
+                <Text style={[type.subhead, { color: t.negative.ink, textDecorationLine: 'line-through', fontWeight: '600' }]}>{change.was}</Text>
+                <Text style={[type.subhead, { color: t.ink2 }]}>→</Text>
+                <Text style={[type.subhead, { color: t.ink, fontWeight: '600' }]}>{change.now}</Text>
+                <Text style={[type.caption, { color: t.negative.ink }]}>changed</Text>
+              </>
+            ) : (
+              <>
+                <Text style={[type.subhead, { color: t.ink, fontWeight: '600' }]}>{fact.value}</Text>
+                <Text style={[type.caption, { color: t.ink3 }]}>{SOURCE_TEXT[fact.source] || fact.source}</Text>
+              </>
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+};
+
 export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
   const t = tokens(isDark);
   const tone = statusTone(card.status, t);
@@ -173,6 +215,8 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
   else if (card.tool.includes('washer') || card.tool.includes('error_code')) glyph = <WashingMachine size={15} color={glyphColor} />;
 
   const detail = detailFor(card);
+  const basedOn = card.basedOn || [];
+  const [open, setOpen] = React.useState(false);
   const detailInk =
     card.status === 'waiting_for_yes' || card.status === 'failed' || card.status === 'refused' || card.status === 'unconfirmed'
       ? tone.ink
@@ -184,6 +228,11 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
       layout={AppLayoutTransition}
       style={{ backgroundColor: t.surface, borderRadius: 18, padding: 16 }}
     >
+      <Pressable
+        onPress={() => basedOn.length && setOpen(o => !o)}
+        accessibilityRole="button"
+        accessibilityLabel={basedOn.length ? 'Show what this action was built on' : undefined}
+      >
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
           {glyph}
@@ -224,6 +273,15 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
       )}
 
       <CommitTrack steps={commitTrack(card, t)} t={t} skipped={card.status === 'already'} />
+
+      {basedOn.length > 0 && !open && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 12 }}>
+          <Text style={[type.caption, { color: t.ink2 }]}>Why</Text>
+          <ChevronDown size={13} color={t.ink2} />
+        </View>
+      )}
+      {open && <WhyPanel basedOn={basedOn} changed={card.changed || []} t={t} />}
+      </Pressable>
     </Animated.View>
   );
 };

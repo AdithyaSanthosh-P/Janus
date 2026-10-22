@@ -171,7 +171,12 @@ export const SAMPLE_EVENTS: JanusEvent[] = [
     "t_ms": 7420,
     "type": "call_cancelled",
     "call_id": "c-0002",
-    "reason": "You changed it to 26"
+    "reason": "You changed it to 26",
+    "based_on": [
+      { "what": "celsius", "value": "24", "source": "you" },
+      { "what": "device", "value": "AC", "source": "you" }
+    ],
+    "changed": [{ "what": "celsius", "was": "24", "now": "26", "source": "you" }]
   },
   {
     "v": 1,

@@ -252,6 +252,7 @@ export class JanusEventReducer {
           kind: event.kind,
           args: event.args || {},
           security: !!event.security,
+          basedOn: Array.isArray(event.based_on) ? event.based_on : undefined,
           status: 'planned',
           statusText: 'Planned',
           isFinal: false,
@@ -310,6 +311,8 @@ export class JanusEventReducer {
               status: 'cancelled' as ActionCardStatus,
               statusText: 'Never sent',
               cancelledReason: event.reason,
+              basedOn: Array.isArray(event.based_on) ? event.based_on : action.basedOn,
+              changed: Array.isArray(event.changed) ? event.changed : action.changed,
               isFinal: true,
             };
           }
@@ -369,6 +372,7 @@ export class JanusEventReducer {
               statusText,
               outcome: event.outcome,
               resultSummary: event.summary,
+              basedOn: Array.isArray(event.based_on) ? event.based_on : action.basedOn,
               isFinal: true,
             };
           }

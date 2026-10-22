@@ -90,6 +90,7 @@ export interface CallPlannedEvent extends BaseEvent {
   kind: CallKind;
   args: Record<string, any>;
   security: boolean;
+  based_on?: WhyFact[];
 }
 
 export interface CallHeldEvent extends BaseEvent {
@@ -109,6 +110,8 @@ export interface CallCancelledEvent extends BaseEvent {
   type: 'call_cancelled';
   call_id: string;
   reason: string;
+  based_on?: WhyFact[];
+  changed?: WhyChange[];
 }
 
 export interface CallSentEvent extends BaseEvent {
@@ -122,6 +125,7 @@ export interface CallResultEvent extends BaseEvent {
   call_id: string;
   outcome: CallOutcome;
   summary: string;
+  based_on?: WhyFact[];
 }
 
 export interface DeviceStateEvent extends BaseEvent {
@@ -180,6 +184,21 @@ export type ActionCardStatus =
   | 'refused'
   | 'failed';
 
+// The read-set X-ray (INTEGRATION.md "Why"): what an action was built on,
+// and what changed to withdraw it. `source`: you / offer / camera / world.
+export interface WhyFact {
+  what: string;
+  value: string;
+  source: string;
+}
+
+export interface WhyChange {
+  what: string;
+  was: string;
+  now: string;
+  source: string;
+}
+
 export interface ActionCardData {
   callId: string;
   tool: string;
@@ -194,6 +213,8 @@ export interface ActionCardData {
   confirmationQuestion?: string;
   resultSummary?: string;
   outcome?: CallOutcome;
+  basedOn?: WhyFact[];
+  changed?: WhyChange[];
   isFinal: boolean;
   timestamp: number;
 }

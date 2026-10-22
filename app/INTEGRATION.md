@@ -33,6 +33,7 @@ Rules for the app:
 - **Ignore unknown `type` values and unknown fields.** The agent may add fields later.
 - **Key everything about a tool call by `call_id`.** A call moves through states; update one card, don't append a new one per event.
 - A call's card is final when it receives `call_cancelled` or `call_result`.
+- **Why (optional fields, added 22 Oct):** `call_planned`, `call_cancelled` and `call_result` may carry `based_on`: a list of `{what, value, source}`, the facts the action was built on (`source`: `you` = the user said it, `offer` = Janus proposed it, `camera`, `world` = a device or camera reading taken when Janus asked). `call_cancelled` may also carry `changed`: a list of `{what, was, now, source}`, the facts that no longer hold, which is why it was never sent ("celsius 22 → 21, you"; "washer 4C → clear, world"). Both are the kernel's own record of what the action depended on (its read set); show them when the card is tapped. Older apps ignore them.
 - **Never show an action as done unless `call_result.outcome` is `confirmed` or `already`.** `unconfirmed` means it was sent but Samsung's cloud did not confirm the change; show it as "Sent, not confirmed", never as done. This honesty is the point of the system.
 
 ### Event types

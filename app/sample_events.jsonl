@@ -14,7 +14,7 @@
 {"v": 1, "seq": 14, "t_ms": 7400, "type": "call_planned", "call_id": "c-0002", "tool": "st_set_cooling_setpoint", "label": "Set AC to 24 °C", "kind": "write", "args": {"device": "AC", "celsius": 24}, "security": false}
 {"v": 1, "seq": 15, "t_ms": 7410, "type": "call_held", "call_id": "c-0001", "reason_code": "settling", "reason": "Waiting a moment in case you change your mind"}
 {"v": 1, "seq": 16, "t_ms": 7410, "type": "call_held", "call_id": "c-0002", "reason_code": "settling", "reason": "Waiting a moment in case you change your mind"}
-{"v": 1, "seq": 17, "t_ms": 7420, "type": "call_cancelled", "call_id": "c-0002", "reason": "You changed it to 26"}
+{"v": 1, "seq": 17, "t_ms": 7420, "type": "call_cancelled", "call_id": "c-0002", "reason": "You changed it to 26", "based_on": [{"what": "celsius", "value": "24", "source": "you"}, {"what": "device", "value": "AC", "source": "you"}], "changed": [{"what": "celsius", "was": "24", "now": "26", "source": "you"}]}
 {"v": 1, "seq": 18, "t_ms": 7420, "type": "call_planned", "call_id": "c-0003", "tool": "st_set_cooling_setpoint", "label": "Set AC to 26 °C", "kind": "write", "args": {"device": "AC", "celsius": 26}, "security": false}
 {"v": 1, "seq": 19, "t_ms": 7430, "type": "agent_said", "text": "Locking the front door and setting the AC to 26.", "kind": "ack"}
 {"v": 1, "seq": 20, "t_ms": 8400, "type": "call_sent", "call_id": "c-0001", "args": {"device": "front door"}}
