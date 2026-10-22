@@ -30,7 +30,16 @@ export const Sheet: React.FC<SheetProps> = ({ visible, t, title, subtitle, onClo
             <X size={16} color={t.ink2} />
           </Press>
         </View>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 72, gap: 22 }}>
+        {/* flexShrink: inside a sheet capped by maxHeight, an unconstrained ScrollView
+            took its full content height on Android and could not scroll until a tap
+            re-laid it out (found on a phone, 22 Oct). */}
+        <ScrollView
+          style={{ flexGrow: 0, flexShrink: 1 }}
+          showsVerticalScrollIndicator
+          keyboardShouldPersistTaps="handled"
+          nestedScrollEnabled
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 72, gap: 22 }}
+        >
           {children}
         </ScrollView>
       </View>

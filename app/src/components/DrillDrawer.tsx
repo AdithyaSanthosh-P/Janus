@@ -120,6 +120,14 @@ export const DrillDrawer: React.FC<DrillDrawerProps> = ({
       subtitle="Break something on purpose and watch Janus report it honestly."
       onClose={onClose}
     >
+      <Group t={t} title="Janus speaks first" footer="Janus offers an action only if a device gives it something to offer.">
+        {commands[1].map(commandRow)}
+      </Group>
+
+      <Group t={t} title="Someone else changes a device" footer="As if by hand or from the SmartThings app, bypassing Janus.">
+        {commands[0].map(commandRow)}
+      </Group>
+
       <Group t={t} title="Faults">
         {toggles.map(d => (
           <View key={d.key} style={styles.row}>
@@ -136,14 +144,6 @@ export const DrillDrawer: React.FC<DrillDrawerProps> = ({
             />
           </View>
         ))}
-      </Group>
-
-      <Group t={t} title="Someone else changes a device" footer="As if by hand or from the SmartThings app, bypassing Janus.">
-        {commands[0].map(commandRow)}
-      </Group>
-
-      <Group t={t} title="Janus speaks first" footer="Janus offers an action only if a device gives it something to offer.">
-        {commands[1].map(commandRow)}
       </Group>
 
       <Press
