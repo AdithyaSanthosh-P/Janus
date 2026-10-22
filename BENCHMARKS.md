@@ -6,20 +6,22 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 
 | File | One row per | Use it for |
 |---|---|---|
-| `runs.csv` | scored run (95) | score vs time, configuration comparisons |
+| `runs.csv` | scored run (96) | score vs time, configuration comparisons |
 | `recordings.csv` | scenario in each text-replay run (2,671) | per-scenario and per-domain pass rates, text-replay latency |
-| `voice_recordings.csv` | recording in each voice run (1017) | per-speaker before/after, turn-ending evidence, latency |
+| `voice_recordings.csv` | recording in each voice run (1117) | per-speaker before/after, turn-ending evidence, latency |
 | `failures.csv` | failing recording in an analysed failure set (155) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
 | `other_measurements.csv` | measurement | tests, kernel latency, exploration, speech round trip, reference numbers |
 
 Dates are 2026. Reports, logs and per-room decision logs of the six cloud voice runs are in `docs/runs/` (audio left out).
 
-## 1. Where things stand (3 Oct)
+## 1. Where things stand (22 Oct)
 
 | Measure | Value | Run | Note |
 |---|---|---|---|
-| **Voice over LiveKit, all 100, judged, current code** | **73%** (73/100) | `cloud_20261002_182600` | 3 Oct, first full run after the turn-ending fixes; hosted speech-to-text; tool selection 0.947, argument accuracy 0.768, response quality 0.626; turn-taking 99/100; average latency 8.1 s; no FDB client aborts; exact-match scoring gives 68/100 |
+| **Voice over LiveKit, all 100, judged, current code** | **82%** (82/100) | `cloud_20261021_185112` | 21-22 Oct, Round 2 code through `./reproduce.sh` on an RTX 3090 VM; tool selection 0.970, argument accuracy 0.883, response quality 0.740; turn-taking 100/100; average latency 6.3 s; exact-match scoring gives 79/100 |
+| Voice over LiveKit, all 100, judged, Round 2 code | **77%** (77/100) | `cloud_20261019_142138` | 19 Oct, same path; exact-match scoring gives 75/100. Of the five recordings gained since, finance_04 and finance_16 are the AEC warm-up fix (`cloud_20261019_175544`); travel_18 was lost to a transcription slip ("Casey Li") |
+| Voice over LiveKit, all 100, judged, 3 Oct code | **73%** (73/100) | `cloud_20261002_182600` | 3 Oct, first full run after the turn-ending fixes; hosted speech-to-text; tool selection 0.947, argument accuracy 0.768, response quality 0.626; turn-taking 99/100; average latency 8.1 s; no FDB client aborts; exact-match scoring gives 68/100 |
 | Text replay, all 100, judged | **77%** (77/100) | `text_text_replay_0930_final` | Tool selection 0.949, argument accuracy 0.803; configuration of the 30 Sep submission |
 | Voice over LiveKit, all 100, exact | **41%** (41/100) | `cloud_20260929_232528` | 29-30 Sep, before the voice fixes below; local Whisper |
 | Voice over LiveKit, all 100, judged | **42%** (42/100) | `cloud_20260929_232528.judged` | Same run, scored with FDB's judge |
@@ -130,6 +132,7 @@ Voice runs stream FDB's recordings through LiveKit to the Janus worker (speech r
 | 2026-10-19 | `cloud_20261019_090519` | judged | 8/8 | 100.0% | 1.000 | 1.000 | 6.9 s | Smoke test of the Round 2 voice settings (filler, chunked speech synthesis, relaxed housing contract) through ./reproduce.sh on an RTX 3090 VM, judged: 8/8 |
 | 2026-10-19 | `cloud_20261019_091753` | judged | 4/4 | 100.0% | 1.000 | 1.000 | 6.2 s | Smoke re-run of ecommerce_01 and housing_05 with user/agent state logging, judged: 4/4 |
 | 2026-10-19 | `cloud_20261019_142138` | judged | 77/100 | 77.0% | 0.951 | 0.838 | 6.7 s | All 100 recordings, judged, Round 2 code (confirmation gate, unconfirmed outcomes, SmartThings pack, filler, chunked synthesis, relaxed housing contract) through ./reproduce.sh: 77/100; housing 17/26 (10/26 on 3 Oct), finance 20/25. finance_04/16 lost words spoken over the filler to LiveKit's AEC warm-up (fixed by JANUS_AEC_WARMUP_S, see cloud_20261019_175544) |
+| 2026-10-21 | `cloud_20261021_185112` | judged | 82/100 | 82.0% | 0.970 | 0.883 | 6.3 s | All 100 recordings, judged, Round 2 code plus the demo-profile additions of 21-22 Oct (source digest 15833452f2f017d6 = commit e0ce23c; the manifest's commit field is the VM checkout's older HEAD) with LiveKit's AEC warm-up off, through ./reproduce.sh: 82/100. vs cloud_20261019_142138: finance 19/20 tool-call recordings exact (15/20), gained finance_04/16 (AEC warm-up), finance_10/18, ecommerce_07; lost travel_18 ('Casey Lee' transcribed as 'Casey Li') |
 
 Read these with care:
 
@@ -503,3 +506,4 @@ The commit column is the code the run used (`-dirty` means uncommitted changes a
 | 2026-10-19 | `text_housing_wp5_off_1019` | text_replay | subset | judged | 8/26 | 30.8% | 0.923 | 0.449 | gemini-3.6-flash | f911a19-dirty |
 | 2026-10-19 | `text_housing_wp5_on_1019` | text_replay | subset | judged | 18/26 | 69.2% | 0.923 | 0.814 | gemini-3.6-flash | f911a19-dirty |
 | 2026-10-20 | `text_housing_savedfilter_1020` | text_replay | subset | judged | 17/26 | 65.4% | 0.923 | 0.756 | gemini-3.6-flash | f911a19-dirty |
+| 2026-10-21 | `cloud_20261021_185112` | voice_cloud | full100 | judged | 82/100 | 82.0% | 0.970 | 0.883 | gemini-3.6-flash | f911a194 |

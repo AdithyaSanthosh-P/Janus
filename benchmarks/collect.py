@@ -50,6 +50,7 @@ ARCHIVES = [
     ("docs/runs/janus_fdbv3_voice_smoke4_2026-10-19.tgz", "janus_fdbv3_voice_smoke4_2026-10-19", "cloud_20261019_091753"),
     ("docs/runs/janus_fdbv3_voice_full100_2026-10-19.tgz", "janus_fdbv3_voice_full100_2026-10-19", "cloud_20261019_142138"),
     ("docs/runs/janus_fdbv3_voice_aeccheck3_2026-10-19.tgz", "janus_fdbv3_voice_aeccheck3_2026-10-19", "cloud_20261019_175544"),
+    ("docs/runs/janus_fdbv3_voice_full100_2026-10-22.tgz", "janus_fdbv3_voice_full100_2026-10-22", "cloud_20261021_185112"),
 ]
 
 # run id -> (class, phase, description). class: full100 | subset | debug
@@ -109,6 +110,7 @@ LABELS = {
     "cloud_20261019_091753": ("debug", "Round 2", "Smoke re-run of ecommerce_01 and housing_05 with user/agent state logging, judged: 4/4"),
     "cloud_20261019_142138": ("full100", "Round 2", "All 100 recordings, judged, Round 2 code (confirmation gate, unconfirmed outcomes, SmartThings pack, filler, chunked synthesis, relaxed housing contract) through ./reproduce.sh: 77/100; housing 17/26 (10/26 on 3 Oct), finance 20/25. finance_04/16 lost words spoken over the filler to LiveKit's AEC warm-up (fixed by JANUS_AEC_WARMUP_S, see cloud_20261019_175544)"),
     "cloud_20261019_175544": ("debug", "Round 2", "finance_04, finance_16 and travel_10 with LiveKit's AEC warm-up off (JANUS_AEC_WARMUP_S): 3/3, the words spoken over the filler are transcribed again"),
+    "cloud_20261021_185112": ("full100", "Round 2", "All 100 recordings, judged, Round 2 code plus the demo-profile additions of 21-22 Oct (source digest 15833452f2f017d6 = commit e0ce23c; the manifest's commit field is the VM checkout's older HEAD) with LiveKit's AEC warm-up off, through ./reproduce.sh: 82/100. vs cloud_20261019_142138: finance 19/20 tool-call recordings exact (15/20), gained finance_04/16 (AEC warm-up), finance_10/18, ecommerce_07; lost travel_18 ('Casey Lee' transcribed as 'Casey Li')"),
     "text_housing_wp5_off_1019": ("subset", "Round 2", "Housing domain (26 recordings), published housing contract, judged: the baseline for the relaxed contract"),
     "text_housing_wp5_on_1019": ("subset", "Round 2", "Housing domain, relaxed housing contract (fdb_relaxed_housing_schema): 18/26 against 8/26, no recording worse; enabled for the voice runs"),
     "text_housing_savedfilter_1020": ("subset", "Round 2", "Tried: a description sentence against repeating a saved filter in the search (reverted: 17/26 vs 18/26; housing_22/24 still repeat it)"),

@@ -11,21 +11,21 @@ Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptib
 | | |
 |---|---|
 | **Benchmark** | Full-Duplex-Bench v3 (FDB-v3): 100 real spoken recordings across 4 domains, 12 tools, the official runner and LLM judge |
-| **Result** | **74 % strict pass on the full voice path** (73 % on the final re-run), 77 % in text replay; **0.765 Pass@1 on self-correction**, the category that is hardest for every published system |
+| **Result** | **82 % strict pass on the full voice path** (82/100 judged, 79/100 exact match, 22 Oct), 77 % in text replay; **0.765 Pass@1 on self-correction**, the category that is hardest for every published system |
 | **Reasoning core** | Gemini 3.6 Flash via the Google AI Studio API (temperature 0, zero thinking budget); OpenAI GPT-4.1 as a switchable alternate |
 | **Speech and vision** | OpenAI `gpt-4o-mini-transcribe` (hosted, pinned snapshot) or local `faster-whisper`, Silero VAD, Kokoro-82M TTS, a 1 fps camera sampler feeding Gemini Vision |
 | **Core architecture** | A single-writer synchronous kernel (under 5 ms per step) with read-set invalidation, same-step cancellation, a G1–G11 `CommitGate` and an effect ledger |
 | **Use-case extension** | Camera-grounded appliance and device care with Samsung SmartThings-style error handling ([Extension](#extension-camera-grounded-device-care)) |
 | **AI disclosure** | [`LangAI3.0_AI_Disclosure.docx`](LangAI3.0_AI_Disclosure.docx) |
 | **Reproduction** | One command, [`./reproduce.sh`](#reproduce-the-benchmark-one-command): a pinned Docker build with SHA-256-verified data, run through FDB's own runner and evaluators; **verified end to end on a clean VM: 74 / 100** |
-| **Verification** | 751 deterministic tests on a stepped clock, a trace checker over every decision log, byte-identical replay, and an adversarial explorer over 19 race scenarios |
+| **Verification** | 859 deterministic tests on a stepped clock, a trace checker over every decision log, byte-identical replay, and an adversarial explorer over 19 race scenarios |
 
 **Highlights**
-- **74 % strict pass rate on the full voice path** (all 100 FDB-v3 recordings over LiveKit, judged with gpt-4o), against 60 % for the best published system (GPT-Realtime); 77 % for the reasoning core in text replay. Five full voice runs on 3 and 4 Oct scored 73, 65, 74, 73 and (through Docker) 74; the 65 is explained and fixed (below), and single runs vary by a few points. Every run is recorded in [`BENCHMARKS.md`](BENCHMARKS.md).
+- **82 % strict pass rate on the full voice path** (all 100 FDB-v3 recordings over LiveKit through `./reproduce.sh`, judged with gpt-4o; 22 Oct, Round 2 code), against 60 % for the best published system (GPT-Realtime); 77 % for the reasoning core in text replay. The same path scored 77 % on 19 Oct; five full voice runs on 3 and 4 Oct scored 73, 65, 74, 73 and (through Docker) 74; the 65 is explained and fixed (below), and single runs vary by a few points. Every run is recorded in [`BENCHMARKS.md`](BENCHMARKS.md).
 - **Self-correction ("…no wait, make it Friday"), the category FDB-v3 finds hardest for every system:** 0.765 Pass@1 on the final voice run, against 0.176 for the published cascaded pipeline (the same family as ours) and 0.588 for GPT-Realtime; 0.824 in text replay.
 - **No double actions, no false claims, by construction:** every write passes one commit gate and is recorded in an effect ledger before it is emitted; a correction cancels stale work in the same kernel step; a failed, skipped or withdrawn step is said aloud, never reported as done.
 - **It listens before it acts:** the kernel hears that the user is speaking, holds calls and speech until the floor is closed, merges a request split by a pause, and runs only the branch of an "if … otherwise …" request that the real tool result supports.
-- **Deterministic and replayable:** 751 tests on a stepped clock with a trace checker over every decision log, plus an adversarial explorer that perturbs timings around 19 race scenarios.
+- **Deterministic and replayable:** 859 tests on a stepped clock with a trace checker over every decision log, plus an adversarial explorer that perturbs timings around 19 race scenarios.
 - **Use-case extension:** camera-grounded device care over live voice: it reads the device from the camera, diagnoses it, and books exactly one technician visit.
 
 > **Provider declaration.** Custom LiveKit agent (Janus). Decisions: the Janus kernel with **Gemini 3.6 Flash** (hosted Gemini API, thinking budget 0, temperature 0). Speech-to-text: **OpenAI `gpt-4o-mini-transcribe-2025-12-15`** (hosted, pinned snapshot). Local on the GPU: **Kokoro-82M** (TTS), **Silero VAD**. Nothing else is called at evaluation time. Keys needed: LiveKit, `GEMINI_API_KEY`, `OPENAI_API_KEY` (see [Keys](#keys)). Two switches change the providers: `JANUS_STT=local` runs faster-whisper large-v3-turbo on the GPU instead, and `JANUS_LLM_PROVIDER=openai` moves decisions to OpenAI (see [Keys](#keys)); every run writes the providers it actually used to `PROVIDER.txt`.
@@ -76,7 +76,7 @@ sequenceDiagram
 **Why this is not a benchmark trick.** The same kernel runs the Full-Duplex-Bench voice benchmark and the camera-grounded device-care extension; only a configuration profile differs (`fdb_v3_config`, `demo_config` in `src/prism_rt/profiles.py`). New kernel behaviour is added behind a `Config` flag and covered by tests; the tagged versions V0–V4 and six post-V4 phases each stayed runnable.
 
 **Evidence, not claims**
-- **751 deterministic tests** on a stepped clock with a scripted model, and a trace checker that audits every decision log (no event reordering, floor rule, no stale consumption, no false completion claim, one confirmed write per lineage).
+- **859 deterministic tests** on a stepped clock with a scripted model, and a trace checker that audits every decision log (no event reordering, floor rule, no stale consumption, no false completion claim, one confirmed write per lineage).
 - **A bounded adversarial explorer** perturbs tool and worker latencies and user timing around 19 race scenarios, with oracles re-derived from state; its first run found three real kernel bugs, all fixed with regression tests.
 - **Independent reviews are logged, not trusted:** every round's findings were reproduced before a fix shipped, and the ones that did not hold up are recorded too ([`reviews/index.md`](reviews/index.md), [`reviews/audit-2026-10-01.md`](reviews/audit-2026-10-01.md)).
 - **On the hardest benchmark category** (self-correction), 0.765 Pass@1 on the full voice path, against 0.176 for the published cascaded pipeline of the same family. See [Results](#results).
@@ -130,7 +130,7 @@ cp .env.example .env      # fill in the keys, see "Keys" below
 
 Needs Docker with the NVIDIA container toolkit, an NVIDIA GPU (measured peak about 10 GB VRAM; the image carries the CUDA 12.6 build of PyTorch, so any driver 525 or newer, on Ampere, Ada or Hopper GPUs: RTX 30 and 40 series, A100, A6000, L40S, H100), about 40 GB of disk and internet access.
 
-**Verified on a clean machine.** The pinned image was built from scratch and `./reproduce.sh` ran on a fresh Ubuntu 24.04 VM with an RTX 3090 and Docker 29: the GPU is visible inside the container, FDB is fetched at its pinned commit, and FDB's own runner and evaluators produce `results/<timestamp>/`. A 5-recording run completed with the same pass count as the native path on the same code, and then the **full 100-recording judged run through `./reproduce.sh` scored 74 / 100** (tool selection 0.964, argument accuracy 0.807, response quality 0.69, first word 7.1 s, no client aborts, no API errors), in line with the native runs (73 to 74 %). Running the script twice in one checkout is safe too (a second run used to stop on git's ownership check; fixed).
+**Verified on a clean machine.** The pinned image was built from scratch and `./reproduce.sh` ran on a fresh Ubuntu 24.04 VM with an RTX 3090 and Docker 29: the GPU is visible inside the container, FDB is fetched at its pinned commit, and FDB's own runner and evaluators produce `results/<timestamp>/`. A 5-recording run completed with the same pass count as the native path on the same code, and then the **full 100-recording judged run through `./reproduce.sh` scored 74 / 100** (tool selection 0.964, argument accuracy 0.807, response quality 0.69, first word 7.1 s, no client aborts, no API errors), in line with the native runs (73 to 74 %). Later full runs went through `./reproduce.sh` too: 77 / 100 on 19 Oct and 82 / 100 on 22 Oct on the Round 2 code. Running the script twice in one checkout is safe too (a second run used to stop on git's ownership check; fixed).
 
 What it does, in order:
 
@@ -330,7 +330,7 @@ Every call passes the same ordered rules (`kernel/commit.py`, `kernel/emission.p
 | **Effect ledger** | Every admitted write is recorded *before* it is emitted. A state-changing action never executes twice, even if the user barges in mid-call. |
 | **Failure policy** | Reads have a bounded retry; a failed or timed-out write is never blindly re-sent. The user is told what happened, and an ambiguous outcome is asked about, not guessed. |
 | **Keep listening** | When the words are cut off mid-sentence or announce a detail still coming ("the order number is…"), the kernel extends the settle window to 2.5 s: nothing is said or done until the user has been quiet that long. |
-| **Deterministic replay** | All timing goes through a clock port. The kernel is replayable byte for byte on a stepped clock; 751 tests verify this with a trace checker over every decision log. |
+| **Deterministic replay** | All timing goes through a clock port. The kernel is replayable byte for byte on a stepped clock; 859 tests verify this with a trace checker over every decision log. |
 
 The full architecture specification is in `docs/prompt 2.txt`, and a guided tour of the code is [`docs/architecture_walkthrough.md`](docs/architecture_walkthrough.md).
 
@@ -577,9 +577,11 @@ All numbers below are FDB-v3's own runner and evaluators, unmodified, at the pin
 | Setting | Strict pass rate (Pass@1) | Tool selection | Argument accuracy | Response quality |
 |---|---|---|---|---|
 | **Janus, text replay** (reasoning & safety core), all 100 scenarios, Gemini 3.6 Flash | **77.0 %** | 0.959 | 0.807 | 0.840 |
-| **Janus, voice over LiveKit, all 100 recordings, final code, hosted speech-to-text, cloud RTX 3090, native path (3 Oct, evening)** | **74.0 %** (68 / 100 exact-match) | 0.959 | 0.780 | 0.720 | judged; turn-taking 100 / 100; first word 8.5 s mean; no client aborts; [report](BENCHMARK_FULL100_FINAL_2026-10-03.md) |
+| **Janus, voice, all 100 recordings, Round 2 code, through `./reproduce.sh` in Docker, RTX 3090 VM (22 Oct)** | **82.0 %** (79 / 100 exact-match) | 0.970 | 0.883 | 0.740 | judged; turn-taking 100 / 100; first word 6.3 s mean; finance 24/25, e-commerce 24/29, travel 16/20, housing 18/26; [archive](docs/runs/janus_fdbv3_voice_full100_2026-10-22.tgz) |
+| Janus, voice, all 100 recordings, Round 2 code, through `./reproduce.sh`, RTX 3090 VM (19 Oct) | 77.0 % (75 / 100 exact-match) | 0.951 | 0.838 | 0.720 | judged; turn-taking 100 / 100; first word 6.7 s mean; two of the five recordings gained on 22 Oct come from turning off LiveKit's echo-cancellation warm-up, which dropped words spoken over the filler; [archive](docs/runs/janus_fdbv3_voice_full100_2026-10-19.tgz) |
+| Janus, voice over LiveKit, all 100 recordings, final code, hosted speech-to-text, cloud RTX 3090, native path (3 Oct, evening) | 74.0 % (68 / 100 exact-match) | 0.959 | 0.780 | 0.720 | judged; turn-taking 100 / 100; first word 8.5 s mean; no client aborts; [report](BENCHMARK_FULL100_FINAL_2026-10-03.md) |
 | Janus, voice, all 100 recordings, current code after the conditional-branch, filter-update and value-form fixes, native path, cloud RTX 3090 (4 Oct) | 73.0 % | 0.953 | 0.767 | n/a: the judge's OpenAI quota ran out for 53 of 100 response-quality scores; pass/fail and argument scoring were unaffected | judged; turn-taking 100 / 100; first word 7.5 s mean; no client aborts; [archive](docs/runs/janus_fdbv3_voice_full100d_2026-10-04.tgz) |
-| **Janus, voice, all 100 recordings, through `./reproduce.sh` in Docker on a clean Ubuntu 24.04 VM, RTX 3090 (4 Oct)** | **74.0 %** | 0.964 | 0.807 | 0.690 | judged; turn-taking 100 / 100; first word 7.1 s mean; no client aborts, no API errors; [archive](docs/runs/janus_fdbv3_voice_docker100_2026-10-04.tgz) |
+| Janus, voice, all 100 recordings, through `./reproduce.sh` in Docker on a clean Ubuntu 24.04 VM, RTX 3090 (4 Oct) | 74.0 % | 0.964 | 0.807 | 0.690 | judged; turn-taking 100 / 100; first word 7.1 s mean; no client aborts, no API errors; [archive](docs/runs/janus_fdbv3_voice_docker100_2026-10-04.tgz) |
 | Janus, text replay, all 100 scenarios, same code (4 Oct) | 76.0 % | | | judged; two recordings pass that did not (type-noun rule) and two that passed by running both branches of a conditional now differ from their labels by design |
 | Janus, voice, all 100 recordings, same box and providers, before the 3 Oct fixes (3 Oct, morning) | 73.0 % (68 / 100 exact-match) | 0.947 | 0.768 | 0.626 | judged; turn-taking 99 / 100; first word 8.1 s mean; [report](BENCHMARK_FULL100_2026-10-03.md) |
 | Janus, voice, all 100 recordings, an intermediate commit, while hosted speech-to-text was slow (3 Oct, afternoon) | 65.0 % | 0.917 | 0.704 | 0.616 | judged; 19 turns closed while their last sentence was still being transcribed (cause below, fixed) |
@@ -653,7 +655,7 @@ With both set to `openai`, a run needs only LiveKit and OpenAI keys: the same Op
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-python -m pytest tests/ -q          # 751 tests, deterministic: stepped clock, scripted model, mock tools
+python -m pytest tests/ -q          # 859 tests, deterministic: stepped clock, scripted model, mock tools
 docker build -t janus . && docker run --rm janus     # the same suite on Python 3.11
 ```
 
@@ -661,8 +663,8 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 
 ## Limitations
 
-- **Voice results vary from run to run.** Hosted models, hosted speech-to-text and the benchmark's mock-tool timing move single recordings either way: near-identical code scored 73 %, 65 %, 74 %, 73 % and 74 % across five full runs on 3 and 4 Oct (the 65 % run exposed the early-turn-close cause above, now fixed). Treat any single figure as within a few points. The move from local to hosted speech-to-text is part of the gain over the 30 Sep run (42 %). Housing (38.5 %) remains the weak spot, mostly because the labels disagree with the published tools (see [Benchmark labels](#benchmark-labels-and-the-published-tools)).
-- **Reproduction path.** Four of the five full voice runs used the native path (`scripts/fdb_v3/native_run.sh`, the same inner script `./reproduce.sh` runs in its container) on a cloud GPU; the fifth went through `./reproduce.sh` in Docker on a clean VM and scored 74 % (see [Reproduce](#reproduce-the-benchmark-one-command)). That VM had an RTX 3090; other GPU generations are covered below.
+- **Voice results vary from run to run.** Hosted models, hosted speech-to-text and the benchmark's mock-tool timing move single recordings either way: near-identical code scored 73 %, 65 %, 74 %, 73 % and 74 % across five full runs on 3 and 4 Oct (the 65 % run exposed the early-turn-close cause above, now fixed); the Round 2 code scored 77 % and 82 % on 19 and 22 Oct. Treat any single figure as within a few points. The move from local to hosted speech-to-text is part of the gain over the 30 Sep run (42 %). Housing (18/26 on 22 Oct) remains the weak spot, mostly because the labels disagree with the published tools (see [Benchmark labels](#benchmark-labels-and-the-published-tools)).
+- **Reproduction path.** Four of the five full voice runs used the native path (`scripts/fdb_v3/native_run.sh`, the same inner script `./reproduce.sh` runs in its container) on a cloud GPU; the fifth went through `./reproduce.sh` in Docker on a clean VM and scored 74 % (see [Reproduce](#reproduce-the-benchmark-one-command)). The two Round 2 runs (77 % and 82 %) also went through `./reproduce.sh`. That VM had an RTX 3090; other GPU generations are covered below.
 - **GPU generations.** The image's PyTorch is the CUDA 12.6 build, which supports Ampere, Ada and Hopper GPUs; Blackwell cards (RTX 50 series, RTX PRO 6000 Blackwell) need a newer PyTorch build and are not covered.
 - **Speech-to-text still mishears some names** (e.g. a city). Hosted transcription is the default for that reason; the local faster-whisper option mishears more.
 - **Housing** (35 % in text replay, 38.5 % on voice) is the weakest domain; most of its misses are the label disagreements in [Benchmark labels](#benchmark-labels-and-the-published-tools), the rest argument values in long, constraint-heavy requests.
