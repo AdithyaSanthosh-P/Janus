@@ -261,6 +261,14 @@ OPENAI_STT_PROMPT = (
     "Transcribe exactly what they say, in English, using the Latin alphabet."
 )
 
+# Demo mode only (the benchmark keeps the prompt above): the home's own words.
+# Found in the 22 Oct rehearsal: "thermostat" came back as "Tomos Tractor",
+# "thermal start" and "Homostat", and "Janus" as "Janice".
+DEMO_STT_VOCABULARY = (
+    " The assistant is called Janus. It controls a smart home: the thermostat, the AC, the garage, "
+    "the front door lock, the light switch, and a Samsung washer; it can book a technician visit."
+)
+
 
 def _wav_bytes(audio: np.ndarray) -> bytes:
     import io
@@ -283,10 +291,11 @@ class OpenAITranscribeSTT(_ReportsRecognition):
     environment, so the key can stay on another machine behind a relay
     (scripts/fdb_v3/openai_stt_relay.py)."""
 
-    def __init__(self, *, model: str | None = None, language: str = "en", timeout_s: float = 15.0) -> None:
+    def __init__(self, *, model: str | None = None, language: str = "en", timeout_s: float = 15.0, prompt: str = OPENAI_STT_PROMPT) -> None:
         super().__init__(capabilities=stt.STTCapabilities(streaming=False, interim_results=False))
         import openai
 
+        self._prompt = prompt
         self._client = openai.AsyncOpenAI(timeout=timeout_s, max_retries=0)
         self._model = model or os.environ.get("JANUS_STT_MODEL") or OPENAI_STT_MODEL
         self._language = language
@@ -311,7 +320,7 @@ class OpenAITranscribeSTT(_ReportsRecognition):
                     model=self._model,
                     file=("segment.wav", data, "audio/wav"),
                     language=self._language,
-                    prompt=OPENAI_STT_PROMPT,
+                    prompt=self._prompt,
                 )
                 text = clean_transcript(getattr(result, "text", "") or "")
                 break

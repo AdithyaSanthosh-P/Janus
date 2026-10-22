@@ -826,6 +826,13 @@ def _append_to_running_goal(txn: StoreTxn, interp: TurnInterpretation, now_us: i
     goal = txn.store.goals.get(gid) if gid is not None else None
     if goal is None or goal.status != GoalStatus.ACTIVE or goal.task_state not in (TaskState.EXECUTING, TaskState.CLARIFYING):
         return False
+    if goal.task_state == TaskState.CLARIFYING and txn.store.config.demo_speech_polish_enabled:
+        # Demo: a new request while a question is still open is not queued
+        # behind that question (found live, 22 Oct: a misheard turn became a
+        # washer check waiting for "which device type", and two clear "set the
+        # thermostat to 21" waited behind it). It starts on its own; the
+        # unanswered one is set aside.
+        return False
     if not action_plans.append_actions(txn, gid, interp.actions, now_us, step_no, event_id=event_id, turn_id=interp.turn_id):
         return False
     prov = Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us)

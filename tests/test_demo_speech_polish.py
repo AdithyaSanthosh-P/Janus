@@ -266,3 +266,25 @@ def test_noise_does_not_re_ask_and_two_non_answers_drop_the_request():
             "Just ask again whenever you like.") in spoken(dropped)
     assert mock.commands == []
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_a_new_request_is_not_queued_behind_an_unanswered_question():
+    """Found live, 22 Oct: "Should the thermal start again?" (a misheard
+    request) became a washer status check waiting for its device type; two
+    clear "set the thermostat to 21" were appended behind that question."""
+    from prism_rt.devicecare.tools import MANIFEST as CARE, DeviceCareToolset
+
+    care = DeviceCareToolset().make_executor()
+    misheard = {"act": "new_goal", "intent": "get_device_status", "slot_deltas": [], "commit_intent": False,
+                "actions": [{"tool": "get_device_status", "args": {"device_type": "washer"}, "assumed": ["device_type"]}]}
+    to21 = {"act": "new_goal", "intent": "st_set_cooling_setpoint", "slot_deltas": [], "commit_intent": True,
+            "actions": [{"tool": "st_set_cooling_setpoint", "args": {"device": "thermostat", "celsius": 21}}]}
+    extra_tools = {m["name"]: {"latency_ms": 200, "handler": (lambda a, n=m["name"]: asyncio.run(care(n, a)))} for m in CARE}
+    h, mock = session(tools_override=extra_tools, extra=[("thermal start again", misheard), ("thermostat to twenty-one", to21)])
+    h.send(10, [manifest_event(CARE + MANIFEST)])
+    first = say(h, 100_000, "should the thermal start again", 4_000_000)
+    assert len(clarifies(first)) == 1
+    second = say(h, 4_100_000, "set the thermostat to twenty-one", 9_000_000)
+    assert clarifies(second) == []
+    assert [c[3] for c in mock.commands if c[2] == "setCoolingSetpoint"] == [[21]]
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []

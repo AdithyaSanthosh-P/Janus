@@ -120,6 +120,8 @@ from prism_rt.recap import RecapToolset
 from prism_rt.voice.camera import FrameStore, pump_video_track
 from config.templates import ACK_DEFAULT, EVIDENCE_REASK, EVIDENCE_WITHDRAWN
 from prism_rt.voice.speech import (
+    DEMO_STT_VOCABULARY,
+    OPENAI_STT_PROMPT,
     FasterWhisperSTT,
     KokoroTTS,
     OpenAITranscribeSTT,
@@ -350,7 +352,7 @@ async def entrypoint(ctx: JobContext) -> None:
     logger.info("janus joining room %s", room_name)
 
     if STT_BACKEND == "openai":
-        recognizer = OpenAITranscribeSTT()
+        recognizer = OpenAITranscribeSTT(prompt=OPENAI_STT_PROMPT + (DEMO_STT_VOCABULARY if MODE == "demo" else ""))
     else:
         recognizer = FasterWhisperSTT(
             userdata["whisper"],
