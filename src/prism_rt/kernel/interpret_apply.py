@@ -519,7 +519,7 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             # names what already stands (responder._confirm_unconfirmed_write).
             txn.facts.set(
                 f"goal.{gid}.repeat_of",
-                replies.write_summary(earlier),
+                replies.write_summary(earlier, txn.store),
                 FactStatus.COMMITTED,
                 Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.repeat_write",
@@ -589,7 +589,7 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             if writes and _live_followups(txn.store):
                 # A correction to a task whose write already went through is
                 # never re-run: that would be a second booking.
-                replies.set_honest_reply(txn, interp.turn_id, replies.no_second_write_text(writes), now_us, step_no, event_id=event_id)
+                replies.set_honest_reply(txn, interp.turn_id, replies.no_second_write_text(writes, txn.store), now_us, step_no, event_id=event_id)
                 return None
             redo = _redo_last_goal(txn, interp)
             if redo is not None:

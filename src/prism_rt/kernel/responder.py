@@ -760,10 +760,15 @@ class FastResponder:
                     text = f"Okay — shall I {phrase}?" if phrase else text
             repeat = store.facts.get(f"goal.{goal_id}.repeat_of")
             if repeat is not None and repeat.status != FactStatus.RETRACTED:
-                text = (
-                    f"You already have {repeat.value} confirmed, and I can't cancel or change it from here. "
-                    f"Do you want a second one: {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
-                )
+                phrase = action_phrase(store, call.tool, call.args) if store.config.demo_speech_polish_enabled else None
+                if phrase:
+                    text = (f"I already did that earlier: {repeat.value}. I can't cancel or change it from here. "
+                            f"Shall I {phrase} anyway, as a second one?")
+                else:
+                    text = (
+                        f"You already have {repeat.value} confirmed, and I can't cancel or change it from here. "
+                        f"Do you want a second one: {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
+                    )
             return [
                 IntendedAction(
                     action_type=ActionType.SPEAK,

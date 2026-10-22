@@ -359,18 +359,29 @@ def _repeatable(store, tool: str) -> bool:
     return bool(spec is not None and spec.repeatable)
 
 
-def write_summary(calls) -> str:
+def write_summary(calls, store=None) -> str:
+    """"book technician (Friday, afternoon)"; with demo speech polish (a
+    `store` given) and manifest labels, the actions as said: "book a
+    technician for Friday afternoon"."""
+    if store is not None and store.config.demo_speech_polish_enabled:
+        phrases = [action_phrase(store, c.tool, c.args) for c in calls]
+        if phrases and all(phrases):
+            return _join_and(phrases)
     return "; ".join(
         f"{_human(c.tool)} ({', '.join(str(v) for v in c.args.values())})" if c.args else _human(c.tool) for c in calls
     )
 
 
-def no_second_write_text(calls) -> str:
+def _join_and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def no_second_write_text(calls, store=None) -> str:
     """"Make it evening" after a booking already went through -- found live,
     30 Sep: re-running the finished task made a second booking. Say what
     stands instead; there is no tool that changes a confirmed booking."""
     return (
-        f"That's already done — {write_summary(calls)} went through. I can't change it from here, "
+        f"That's already done — {write_summary(calls, store)} went through. I can't change it from here, "
         "and I won't make a second one."
     )
 

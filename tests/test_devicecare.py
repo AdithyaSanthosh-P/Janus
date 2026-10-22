@@ -393,7 +393,7 @@ def test_a_change_after_the_booking_went_through_never_books_twice():
     assert len(tk.bookings) == 1 and tk.bookings[0]["time_slot"] == "morning"
     assert calls(actions) == []
     said = [a.body.text for a in actions if a.action_type in (ActionType.SPEAK, ActionType.FINAL)]
-    assert said and said[0].startswith("That's already done — book technician (Thursday, morning) went through.")
+    assert said and said[0].startswith("That's already done — book a technician for Thursday morning went through.")
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
 
 
@@ -440,9 +440,9 @@ def test_a_new_booking_request_after_one_went_through_is_confirmed_first():
     actions = [er.action for er in h.send(6_150_000, [eot_event()]).emit_report.emitted]
     actions += drain(h, 12_000_000, stop_on_final=False)
     assert len(tk.bookings) == 1
-    asked = [a.body.text for a in actions if a.action_type == ActionType.SPEAK and "already have" in a.body.text]
-    assert asked == ["You already have book technician (Monday, evening) confirmed, and I can't cancel or change it "
-                     "from here. Do you want a second one: book technician (Friday, evening)?"]
+    asked = [a.body.text for a in actions if a.action_type == ActionType.SPEAK and "already did" in a.body.text]
+    assert asked == ["I already did that earlier: book a technician for Monday evening. I can't cancel or change it "
+                     "from here. Shall I book a technician for Friday evening anyway, as a second one?"]
 
     h.send(12_100_000, [chunk_event("yes please")])
     h.send(12_150_000, [eot_event()])
@@ -783,7 +783,7 @@ def test_a_repeat_booking_is_not_appended_to_a_running_goal():
     actions = [er.action for er in h.send(3_150_000, [eot_event()]).emit_report.emitted]
     actions += drain(h, 10_000_000, stop_on_final=False)
     assert len(tk.bookings) == 1
-    assert any("You already have book technician (Thursday, morning)" in a.body.text
+    assert any("I already did that earlier: book a technician for Thursday morning." in a.body.text
                for a in actions if a.action_type == ActionType.SPEAK)
 
 
