@@ -173,6 +173,14 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "Yes, please."),
         ("settle", 40),
     ],
+    "repeat": [
+        ("note", "A5: the same request twice; the second is not sent again"),
+        ("say", "Set the thermostat to twenty-three."),
+        ("settle", 30),
+        ("pause", 20.0),  # SmartThings rate limit between two commands to one device
+        ("say", "Set the thermostat to twenty-three."),
+        ("settle", 30),
+    ],
     "smalltalk": [
         ("note", "greetings and thanks get a reply, not \"Okay, one moment\""),
         ("say", "Hello Janus, good morning."),
