@@ -44,6 +44,20 @@ from typing import Awaitable, Callable
 _FILLER_ONLY = re.compile(r"^(?:you|thank you|thanks|bye|hmm+|mm+|m+hm+|um+|uh+|huh|ah+|oh|okay|so)$")
 
 
+_SOCIAL = re.compile(
+    r"(?:(?:hi|hello|hey|hiya|yo|good (?:morning|afternoon|evening|night)|thanks?|thank you(?: (?:so|very) much)?|"
+    r"thanks a lot|cheers|bye|goodbye|see you(?: later)?|cool|great|nice|awesome|perfect|got it|"
+    r"how are you(?: doing)?|there|janus)\W*)+",
+    re.IGNORECASE,
+)
+
+
+def is_social_turn(text: str) -> bool:
+    """A greeting, thanks or goodbye and nothing else ("Hey Janus, good
+    morning!", "Thanks."): no request, so nothing to wait for."""
+    return bool(text.strip()) and _SOCIAL.fullmatch(text.strip().strip(".!?, ")) is not None
+
+
 def is_filler_segment(text: str) -> bool:
     """True when a finalized segment carries no content at all -- only a
     filler or a silence hallucination -- once case, punctuation and
@@ -132,7 +146,12 @@ class VoiceBridge:
     # limit): a correction spoken right after a request ("...twenty-two.
     # Actually, make it twenty-one.") otherwise got "Okay, one moment." twice.
     filler_min_gap_s: float = 0.0
+    # A turn this returns True for gets no filler ("Hello.", "Thanks."): the
+    # reply is a sentence back, and "Okay, one moment." before it sounds
+    # robotic (found in the 21 Oct rehearsal). None = every worded turn.
+    filler_skip: "Callable[[str], bool] | None" = None
     _last_filler_at: "float | None" = field(default=None, init=False, repr=False)
+    _turn_text: list = field(default_factory=list, init=False, repr=False)
 
     _start_wall: float = field(init=False, repr=False)
     _eot_task: "asyncio.Task | None" = field(default=None, init=False, repr=False)
@@ -250,6 +269,7 @@ class VoiceBridge:
             await self.events.put({"type": "text_chunk", "ts_us": self.now_us(), "payload": {"text": text.strip()}})
             self._words_since_eot = True
             self._words_in_turn += len(text.split())
+            self._turn_text.append(text.strip())
             self._filler_turn = False  # a new turn: its ACK is its own
             if self._agent_speaking and text.strip():
                 self.stop_speaking()  # real words over the agent: a barge-in
@@ -373,15 +393,18 @@ class VoiceBridge:
         except asyncio.CancelledError:
             return
         words = self._words_in_turn if self._words_since_eot else 0
+        said = " ".join(self._turn_text)
         self._words_since_eot = False
         self._words_in_turn = 0
+        self._turn_text = []
         self._barge_in_open = False
         self._pending_segments = 0  # anything still outstanding was given up on
         await self._report_activity()
         await self.events.put({"type": "end_of_turn", "ts_us": self.now_us(), "payload": {}})
         recent = (self.filler_min_gap_s and self._last_filler_at is not None
                   and self._loop_now() - self._last_filler_at < self.filler_min_gap_s)
-        if self.play_filler is not None and words >= self.filler_min_words and not self._agent_speaking and not recent:
+        skip = self.filler_skip is not None and self.filler_skip(said)
+        if self.play_filler is not None and words >= self.filler_min_words and not self._agent_speaking and not recent and not skip:
             self._filler_turn = True
             self._filler_active = True
             self._last_filler_at = self._loop_now()

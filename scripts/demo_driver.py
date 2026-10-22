@@ -173,6 +173,13 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "Yes, please."),
         ("settle", 40),
     ],
+    "smalltalk": [
+        ("note", "greetings and thanks get a reply, not \"Okay, one moment\""),
+        ("say", "Hello Janus, good morning."),
+        ("settle", 20),
+        ("say", "Thank you."),
+        ("settle", 20),
+    ],
     "washer_offer_clears": [
         ("note", "the camera shows 4C; Janus offers a technician; the display clears before the yes"),
         ("video", "4C"),

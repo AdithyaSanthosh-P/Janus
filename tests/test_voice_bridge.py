@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from prism_rt.adapters.voice_bridge import VoiceBridge
+from prism_rt.adapters.voice_bridge import VoiceBridge, is_social_turn
 
 
 class FakeClock:
@@ -604,6 +604,38 @@ async def test_no_filler_without_the_callback():
     bridge, events, _actions, said = _make_bridge(t_eot_ms=20)
     await _close_turn(bridge)
     assert said == []  # unchanged default behaviour
+
+
+@pytest.mark.parametrize("text", ["Hello.", "Hey Janus, good morning!", "Thank you so much.", "Thanks, bye!", "How are you doing?"])
+def test_social_turns(text):
+    assert is_social_turn(text)
+
+
+@pytest.mark.parametrize("text", ["Yes.", "No, leave it.", "Hello, lock the front door.", "Thanks, now set it to 21.", ""])
+def test_requests_and_answers_are_not_social(text):
+    assert not is_social_turn(text)
+
+
+async def test_no_filler_for_a_greeting_when_social_turns_are_skipped():
+    """"Even for a hello it said ok one moment" (21 Oct rehearsal)."""
+    bridge, _events, _actions, _said, fillers = _filler_bridge()
+    bridge.filler_skip = is_social_turn
+    bridge.filler_min_words = 1
+    await _close_turn(bridge, "Hello there Janus")
+    assert fillers == []
+    await _close_turn(bridge, "Hello, lock the front door")
+    assert fillers == [True]  # a request, greeting or not
+    assert bridge._last_filler_at is not None
+
+
+async def test_a_skipped_greeting_does_not_start_the_filler_gap():
+    bridge, _events, _actions, _said, fillers = _filler_bridge()
+    bridge.filler_skip = is_social_turn
+    bridge.filler_min_words = 1
+    bridge.filler_min_gap_s = 5.0
+    await _close_turn(bridge, "Good morning")
+    await _close_turn(bridge, "Yes")
+    assert fillers == [True]
 
 
 async def test_no_filler_for_a_short_turn():

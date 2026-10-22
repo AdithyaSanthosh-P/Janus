@@ -239,9 +239,12 @@ class FastResponder:
             # Found live (22 Oct): "22... actually, 21" -- the acknowledgement,
             # held while the user spoke, went out after the 22 call was already
             # withdrawn and still said "I'll set ... 22". Say what is pending now.
-            phrases = [action_phrase(store, c.tool, c.args) for c in store.call_ledger.proposed()
-                       if c.goal_id == goal_id and c.kind == StepKind.WRITE]
+            pending = [c for c in store.call_ledger.proposed() if c.goal_id == goal_id and c.kind == StepKind.WRITE]
+            phrases = [action_phrase(store, c.tool, c.args) for c in pending]
             text = f"I'll {_join_phrases(phrases)}." if phrases and all(phrases) else ACK_DEFAULT
+            change = self._corrected_values(store, goal_id, pending)
+            if change and phrases and all(phrases):
+                text = f"Okay, {change[0]}, not {change[1]}: {text}"  # the change, said out loud
         goal = store.goals.get(goal_id)
         if (
             text == ACK_DEFAULT and store.config.no_generic_ack_before_question
@@ -259,6 +262,24 @@ class FastResponder:
                 rule_id="responder.ack",
             )
         ]
+
+    @staticmethod
+    def _corrected_values(store, goal_id: str, pending: list) -> tuple[str, str] | None:
+        """("21", "22"): for one pending write and the unsent write of the
+        same tool it replaced, the values that changed, as said. None when
+        it is not that simple (several writes, or nothing differs)."""
+        if len(pending) != 1:
+            return None
+        new = pending[0]
+        gone = [c for c in store.call_ledger.all() if c.goal_id == goal_id and c.tool == new.tool
+                and c.call_id != new.call_id and c.emitted_ts_us is None and c.status != CallStatus.PROPOSED]
+        if not gone:
+            return None
+        old = gone[-1]
+        keys = [k for k in new.args if k in old.args and str(new.args[k]).strip().lower() != str(old.args[k]).strip().lower()]
+        if not keys:
+            return None
+        return " ".join(str(new.args[k]) for k in keys), " ".join(str(old.args[k]) for k in keys)
 
     @staticmethod
     def _ack_outdated(store, goal_id: str) -> bool:

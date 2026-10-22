@@ -51,8 +51,9 @@ Environment:
   JANUS_FILLER_MIN_WORDS  words a closed turn needs before the filler plays (default 1 in demo mode,
                           3 in fdb mode). In demo mode a bare "Yes." to an offer or a question is
                           followed by the write itself and its answer, about 7 s of silence without it
-  JANUS_FILLER_MIN_GAP_S  no second filler within this many seconds of the last (default 5 in demo
-                          mode, 0 in fdb mode)
+  JANUS_FILLER_MIN_GAP_S  no second filler within this many seconds of the last (default 12 in demo
+                          mode, 0 in fdb mode). In demo mode a greeting, thanks or goodbye on its own
+                          gets no filler either (voice_bridge.is_social_turn)
   JANUS_FILLER_PROTECTED  1 = the filler cannot be interrupted (default on in demo mode, off in fdb
                           mode; the user's audio still reaches speech-to-text while it plays). LiveKit interrupts the current speech when its own end-of-turn
                           handling runs (agent_activity._user_turn_completed_impl), which races the
@@ -100,14 +101,14 @@ from livekit import rtc
 from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobExecutorType, JobProcess, cli, stt
 from livekit.plugins import silero
 
+from prism_rt.adapters.display_reader import CLEAR, DisplayReader
 from prism_rt.adapters.drills import CONTROL_TOPIC, DrilledBackend, DrilledProvider, DrillState, run_external_command
 from prism_rt.adapters.event_feed import EventFeed
 from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest
 from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter
-from prism_rt.adapters.voice_bridge import VoiceBridge
+from prism_rt.adapters.voice_bridge import VoiceBridge, is_social_turn
 from prism_rt.adapters.voice_settings import aec_warmup_duration
-from prism_rt.adapters.display_reader import CLEAR, DisplayReader
 from prism_rt.adapters.offers import build_offer
 from prism_rt.adapters.world_watch import WorldWatcher
 from prism_rt.devicecare import DeviceCareToolset
@@ -234,7 +235,7 @@ FILLER_TEXT = os.environ.get("JANUS_FILLER_TEXT") or "Okay, one moment."
 TTS_CHUNKED = _flag_env("JANUS_TTS_CHUNKED", MODE == "demo")
 FILLER_PROTECTED = _flag_env("JANUS_FILLER_PROTECTED", MODE == "demo")
 FILLER_MIN_WORDS = _int_env("JANUS_FILLER_MIN_WORDS", 1 if MODE == "demo" else 3)
-FILLER_MIN_GAP_S = float(os.environ.get("JANUS_FILLER_MIN_GAP_S") or (5 if MODE == "demo" else 0))
+FILLER_MIN_GAP_S = float(os.environ.get("JANUS_FILLER_MIN_GAP_S") or (12 if MODE == "demo" else 0))
 AEC_WARMUP_S = aec_warmup_duration(MODE, os.environ.get("JANUS_AEC_WARMUP_S"))
 DRILLS_ENABLED = MODE == "demo" and os.environ.get("JANUS_DRILLS") == "1"
 # Demo mode: a withdrawal or re-ask arriving while Janus is still speaking cuts
@@ -482,6 +483,7 @@ async def entrypoint(ctx: JobContext) -> None:
         play_filler=play_filler if FILLER_ENABLED else None,
         filler_min_words=FILLER_MIN_WORDS,
         filler_min_gap_s=FILLER_MIN_GAP_S,
+        filler_skip=is_social_turn if MODE == "demo" else None,
         interrupt_prefixes=SELF_INTERRUPT_PREFIXES,
         on_interruption_logged=lambda msg: logger.info("bridge: %s", msg),
         generic_ack_texts=(ACK_DEFAULT,),

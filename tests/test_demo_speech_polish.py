@@ -181,6 +181,7 @@ def test_an_acknowledgement_held_over_a_correction_names_the_corrected_value():
     out += [er.action for er in h.send(1_750_000, [eot_event()]).emit_report.emitted]
     out += drain(h, 8_000_000, stop_on_final=False)
     lines = spoken(out)
-    assert not any("22" in t for t in lines), lines
+    assert not any("to 22" in t for t in lines), lines  # 22 is only ever named as what it is not
+    assert "Okay, 21, not 22: I'll set the thermostat to 21 degrees." in lines, lines
     assert [c[3] for c in mock.commands if c[2] == "setCoolingSetpoint"] == [[21]]
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
