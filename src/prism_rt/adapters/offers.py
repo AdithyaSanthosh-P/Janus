@@ -33,7 +33,7 @@ AC_TARGET = 24
 
 # kind -> (appliance, write tool, its arguments, how the visit is said)
 APPLIANCE_OFFERS = {
-    "washer_error": ("washer", "book_technician", {"date": "tomorrow", "time_slot": "morning"}, "tomorrow morning"),
+    "washer_error": ("washer", "book_technician", {"date": "tomorrow", "time_slot": "morning", "device": "washer"}, "tomorrow morning"),
 }
 
 _ids = itertools.count(1)

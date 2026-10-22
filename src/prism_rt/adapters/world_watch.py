@@ -39,6 +39,7 @@ class WorldWatcher:
         report: Callable[[str, object], Awaitable[None]],
         *,
         interval_s: float = 10.0,
+        intervals: dict[str, float] | None = None,
         max_s: float = 3600.0,
         sleep: Callable[[float], Awaitable] = asyncio.sleep,
     ) -> None:
@@ -46,6 +47,7 @@ class WorldWatcher:
         self._read_state = read_state
         self._report = report
         self._interval_s = interval_s
+        self._intervals = dict(intervals or {})  # per tool: a camera reading can be polled faster than SmartThings
         self._max_s = max_s
         self._sleep = sleep
         self._planned: dict[str, tuple[str, dict]] = {}
@@ -83,8 +85,9 @@ class WorldWatcher:
         try:
             while waited <= self._max_s:
                 await self._read_and_report(tool, spoken)
-                await self._sleep(self._interval_s)
-                waited += self._interval_s
+                interval = self._intervals.get(tool, self._interval_s)
+                await self._sleep(interval)
+                waited += interval
         except asyncio.CancelledError:
             pass
         finally:

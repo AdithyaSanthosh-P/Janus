@@ -211,7 +211,7 @@ def washer_offered(h, payload):
 
 def test_washer_offer_names_the_code_and_the_visit():
     _, _, payload = washer_setup()
-    assert payload["tool"] == "book_technician" and payload["args"] == {"date": "tomorrow", "time_slot": "morning"}
+    assert payload["tool"] == "book_technician" and payload["args"] == {"date": "tomorrow", "time_slot": "morning", "device": "washer"}
     assert payload["text"] == ("Your washer has stopped with code 4C: water is not being supplied to the drum. "
                                "Shall I book a technician for tomorrow morning?")
 
@@ -247,6 +247,41 @@ def test_washer_offer_corrected_books_the_new_slot_only():
     later = say(h, 7_100_000, "yes please", 11_000_000)
     assert [(b["date"], b["time_slot"]) for b in care.bookings] == [("Friday", "afternoon")]
     assert tool_calls(first + later) == ["book_technician"]
+    clean(h)
+
+
+def washer_fact(code):
+    return {"type": "world_fact", "payload": {"key": world_target_key("washer"), "value": code}}
+
+
+def test_washer_display_clears_while_janus_waits_and_nothing_is_booked():
+    # The camera's reading of the display is the fact the offer rested on: the
+    # code is gone before the yes, so the visit is withdrawn unbooked.
+    h, care, payload = washer_setup()
+    washer_offered(h, payload)
+    push(h, 2_600_000, [washer_fact("4C")], 2_800_000)  # baseline when the question was asked
+    actions = push(h, 3_500_000, [washer_fact("clear")], 4_500_000)
+    assert ("Never mind: the washer's error code is gone. It cleared while I was waiting, so I didn't book anyone."
+            in said(actions))
+    reasons = [f.value for k, f in h.store.facts.by_prefix("withdrawn.").items() if k.endswith(".reason")]
+    assert reasons == ["washer error code cleared while waiting"]
+    later = say(h, 5_000_000, "yes please", 8_000_000)
+    assert tool_calls(actions + later) == [] and care.bookings == []
+    clean(h)
+
+
+def test_washer_display_shows_another_code_and_janus_asks_again():
+    h, care, payload = washer_setup()
+    washer_offered(h, payload)
+    push(h, 2_600_000, [washer_fact("4C")], 2_800_000)
+    push(h, 3_000_000, [washer_fact("4C")], 3_200_000)  # the same reading again: no news
+    actions = push(h, 3_500_000, [washer_fact("5C")], 4_500_000)
+    lines = said(actions)
+    assert any(t.startswith("Heads up: The washer changed from 4C to 5C") and "Shall I still book a technician for tomorrow morning?" in t
+               for t in lines), lines
+    assert care.bookings == []
+    later = say(h, 5_000_000, "yes please", 9_000_000)
+    assert tool_calls(later) == ["book_technician"] and len(care.bookings) == 1
     clean(h)
 
 

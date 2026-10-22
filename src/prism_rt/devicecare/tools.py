@@ -155,11 +155,20 @@ MANIFEST: list[dict] = [
         "mutability": "state_changing",
         # How the action is said and shown on the app's card (replies.action_phrase).
         "label": "Book a technician for {date} {time_slot}",
+        # kernel/evidence.py: while a booking offered for an appliance's error
+        # waits for a yes, the appliance's error code is watched (in demo mode,
+        # read off the camera; adapters/display_reader.py). "clear" means the
+        # code is gone, and the visit is withdrawn unbooked.
+        "watch": "device",
+        "done_when": "clear",
+        "withdrawn_text": "Never mind: {device}'s error code is gone. It cleared while I was waiting, so I didn't book anyone.",
+        "withdrawn_reason": "{device} error code cleared while waiting",
         "params_schema": _obj(
             {
                 "date": _str("The day of the visit, for example Friday or 2026-10-02."),
                 "time_slot": _str("morning, afternoon or evening."),
                 "issue_id": _str("Optional. Defaults to the issue diagnosed most recently in this conversation."),
+                "device": _str("Optional. The appliance the visit is for, for example washer."),
             },
             ["date", "time_slot"],
         ),

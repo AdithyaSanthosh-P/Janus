@@ -69,6 +69,9 @@ Environment:
                           "couldn't confirm"; virtual devices confirm within about a second)
   JANUS_WORLD_POLL_S      demo mode: seconds between reads of the device a held write targets, while
                           Janus waits for the user's yes (adapters/world_watch.py; default 10, 0 = off)
+  JANUS_CAMERA_WATCH_S    demo mode: seconds between camera reads of the washer's display while a
+                          technician visit offered for its error waits for a yes (default 2;
+                          adapters/display_reader.py)
   JANUS_DRILLS            1 = demo mode only: accept failure drills from the companion app on the
                           data topic `janus.control` (adapters/drills.py; default off, never in fdb mode)
   GEMINI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
@@ -104,6 +107,7 @@ from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter
 from prism_rt.adapters.voice_bridge import VoiceBridge
 from prism_rt.adapters.voice_settings import aec_warmup_duration
+from prism_rt.adapters.display_reader import CLEAR, DisplayReader
 from prism_rt.adapters.offers import build_offer
 from prism_rt.adapters.world_watch import WorldWatcher
 from prism_rt.devicecare import DeviceCareToolset
@@ -411,15 +415,19 @@ async def entrypoint(ctx: JobContext) -> None:
     world_sink: dict = {}
     watcher: WorldWatcher | None = None
     poll_s = float(os.environ.get("JANUS_WORLD_POLL_S", "10") or 0)
+    display: dict = {}  # the camera's display reader, set once the model provider exists
     if MODE == "demo" and poll_s > 0:
         async def _read_device(tool: str, spoken: str):
+            if tool == "book_technician" and "reader" in display:
+                return await display["reader"].read(spoken)  # the washer's code, off the camera
             return await executor.read_target(tool, spoken)
 
         async def _report_world(key: str, value) -> None:
             if "fn" in world_sink:
                 await world_sink["fn"](key, value)
 
-        watcher = WorldWatcher(toolset.manifest, _read_device, _report_world, interval_s=poll_s)
+        watcher = WorldWatcher(toolset.manifest, _read_device, _report_world, interval_s=poll_s,
+                               intervals={"book_technician": float(os.environ.get("JANUS_CAMERA_WATCH_S") or 2.0)})
 
     def _feed_out(event: dict) -> None:
         event_queue.put_nowait(event)
@@ -504,9 +512,18 @@ async def entrypoint(ctx: JobContext) -> None:
             thinking_budget=int(thinking) if thinking not in (None, "") else None,
             timeout_s=float(os.environ.get("JANUS_LLM_TIMEOUT_S") or (8 if MODE == "demo" else 30)),
         )
+    frames = FrameStore()
+    if MODE == "demo" and getattr(executor, "read_appliance", None) is not None:
+        def _washer_status(device: str) -> str | None:
+            status = executor.read_appliance(device)
+            if not isinstance(status, dict) or not status.get("found"):
+                return None
+            return status.get("error_code") or CLEAR
+
+        # Not the drilled provider: a "model down" drill is about the conversation.
+        display["reader"] = DisplayReader(provider.complete_json, frames.latest, _washer_status)
     if drills is not None:
         provider = DrilledProvider(provider, drills)
-    frames = FrameStore()
     if MODE == "demo":
         config = demo_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 0))
     else:

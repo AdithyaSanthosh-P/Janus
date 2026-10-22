@@ -24,21 +24,30 @@ logger = logging.getLogger("janus.voice.camera")
 
 
 class FrameStore:
-    def __init__(self, keep: int = 8) -> None:
+    def __init__(self, keep: int = 8, clock: Callable[[], float] = time.monotonic) -> None:
         self._keep = keep
+        self._clock = clock
         self._frames: "OrderedDict[str, MediaPart]" = OrderedDict()
         self._n = 0
+        self._last_at: float | None = None
 
     def put(self, data: bytes, mime_type: str = "image/jpeg") -> str:
         self._n += 1
         frame_id = f"cam-{self._n}"
         self._frames[frame_id] = MediaPart(mime_type=mime_type, data=data)
+        self._last_at = self._clock()
         while len(self._frames) > self._keep:
             self._frames.popitem(last=False)
         return frame_id
 
     def get(self, frame_id: str) -> MediaPart | None:
         return self._frames.get(frame_id)
+
+    def latest(self, max_age_s: float) -> MediaPart | None:
+        """The newest frame, if it arrived within `max_age_s` (the camera is on)."""
+        if not self._frames or self._last_at is None or self._clock() - self._last_at > max_age_s:
+            return None
+        return next(reversed(self._frames.values()))
 
     __call__ = get  # usable directly as a blob_resolver
 

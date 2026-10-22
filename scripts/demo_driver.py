@@ -173,6 +173,18 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "Yes, please."),
         ("settle", 40),
     ],
+    "washer_offer_clears": [
+        ("note", "the camera shows 4C; Janus offers a technician; the display clears before the yes"),
+        ("video", "4C"),
+        ("pause", 3.0),
+        ("drill", "offer", True, {"kind": "washer_error"}),
+        ("await_agent", 15),
+        ("pause", 4.0),
+        ("video", "1:05"),
+        ("settle", 25, 6),
+        ("say", "Yes, please."),
+        ("settle", 25),
+    ],
     "washer_offer_fix": [
         ("note", "survey B1: the user changes the offered visit; Janus asks again about the new slot"),
         ("drill", "offer", True, {"kind": "washer_error"}),
@@ -211,7 +223,8 @@ def washer_frame(text: str, width: int = 640, height: int = 480) -> bytes:
     except OSError:
         font = small = ImageFont.load_default()
     if text:
-        d.text((420, 230), text, fill=(255, 70, 50, 255), font=font, anchor="mm")
+        colour = (120, 220, 140, 255) if ":" in text else (255, 70, 50, 255)  # a time left is green, a code red
+        d.text((420, 230), text, fill=colour, font=font, anchor="mm")
     d.text((320, 120), "WASHER", fill=(200, 205, 210, 255), font=small, anchor="mm")
     return img.tobytes()
 
