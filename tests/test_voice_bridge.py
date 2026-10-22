@@ -606,7 +606,7 @@ async def test_no_filler_without_the_callback():
     assert said == []  # unchanged default behaviour
 
 
-@pytest.mark.parametrize("text", ["Hello.", "Hey Janus, good morning!", "Thank you so much.", "Thanks, bye!", "How are you doing?"])
+@pytest.mark.parametrize("text", ["Hello.", "Hey Janus, good morning!", "Hello Janice, good morning.", "Thank you so much.", "Thanks, bye!", "How are you doing?"])
 def test_social_turns(text):
     assert is_social_turn(text)
 

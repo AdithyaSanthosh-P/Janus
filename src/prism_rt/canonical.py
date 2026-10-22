@@ -25,7 +25,7 @@ _WHITESPACE_RE = re.compile(r"\s+")
 _SOCIAL = re.compile(
     r"(?:(?:hi|hello|hey|hiya|yo|good (?:morning|afternoon|evening|night)|thanks?|thank you(?: (?:so|very) much)?|"
     r"thanks a lot|cheers|bye|goodbye|see you(?: later)?|cool|great|nice|awesome|perfect|got it|"
-    r"how are you(?: doing)?|there|janus)\W*)+",
+    r"how are you(?: doing)?|there|janus|janice|janis|jonas|genus)\W*)+",
     re.IGNORECASE,
 )
 
