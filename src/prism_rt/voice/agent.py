@@ -70,7 +70,7 @@ Environment:
   JANUS_WORLD_POLL_S      demo mode: seconds between reads of the device a held write targets, while
                           Janus waits for the user's yes (adapters/world_watch.py; default 10, 0 = off)
   JANUS_CAMERA_WATCH_S    demo mode: seconds between camera reads of the washer's display while a
-                          technician visit offered for its error waits for a yes (default 2;
+                          technician visit offered for its error waits for a yes (default 1;
                           adapters/display_reader.py)
   JANUS_DRILLS            1 = demo mode only: accept failure drills from the companion app on the
                           data topic `janus.control` (adapters/drills.py; default off, never in fdb mode)
@@ -427,7 +427,7 @@ async def entrypoint(ctx: JobContext) -> None:
                 await world_sink["fn"](key, value)
 
         watcher = WorldWatcher(toolset.manifest, _read_device, _report_world, interval_s=poll_s,
-                               intervals={"book_technician": float(os.environ.get("JANUS_CAMERA_WATCH_S") or 2.0)})
+                               intervals={"book_technician": float(os.environ.get("JANUS_CAMERA_WATCH_S") or 1.0)})
 
     def _feed_out(event: dict) -> None:
         event_queue.put_nowait(event)

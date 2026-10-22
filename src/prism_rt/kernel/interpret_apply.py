@@ -392,6 +392,14 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
     if _active(pending) and pending.value == interp.turn_id:
         txn.facts.retract(_PENDING, rule="interpret_apply.consumed")
 
+    stale = _yes_to_a_withdrawn_offer(interp, txn.store)
+    if stale is not None:
+        # Demo: "Yes" after Janus said "never mind, it changed": the yes
+        # answered a question that no longer stands, so it must not act (a
+        # live run booked the withdrawn visit from the conversation context).
+        replies.set_honest_reply(txn, interp.turn_id, replies.stale_yes_text(txn.store, stale), now_us, step_no, event_id=event_id)
+        return None
+
     if _answers_with_recap(interp, txn.store):
         # Demo (survey H4): "What did you do?" answered from the ledger, word
         # for word, whatever the model made of the question (a live run took
@@ -853,6 +861,38 @@ _RECAP_QUESTION = re.compile(
     r"|\bwhat\s+happened\b|\bdid\s+you\s+(send|do)\s+anything\b",
     re.IGNORECASE,
 )
+
+
+_BARE_YES = re.compile(
+    r"^\W*(?:(?:yes|yeah|yep|yup|sure|ok|okay|alright|please|go ahead|do it|please do|sounds good|why not)\W*)+$",
+    re.IGNORECASE,
+)
+
+
+def _yes_to_a_withdrawn_offer(interp: TurnInterpretation, store):
+    """Demo speech polish with evidence-bound confirmation: the withdrawn call
+    a bare "yes" would answer -- the turn is only a yes, nothing is running,
+    and the last thing that happened was a held write withdrawn because the
+    world changed (no request since). None otherwise."""
+    config = store.config
+    if not (config.demo_speech_polish_enabled and config.evidence_bound_confirmation_enabled):
+        return None
+    if active_goal_id(store) is not None:
+        return None
+    turn = store.turn_log.get(interp.turn_id)
+    text = " ".join(chunk.text for chunk in turn.chunks) if turn is not None else ""
+    if not _BARE_YES.match(text):
+        return None
+    latest = None
+    for key, fact in store.facts.by_prefix("withdrawn.").items():
+        if key.endswith(".reason") and _active(fact) and (latest is None or fact.provenance.step_no > latest[1]):
+            latest = (key[len("withdrawn."):-len(".reason")], fact.provenance.step_no)
+    if latest is None:
+        return None
+    call = store.call_ledger.get(latest[0])
+    if call is None or any(g.created_step > latest[1] for g in store.goals.all()):
+        return None
+    return call
 
 
 def _answers_with_recap(interp: TurnInterpretation, store) -> bool:

@@ -71,6 +71,14 @@ def action_phrase(store, tool: str, args: dict) -> str | None:
     return text[:1].lower() + text[1:]
 
 
+def stale_yes_text(store, call) -> str:
+    """A yes that arrives after the offer it answers was withdrawn (the world
+    changed while Janus waited, kernel/evidence.py): nothing is sent."""
+    phrase = action_phrase(store, call.tool, call.args) or "do that"
+    return (f"Nothing is waiting for a yes right now: I didn't {phrase}, because it changed while I was waiting. "
+            "If you still want it, just ask.")
+
+
 def unconfirmed_text(calls: list, store=None) -> str:
     phrases = [action_phrase(store, call.tool, call.args) for call in calls]
     if all(phrases):

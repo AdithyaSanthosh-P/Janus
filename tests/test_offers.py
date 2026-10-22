@@ -270,6 +270,25 @@ def test_washer_display_clears_while_janus_waits_and_nothing_is_booked():
     clean(h)
 
 
+def test_a_late_yes_to_the_withdrawn_visit_books_nothing_even_if_the_model_takes_it_as_a_request():
+    # Found live: after "never mind, it cleared", "Yes, please." came back
+    # from the model as a fresh booking built from the conversation.
+    rebook = {"act": "new_goal", "intent": "book_technician", "slot_deltas": [], "commit_intent": True,
+              "actions": [{"tool": "book_technician", "args": {"date": "tomorrow", "time_slot": "morning"}}]}
+    h, care, payload = washer_setup(extra=[("yes please", rebook), ("book a technician", rebook)])
+    washer_offered(h, payload)
+    push(h, 2_600_000, [washer_fact("4C")], 2_800_000)
+    push(h, 3_500_000, [washer_fact("clear")], 4_500_000)
+    later = say(h, 5_000_000, "yes please", 9_000_000)
+    assert tool_calls(later) == [] and care.bookings == []
+    assert ("Nothing is waiting for a yes right now: I didn't book a technician for tomorrow morning, because it changed "
+            "while I was waiting. If you still want it, just ask.") in said(later)
+    # Asking for it again, in words, books it.
+    again = say(h, 10_000_000, "book a technician for tomorrow morning", 14_000_000)
+    assert tool_calls(again) == ["book_technician"] and len(care.bookings) == 1
+    clean(h)
+
+
 def test_washer_display_shows_another_code_and_janus_asks_again():
     h, care, payload = washer_setup()
     washer_offered(h, payload)
