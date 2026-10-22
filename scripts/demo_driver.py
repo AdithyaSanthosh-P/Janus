@@ -313,7 +313,8 @@ class Driver:
             "call_planned": lambda: f"{ev.get('tool')} {ev.get('args')} ({ev.get('call_id')})",
             "call_held": lambda: f"{ev.get('call_id')}: {ev.get('reason')}",
             "confirmation_asked": lambda: f"{ev.get('call_id')}: {ev.get('question')!r}",
-            "call_cancelled": lambda: f"{ev.get('call_id')}: {ev.get('reason')}",
+            "call_cancelled": lambda: f"{ev.get('call_id')}: {ev.get('reason')}"
+            + "".join(f" | {c['what']} {c['was']} -> {c['now']} ({c['source']})" for c in ev.get("changed") or []),
             "call_sent": lambda: f"{ev.get('call_id')}",
             "call_result": lambda: f"{ev.get('call_id')} {str(ev.get('outcome')).upper()}: {ev.get('summary')}",
             "device_state": lambda: f"{ev.get('label')} = {ev.get('value')}",
