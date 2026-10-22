@@ -377,3 +377,23 @@ def test_ac_offer_someone_else_sets_24_and_the_offer_withdraws_itself():
     later = say(h, 5_000_000, "yes please", 8_000_000)
     assert tool_calls(actions + later) == [] and mock.commands == []
     clean(h)
+
+
+def test_nothing_to_offer_is_said_with_the_reason():
+    from prism_rt.adapters.offers import no_offer_text
+
+    care = DeviceCareToolset()
+    care.bookings.append({"booking_id": "BK-0001", "issue_id": care.current_issue, "date": "Friday", "time_slot": "afternoon"})
+
+    def read_appliance(device):
+        status = care._get_device_status({"device_type": device})
+        status["visit_booked"] = True
+        return status
+
+    async def read_target(tool, spoken):
+        return "closed"
+
+    assert run(no_offer_text("washer_error", read_target, read_appliance)) == (
+        "Nothing to offer for the washer right now: a technician visit is already booked.")
+    assert run(no_offer_text("garage_open", read_target)) == "The garage is already closed, so there's nothing to offer."
+    assert run(no_offer_text("ac_hot", read_target)) == "The AC is already at 24 degrees or cooler, so there's nothing to offer."

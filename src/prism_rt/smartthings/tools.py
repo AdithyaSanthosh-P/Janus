@@ -55,6 +55,13 @@ def _str(description: str, enum: list | None = None) -> dict:
 _DEVICE = _str("The device as the user names it, for example front door, garage, air conditioner or light.")
 
 
+def _device(default: str) -> dict:
+    """The device parameter of a write, defaulting to the one device of its
+    kind in the demo home (used when the request leaves it out)."""
+    return {**_DEVICE, "default": default}
+
+
+
 def _write(name: str, description: str, properties: dict, required: list[str], *, security: bool = False, label: str = "",
            done_when: str | None = None, state_unit: str | None = None) -> dict:
     spec = {"name": name, "description": description, "mutability": "state_changing", "repeatable": True, "label": label,
@@ -76,13 +83,13 @@ MANIFEST: list[dict] = [
      "mutability": "read_only", "params_schema": _obj({}, [])},
     {"name": "st_get_status", "description": "Read the current state of one smart-home device (locked or unlocked, open or closed, on or off, temperature setpoint).",
      "mutability": "read_only", "params_schema": _obj({"device": _DEVICE}, ["device"])},
-    _write("st_lock", "Lock a door lock.", {"device": _DEVICE}, ["device"], label="Lock the {device}", done_when="locked"),
-    _write("st_unlock", "Unlock a door lock. A security action: the user is asked to confirm first.", {"device": _DEVICE}, ["device"], security=True, label="Unlock the {device}", done_when="unlocked"),
-    _write("st_open_garage", "Open the garage door. A security action: the user is asked to confirm first.", {"device": _DEVICE}, ["device"], security=True, label="Open the {device}", done_when="open"),
-    _write("st_close_garage", "Close the garage door.", {"device": _DEVICE}, ["device"], label="Close the {device}", done_when="closed"),
+    _write("st_lock", "Lock a door lock.", {"device": _device("front door")}, ["device"], label="Lock the {device}", done_when="locked"),
+    _write("st_unlock", "Unlock a door lock. A security action: the user is asked to confirm first.", {"device": _device("front door")}, ["device"], security=True, label="Unlock the {device}", done_when="unlocked"),
+    _write("st_open_garage", "Open the garage door. A security action: the user is asked to confirm first.", {"device": _device("garage")}, ["device"], security=True, label="Open the {device}", done_when="open"),
+    _write("st_close_garage", "Close the garage door.", {"device": _device("garage")}, ["device"], label="Close the {device}", done_when="closed"),
     _write("st_set_cooling_setpoint", "Set the air-conditioner / thermostat cooling temperature in degrees Celsius (16 to 30).",
-           {"device": _DEVICE, "celsius": {"type": "number", "description": "Target temperature in Celsius, 16 to 30."}}, ["device", "celsius"], label="Set the {device} to {celsius} degrees", done_when="{celsius}", state_unit="degrees"),
-    _write("st_switch", "Turn a switch or light on or off.", {"device": _DEVICE, "state": _str("on or off.", ["on", "off"])}, ["device", "state"], label="Turn the {device} {state}", done_when="{state}"),
+           {"device": _device("thermostat"), "celsius": {"type": "number", "description": "Target temperature in Celsius, 16 to 30."}}, ["device", "celsius"], label="Set the {device} to {celsius} degrees", done_when="{celsius}", state_unit="degrees"),
+    _write("st_switch", "Turn a switch or light on or off.", {"device": _device("switch"), "state": _str("on or off.", ["on", "off"])}, ["device", "state"], label="Turn the {device} {state}", done_when="{state}"),
     _write("st_set_location_mode", "Set the home mode (Home, Away or Night).", {"mode": _str("Home, Away or Night.")}, ["mode"], label="Set the home mode to {mode}"),
     _write("st_execute_scene", "Run a saved SmartThings scene by name.", {"scene": _str("The scene's name, for example Goodnight.")}, ["scene"], label="Run the {scene} scene"),
 ]

@@ -89,3 +89,26 @@ async def build_offer(kind: str, read_target: Callable[[str, str], Awaitable[obj
     if str(await read_target(tool, device)) == done:
         return None
     return {"offer_id": f"{kind}-{next(_ids)}", "text": text, "tool": tool, "args": {"device": device}}
+
+
+async def no_offer_text(kind: str, read_target: Callable[[str, str], Awaitable[object]],
+                        read_appliance: Callable[[str], dict] | None = None) -> str:
+    """What Janus says when an offer was asked for (the app's drawer) but
+    there is nothing to offer: silence looked like a freeze (found live, 22
+    Oct: a washer offer after the visit was already booked)."""
+    try:
+        if kind in APPLIANCE_OFFERS:
+            appliance = APPLIANCE_OFFERS[kind][0]
+            status = read_appliance(appliance) if read_appliance is not None else {}
+            if isinstance(status, dict) and status.get("visit_booked"):
+                return f"Nothing to offer for the {appliance} right now: a technician visit is already booked."
+            return f"The {appliance} shows no error right now, so there's nothing to offer."
+        if kind == "ac_hot":
+            return f"The AC is already at {AC_TARGET} degrees or cooler, so there's nothing to offer."
+        spec = OFFERS.get(kind)
+        if spec is not None:
+            _tool, device, done, _text = spec
+            return f"The {device} is already {done}, so there's nothing to offer."
+    except Exception:  # noqa: BLE001 - the notice is best effort
+        pass
+    return "There's nothing to offer right now."

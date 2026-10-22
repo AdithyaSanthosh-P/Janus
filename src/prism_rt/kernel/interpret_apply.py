@@ -400,6 +400,9 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         replies.set_honest_reply(txn, interp.turn_id, replies.stale_yes_text(txn.store, stale), now_us, step_no, event_id=event_id)
         return None
 
+    if _clarify_not_answered(interp, txn, now_us, step_no, event_id=event_id):
+        return active_goal_id(txn.store)
+
     if _answers_with_recap(interp, txn.store):
         # Demo (survey H4): "What did you do?" answered from the ledger, word
         # for word, whatever the model made of the question (a live run took
@@ -897,6 +900,44 @@ def _yes_to_a_withdrawn_offer(interp: TurnInterpretation, store):
     if call is None or any(g.created_step > latest[1] for g in store.goals.all()):
         return None
     return call
+
+
+CLARIFY_MAX_MISSES = 2
+
+
+def _clarify_not_answered(interp: TurnInterpretation, txn: StoreTxn, now_us: int, step_no: int, *, event_id: str) -> bool:
+    """Demo speech polish, while a question about a missing value is open:
+    a turn with nothing in it for that question ("Mm", "Hello", a misheard
+    fragment) does not re-ask it every time (found live, 22 Oct: a dozen
+    "which device" in a row). A backchannel is ignored; small talk or an
+    unclear turn counts as a miss, and after CLARIFY_MAX_MISSES the request is
+    dropped, nothing sent. True when the turn was handled here."""
+    store = txn.store
+    if not store.config.demo_speech_polish_enabled:
+        return False
+    gid = active_goal_id(store)
+    if gid is None or interp.actions or interp.slot_deltas or interp.status_question:
+        return False
+    if interp.act not in (InterpretAct.SMALLTALK, InterpretAct.UNCLEAR, InterpretAct.BACKCHANNEL):
+        return False
+    target = store.facts.get(f"goal.{gid}.clarify_target")
+    asked = store.facts.get(f"clarify.{gid}.asked")
+    if not (_active(target) and _active(asked) and isinstance(target.value, str) and not target.value.startswith("retry:")):
+        return False
+    prov = Provenance(source="system", event_id=event_id, turn_id=interp.turn_id, step_no=step_no, ts_us=now_us)
+    if interp.act != InterpretAct.BACKCHANNEL:
+        misses_fact = store.facts.get(f"clarify.{gid}.misses")
+        misses = (misses_fact.value if _active(misses_fact) else 0) + 1
+        txn.facts.set(f"clarify.{gid}.misses", misses, FactStatus.COMMITTED, prov, rule="interpret_apply.clarify_miss")
+        if misses >= CLARIFY_MAX_MISSES:
+            what = target.value.rsplit(".", 1)[-1].replace("_", " ")
+            _abandon_goal(txn, gid, now_us, step_no, event_id=event_id,
+                          text=f"I still don't have the {what}, so I've dropped that request: nothing was sent. Just ask again whenever you like.")
+            return True
+        return False  # the question is asked once more
+    # A backchannel: this turn counts as already asked about.
+    txn.facts.set(f"clarify.{gid}.asked_turn", interp.turn_id, FactStatus.COMMITTED, prov, rule="interpret_apply.clarify_backchannel")
+    return True
 
 
 def _answers_with_recap(interp: TurnInterpretation, store) -> bool:

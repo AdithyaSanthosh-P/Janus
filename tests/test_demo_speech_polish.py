@@ -219,3 +219,50 @@ def test_without_the_polish_a_greeting_is_interpreted_as_before():
     h, _ = session(config=off)
     assert at_eot(h, 100_000, "Thank you.") == []
     assert "You're welcome." not in spoken(drain(h, 2_000_000, stop_on_final=False))
+
+
+# ---- found live, 22 Oct: "which device" asked a dozen times in a row -------------
+
+NO_DEVICE = {"act": "new_goal", "intent": "st_set_cooling_setpoint", "slot_deltas": [], "commit_intent": True,
+             "actions": [{"tool": "st_set_cooling_setpoint", "args": {"celsius": 21}}]}
+SCENE = {"act": "new_goal", "intent": "st_execute_scene", "slot_deltas": [], "commit_intent": True,
+         "actions": [{"tool": "st_execute_scene", "args": {}}]}
+MM = {"act": "backchannel", "slot_deltas": []}
+HI = {"act": "smalltalk", "slot_deltas": []}
+HUH = {"act": "unclear", "slot_deltas": []}
+
+
+def clarifies(actions):
+    return [a.body.text for a in actions if a.action_type == ActionType.CLARIFY]
+
+
+def test_a_device_left_out_of_the_request_is_the_one_device_of_its_kind():
+    # "Chatdah Tomos Tractor twenty-one": the temperature came through, the device did not.
+    h, mock = session(extra=[("tractor twenty-one", NO_DEVICE)])
+    actions = say(h, 100_000, "chatdah tomos tractor twenty-one", 6_000_000)
+    assert clarifies(actions) == []
+    assert [c[3] for c in mock.commands if c[2] == "setCoolingSetpoint"] == [[21]]
+    assert "The thermostat is now 21 degrees." in spoken(actions) or any("21" in t for t in spoken(actions))
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_without_the_polish_a_missing_device_is_still_asked_for():
+    off = dataclasses.replace(demo_config(), demo_speech_polish_enabled=False)
+    h, mock = session(config=off, extra=[("tractor twenty-one", NO_DEVICE)])
+    actions = say(h, 100_000, "chatdah tomos tractor twenty-one", 6_000_000)
+    assert clarifies(actions) and mock.commands == []
+
+
+def test_noise_does_not_re_ask_and_two_non_answers_drop_the_request():
+    h, mock = session(extra=[("run a scene", SCENE), ("uh huh huh", MM), ("hello there friend", HI), ("what now then", HUH)])
+    first = say(h, 100_000, "run a scene", 4_000_000)
+    assert len(clarifies(first)) == 1
+    assert clarifies(say(h, 4_100_000, "uh huh huh", 7_000_000)) == []  # a backchannel: not asked again
+    again = say(h, 7_100_000, "hello there friend", 10_000_000)
+    assert len(clarifies(again)) == 1  # one non-answer: asked once more
+    dropped = say(h, 10_100_000, "what now then", 13_000_000)
+    assert clarifies(dropped) == []
+    assert ("I still don't have the scene, so I've dropped that request: nothing was sent. "
+            "Just ask again whenever you like.") in spoken(dropped)
+    assert mock.commands == []
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []

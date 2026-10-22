@@ -109,7 +109,7 @@ from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter
 from prism_rt.adapters.voice_bridge import VoiceBridge, is_social_turn
 from prism_rt.adapters.voice_settings import aec_warmup_duration
-from prism_rt.adapters.offers import build_offer
+from prism_rt.adapters.offers import build_offer, no_offer_text
 from prism_rt.adapters.world_watch import WorldWatcher
 from prism_rt.devicecare import DeviceCareToolset
 from prism_rt.entry import setup
@@ -641,6 +641,10 @@ async def entrypoint(ctx: JobContext) -> None:
                                         getattr(executor, "read_temperature", None))
             if payload is None:
                 logger.info("offer %s: nothing to offer right now", kind)
+                text = await no_offer_text(kind, executor.read_target, getattr(executor, "read_appliance", None))
+                if feed is not None:
+                    feed.agent_said(text, "inform")
+                await bridge.say(text)  # a notice to the presenter's button, not a decision
                 return
             logger.info("offer %s: %s", kind, payload["text"])
             await bridge.on_offer(payload)

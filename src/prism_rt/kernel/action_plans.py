@@ -410,6 +410,20 @@ def _build_steps(txn, goal_id: str, actions, first_index: int, now_us: int, step
             )
             bindings[param] = Binding(kind=BindingKind.FACT, fact_key=f"slot.$G.{prefix}.{param}")
         for param in required:
+            prop = props.get(param)
+            if (param not in bindings and config.demo_speech_polish_enabled and isinstance(prop, dict)
+                    and prop.get("default") not in (None, "")):
+                # Demo: the manifest names the one device such an action can
+                # mean ("thermostat"); a request that left it out (or was
+                # misheard around it) uses it instead of asking "which device"
+                # again and again (found live, 22 Oct).
+                txn.facts.set(
+                    f"slot.{goal_id}.{prefix}.{param}",
+                    prop["default"],
+                    FactStatus.COMMITTED,
+                    Provenance(source="default", event_id=event_id, turn_id=turn_id, step_no=step_no, ts_us=now_us),
+                    rule="action_plans.slot_default",
+                )
             # Unstated: still FACT-bound, so the executor's ordinary missing-
             # key path asks (or Q5 re-extracts) on this action's own key.
             bindings.setdefault(param, Binding(kind=BindingKind.FACT, fact_key=f"slot.$G.{prefix}.{param}"))
