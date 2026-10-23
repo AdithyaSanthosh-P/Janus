@@ -410,6 +410,14 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         replies.set_honest_reply(txn, interp.turn_id, replies.session_recap_text(txn.store), now_us, step_no, event_id=event_id)
         return active_goal_id(txn.store)
 
+    repeat = _asks_to_repeat(interp, txn.store)
+    if repeat is not None:
+        # Demo: "can you explain that again?" says the last answer again; it
+        # had been read as unclear and answered with the status summary
+        # ("For your last request, I ran ..."). Found on a phone, 23 Oct.
+        replies.set_honest_reply(txn, interp.turn_id, f"Sure. {repeat}", now_us, step_no, event_id=event_id)
+        return None
+
     if interp.act == InterpretAct.ABORT:
         gid = active_goal_id(txn.store)
         if gid is not None:
@@ -945,6 +953,28 @@ def _clarify_not_answered(interp: TurnInterpretation, txn: StoreTxn, now_us: int
     # A backchannel: this turn counts as already asked about.
     txn.facts.set(f"clarify.{gid}.asked_turn", interp.turn_id, FactStatus.COMMITTED, prov, rule="interpret_apply.clarify_backchannel")
     return True
+
+
+_REPEAT_REQUEST = re.compile(
+    r"\b(say|explain|repeat|tell\s+me|read)\b.*\b(again|one\s+more\s+time)\b|\brepeat\s+(that|it)\b"
+    r"|\bcome\s+again\b|\bpardon\b|\bwhat\s+did\s+you\s+(just\s+)?say\b",
+    re.IGNORECASE,
+)
+
+
+def _asks_to_repeat(interp: TurnInterpretation, store) -> str | None:
+    """Demo speech polish: the last answer's text when a turn with no actions
+    of its own asks to hear it again while no request is running, else None."""
+    if not store.config.demo_speech_polish_enabled or interp.actions or interp.slot_deltas:
+        return None
+    if active_goal_id(store) is not None:
+        return None
+    fact = store.facts.get("session.last_final_text")
+    if fact is None or fact.status == FactStatus.RETRACTED or not fact.value:
+        return None
+    turn = store.turn_log.get(interp.turn_id)
+    text = " ".join(chunk.text for chunk in turn.chunks) if turn is not None else ""
+    return fact.value if _REPEAT_REQUEST.search(text) else None
 
 
 def _answers_with_recap(interp: TurnInterpretation, store) -> bool:

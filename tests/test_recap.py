@@ -108,6 +108,18 @@ def test_the_question_filed_as_small_talk_or_as_a_status_question_still_gets_the
     assert first == ["Done: lock the front door."] and second == ["Done: lock the front door."]
 
 
+def test_explain_that_again_repeats_the_last_answer():
+    # Found on a phone, 23 Oct: "Oh wait, can you explain that again?" (read as
+    # unclear) got the status summary "For your last request, I ran ...".
+    h, _ = setup()
+    h.provider.register("interpret", "explain that again", {"act": "unclear", "slot_deltas": []})
+    answer = finals(say(h, 100_000, "lock the front door", 5_000_000))
+    assert len(answer) == 1
+    lines = spoken(say(h, 5_100_000, "oh wait, can you explain that again?", 8_000_000))
+    assert lines == [f"Sure. {answer[0]}"]
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
 def test_a_greeting_stays_small_talk():
     h, _ = setup()
     lines = spoken(say(h, 100_000, "hello there", 3_000_000))

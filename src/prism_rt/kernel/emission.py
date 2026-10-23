@@ -193,6 +193,12 @@ class EmissionGate:
             store.dep_index.unregister(body.target_call_id)
         elif ia.action_type == ActionType.FINAL and ia.goal_id is not None:
             self._complete_goal(ia.goal_id, store, now_us)
+            if store.config.demo_speech_polish_enabled:
+                # The answer as said, for "can you say that again?" (interpret_apply._asks_to_repeat).
+                store.facts.set(
+                    "session.last_final_text", ia.body.text, FactStatus.COMMITTED,
+                    Provenance(source="system", step_no=0, ts_us=now_us), rule="emission.last_final_text",
+                )
 
     def _complete_goal(self, goal_id: str, store: SessionStore, now_us: int) -> None:
         goal = store.goals.get(goal_id)

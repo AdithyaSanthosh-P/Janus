@@ -693,6 +693,18 @@ async def entrypoint(ctx: JobContext) -> None:
 
         ctx.room.on("track_subscribed", _watch_video)
 
+    if MODE == "demo":
+
+        @session.on("close")
+        def _on_close(_ev) -> None:
+            # The phone left (the app was closed, or the network dropped): the
+            # session closes, but the worker stayed in the room, so a rejoin
+            # found an agent that no longer listened and no new one was sent.
+            # Found on a phone, 23 Oct. Deleting the room ends this job; the
+            # next join creates the room again and gets a fresh agent.
+            logger.info("session closed; deleting room %s for a fresh rejoin", ctx.room.name)
+            ctx.delete_room()
+
     await session.start(room=ctx.room, agent=Agent(instructions=""))
 
     if MODE == "demo":
