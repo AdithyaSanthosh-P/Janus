@@ -266,7 +266,8 @@ OPENAI_STT_PROMPT = (
 # "thermal start" and "Homostat", and "Janus" as "Janice".
 DEMO_STT_VOCABULARY = (
     " The assistant is called Janus. It controls a smart home: the thermostat, the AC, the garage, "
-    "the front door lock, the light switch, and a Samsung washer; it can book a technician visit."
+    "the front door lock, the light switch, and a Samsung washer; it can book a technician visit, and set "
+    "alarms and timers on the phone."
 )
 
 

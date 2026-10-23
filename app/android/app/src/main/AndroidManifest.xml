@@ -7,6 +7,13 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Phone actions: alarms and timers through the clock app (JanusPhoneModule.kt). -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+
+    <queries>
+        <intent><action android:name="android.intent.action.SET_ALARM" /></intent>
+        <intent><action android:name="android.intent.action.SET_TIMER" /></intent>
+    </queries>
 
     <application
       android:name=".MainApplication"

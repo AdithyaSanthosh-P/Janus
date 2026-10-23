@@ -2,6 +2,7 @@ import { isValidJanusPacket } from '../utils/eventValidator';
 import { janusStore } from '../store/janusStore';
 import { JanusEvent } from '../types/janus';
 import { DrillPacket } from '../utils/drillBuilder';
+import { PHONE_TOPIC, phoneNative, runPhoneAction } from './phoneActions';
 
 export interface LiveKitConnectOptions {
   url: string;
@@ -80,6 +81,10 @@ export class LiveKitService {
       // Data channel subscriber for topic "janus.events"
       this.room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant: any, _kind: any, topic?: string) => {
         try {
+          if (topic === PHONE_TOPIC) {
+            this.handlePhoneAction(payload, participant?.identity || '');
+            return;
+          }
           if (topic && topic !== 'janus.events') {
             return;
           }
@@ -222,6 +227,28 @@ export class LiveKitService {
     } catch (err) {
       console.error('[LiveKitService] Error publishing drill:', err);
       return false;
+    }
+  }
+
+  /**
+   * An alarm or a timer the agent asks for (phoneActions.ts): run it on this
+   * phone and answer on `janus.phone`. Only the agent may ask.
+   */
+  private async handlePhoneAction(payload: Uint8Array, senderIdentity: string): Promise<void> {
+    if (!senderIdentity.startsWith('agent-')) {
+      return;
+    }
+    try {
+      const message = JSON.parse(new TextDecoder('utf-8').decode(payload));
+      const result = await runPhoneAction(message, phoneNative());
+      if (result && this.room?.localParticipant) {
+        await this.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(result)), {
+          reliable: true,
+          topic: PHONE_TOPIC,
+        });
+      }
+    } catch (err) {
+      console.error('[LiveKitService] Error running a phone action:', err);
     }
   }
 

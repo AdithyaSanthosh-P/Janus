@@ -200,6 +200,30 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "Yes, please."),
         ("settle", 25),
     ],
+    "alarm": [
+        ("note", "a phone action: the app sets the alarm through the clock app"),
+        ("say", "Set an alarm for six thirty tomorrow morning."),
+        ("settle", 30),
+    ],
+    "alarm_correction": [
+        ("note", "a correction before the alarm is set: only seven reaches the phone"),
+        ("say", "Set an alarm for six thirty tomorrow morning."),
+        ("await_agent", 10),
+        ("say", "Actually, make it seven."),
+        ("settle", 30),
+    ],
+    "alarm_repeat": [
+        ("note", "the same alarm asked for twice is set once"),
+        ("say", "Set an alarm for six thirty tomorrow morning."),
+        ("settle", 30),
+        ("say", "Set an alarm for six thirty tomorrow morning."),
+        ("settle", 30),
+    ],
+    "timer": [
+        ("note", "a phone timer"),
+        ("say", "Start a five minute timer."),
+        ("settle", 30),
+    ],
     "washer_offer_fix": [
         ("note", "survey B1: the user changes the offered visit; Janus asks again about the new slot"),
         ("drill", "offer", True, {"kind": "washer_error"}),
@@ -408,6 +432,8 @@ async def main() -> None:
     ap.add_argument("scenarios", help="comma-separated: " + ", ".join(SCENARIOS))
     ap.add_argument("--room", default=ROOM)
     ap.add_argument("--join-wait", type=float, default=8.0, help="seconds to let the worker join before speaking")
+    ap.add_argument("--fake-phone", choices=("off", "ok", "refuse"), default="off",
+                    help="answer the agent's phone actions (alarms, timers) here instead of the app")
     ap.add_argument("--keep-open", type=float, default=0.0, help="seconds to stay in the room afterwards (for the app)")
     args = ap.parse_args()
     _load_env()
@@ -428,9 +454,21 @@ async def main() -> None:
     source = rtc.AudioSource(KOKORO_SAMPLE_RATE, 1, queue_size_ms=100)
     driver = Driver(voice, room, source)
 
+    async def _fake_phone(message: dict) -> None:
+        reply = {"type": "phone_result", "id": message.get("id"), "ok": args.fake_phone == "ok"}
+        if not reply["ok"]:
+            reply["error"] = "no clock app on this phone takes it"
+        await room.local_participant.publish_data(json.dumps(reply).encode(), reliable=True, topic="janus.phone")
+
     @room.on("data_received")
     def _data(packet: rtc.DataPacket) -> None:
-        if packet.topic == "janus.events":
+        if packet.topic == "janus.phone":
+            message = json.loads(bytes(packet.data).decode())
+            sender = getattr(packet.participant, "identity", "?")
+            driver.log(f"  {'phone':<18} {sender}: {message}")
+            if args.fake_phone != "off" and message.get("type") == "phone_action":
+                asyncio.ensure_future(_fake_phone(message))
+        elif packet.topic == "janus.events":
             try:
                 driver.on_event(json.loads(bytes(packet.data).decode()))
             except Exception as exc:  # noqa: BLE001 - a bad packet must not stop the run

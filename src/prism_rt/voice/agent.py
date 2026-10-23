@@ -116,6 +116,7 @@ from prism_rt.entry import setup
 from prism_rt.observability.effects import effect_summary, format_effect_summary
 from prism_rt.observability.xray import TracedQueue
 from prism_rt.profiles import demo_config, fdb_v3_config
+from prism_rt.phone import MANIFEST as PHONE_MANIFEST, TOPIC as PHONE_TOPIC, PhoneToolset
 from prism_rt.recap import RecapToolset
 from prism_rt.voice.camera import FrameStore, pump_video_track
 from config.templates import ACK_DEFAULT, EVIDENCE_REASK, EVIDENCE_WITHDRAWN
@@ -264,8 +265,10 @@ def demo_toolset() -> Toolset:
                                 **({"waits": tuple(float(w) for w in waits.split(","))} if waits else {}))
         care = DeviceCareToolset(on_device_state=on_device_state)
         recap = RecapToolset()  # its store getter is set once the kernel session exists
-        _manifest, execute = combine(care, st, recap)
+        phone = PhoneToolset()  # its publish is set once the room is connected
+        _manifest, execute = combine(care, st, recap, phone)
         execute.recap = recap
+        execute.phone = phone
 
         async def snapshot_states() -> None:  # the app's initial device tiles
             await care.snapshot_states()
@@ -289,7 +292,7 @@ def demo_toolset() -> Toolset:
     from prism_rt.recap import MANIFEST as RECAP_MANIFEST
     from prism_rt.smartthings.tools import MANIFEST as ST_MANIFEST
 
-    return Toolset(manifest=[*CARE_MANIFEST, *ST_MANIFEST, *RECAP_MANIFEST], make_executor=make_executor)
+    return Toolset(manifest=[*CARE_MANIFEST, *ST_MANIFEST, *RECAP_MANIFEST, *PHONE_MANIFEST], make_executor=make_executor)
 
 
 # One model set per worker process. Under the default PROCESS executor each
@@ -670,6 +673,30 @@ async def entrypoint(ctx: JobContext) -> None:
             _spawn(_offer(external["offer"]))
         elif external is not None:
             _spawn(_external_command(external))
+
+    phone = getattr(executor, "phone", None)
+    if phone is not None:
+        # Phone actions (prism_rt/phone.py): the app runs them and answers on the same topic.
+        async def _publish_phone(message: dict) -> None:
+            await _until_connected()
+            await ctx.room.local_participant.publish_data(
+                json.dumps(message, separators=(",", ":")).encode(), reliable=True, topic=PHONE_TOPIC
+            )
+
+        def _on_phone_data(packet) -> None:
+            sender = getattr(packet.participant, "identity", "") or ""
+            if packet.topic != PHONE_TOPIC or not sender or sender.startswith("agent-"):
+                return
+            try:
+                reply = json.loads(bytes(packet.data).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                logger.warning("phone reply refused from %s", sender)
+                return
+            logger.info("phone reply from %s: %s", sender, reply)
+            phone.on_reply(reply)
+
+        phone.publish = _publish_phone
+        ctx.room.on("data_received", _on_phone_data)
 
     if drills is not None:
         ctx.room.on("data_received", _on_data)
