@@ -71,6 +71,10 @@ class ToolSpec:
     # so a later request for the same tool is not a repeat of an earlier one
     # that went through. Declared in the manifest; the benchmark's never is.
     repeatable: bool = False
+    # A repeatable action whose result Janus cannot see afterwards (a phone
+    # alarm): the same action with the same arguments in a later request is
+    # asked about ("shall I set it again?"), neither refused nor just re-sent.
+    ask_before_repeat: bool = False
     # Security-sensitive write: CommitGate G12 holds it until the user says yes.
     requires_confirmation: bool = False
     # Evidence-bound confirmation (kernel/evidence.py): the argument naming
@@ -193,6 +197,7 @@ class ToolCatalog:
             status="USABLE",
             frame_param=raw.get("frame_param"),
             repeatable=raw.get("repeatable") is True,
+            ask_before_repeat=raw.get("ask_before_repeat") is True,
             requires_confirmation=raw.get("requires_confirmation") is True,
             watch=raw.get("watch") if isinstance(raw.get("watch"), str) else None,
             done_when=raw.get("done_when") if isinstance(raw.get("done_when"), str) else None,

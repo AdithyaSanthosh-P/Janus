@@ -520,7 +520,7 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 deltas = action_plans.flat_deltas_from_actions(interp.actions)
             _apply_slot_deltas(txn, gid, deltas, now_us, step_no, event_id=event_id)
         tools = [step.tool for step in compiled.steps] if compiled is not None else list(interp.requested_actions or [interp.intent])
-        earlier = replies.earlier_confirmed_writes(txn.store, gid, tools) if _live_followups(txn.store) else []
+        earlier = replies.earlier_confirmed_writes(txn.store, gid, tools, interp.actions) if _live_followups(txn.store) else []
         if earlier:
             # Found live, 30 Sep: "No, cancel it. Make it Friday" after a
             # confirmed booking was read as a new request and booked a second
@@ -835,7 +835,7 @@ def _append_to_running_goal(txn: StoreTxn, interp: TurnInterpretation, now_us: i
     if not _live_followups(txn.store) or not interp.actions:
         return False
     gid = active_goal_id(txn.store)
-    if gid is not None and replies.earlier_confirmed_writes(txn.store, None, [a.tool for a in interp.actions]):
+    if gid is not None and replies.earlier_confirmed_writes(txn.store, None, [a.tool for a in interp.actions], interp.actions):
         # A repeat of a write that already went through is never appended to
         # a running goal, whose go-ahead would carry over to it: it takes the
         # new-request path, which asks first (goal.<gid>.repeat_of).

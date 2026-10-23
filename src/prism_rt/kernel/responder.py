@@ -788,7 +788,11 @@ class FastResponder:
             repeat = store.facts.get(f"goal.{goal_id}.repeat_of")
             if repeat is not None and repeat.status != FactStatus.RETRACTED:
                 phrase = action_phrase(store, call.tool, call.args) if store.config.demo_speech_polish_enabled else None
-                if phrase:
+                spec = store.catalog.get(call.tool)
+                if phrase and spec is not None and spec.ask_before_repeat:
+                    # A phone alarm: Janus cannot see whether it is still there.
+                    text = f"I did that earlier, but I can't see whether it's still there. Shall I {phrase} again?"
+                elif phrase:
                     text = (f"I already did that earlier: {repeat.value}. I can't cancel or change it from here. "
                             f"Shall I {phrase} anyway, as a second one?")
                 else:

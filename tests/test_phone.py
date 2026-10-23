@@ -78,7 +78,7 @@ def test_a_timer_is_started():
     assert [(m["action"], m["seconds"]) for m in sent] == [("set_timer", 300)]
 
 
-def test_the_same_alarm_asked_again_is_not_set_twice():
+def test_the_same_alarm_asked_again_is_not_set_again_without_a_yes():
     h, sent = setup()
     say(h, 100_000, "set an alarm for 6:30", 5_000_000)
     say(h, 5_100_000, "set an alarm for 6:30", 10_000_000)

@@ -213,10 +213,12 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("settle", 30),
     ],
     "alarm_repeat": [
-        ("note", "the same alarm asked for twice is set once"),
+        ("note", "the same alarm asked for again is asked about (Janus cannot see the phone's alarms); the yes sets it again"),
         ("say", "Set an alarm for six thirty tomorrow morning."),
         ("settle", 30),
         ("say", "Set an alarm for six thirty tomorrow morning."),
+        ("settle", 20),
+        ("say", "Yes, please."),
         ("settle", 30),
     ],
     "alarm_hedge": [

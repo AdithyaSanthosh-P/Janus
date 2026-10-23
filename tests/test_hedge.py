@@ -89,12 +89,36 @@ def test_not_hedges(text):
     assert not _HEDGE.search(text)
 
 
-def test_the_same_alarm_again_is_named_as_the_action():
+def test_the_same_alarm_in_a_later_request_is_asked_about():
+    # Found on a phone, 23 Oct: the alarm was deleted in the Clock app and
+    # "set an alarm for 6:30" / "do it again" got "already done" every time.
+    # Janus cannot see the phone's alarms, so it asks; a yes sets it again.
     h, sent = hedged_setup()
     say(h, 100_000, "set an alarm for 6:30", 5_000_000)
-    assert finals(say(h, 5_100_000, "set an alarm for 6:30", 10_000_000)) == [
-        "That's already done: you asked me to set an alarm for 6:30 AM earlier and it went through, so I won't repeat it."]
+    lines = spoken(say(h, 5_100_000, "set an alarm for 6:30", 9_000_000))
+    assert "I did that earlier, but I can't see whether it's still there. Shall I set an alarm for 6:30 AM again?" in lines
     assert len(sent) == 1
+    assert finals(say(h, 9_100_000, "yes please", 14_000_000)) == ["Your alarm is set for 6:30 AM."]
+    assert [(m["hour"], m["minute"]) for m in sent] == [(6, 30), (6, 30)]
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_another_time_is_a_new_alarm_not_a_repeat():
+    h, sent = hedged_setup()
+    h.provider._rules.insert(0, ("interpret", "alarm for 7", _intent("phone_set_alarm", {"time": "07:00"})))
+    say(h, 100_000, "set an alarm for 6:30", 5_000_000)
+    assert finals(say(h, 5_100_000, "set an alarm for 7", 10_000_000)) == ["Your alarm is set for 7 AM."]
+    assert len(sent) == 2
+
+
+def test_an_already_done_write_is_named_as_the_action():
+    from types import SimpleNamespace
+
+    from prism_rt.kernel.replies import duplicate_write_text
+    spec = SimpleNamespace(label="Lock {device}")
+    store = SimpleNamespace(config=SimpleNamespace(demo_speech_polish_enabled=True), catalog={"st_lock": spec})
+    assert duplicate_write_text("st_lock", {"device": "the front door"}, store) == (
+        "That's already done: you asked me to lock front door earlier and it went through, so I won't repeat it.")
 
 
 @pytest.mark.parametrize("text, said", [
@@ -106,3 +130,12 @@ def test_the_same_alarm_again_is_named_as_the_action():
 ])
 def test_a_model_sentence_says_times_as_a_person_would(text, said):
     assert spoken_clock_times(text) == said
+
+
+def test_an_alarm_for_a_bare_hour_is_said_as_a_time():
+    # Found on a phone, 23 Oct: "Make it 16." was acknowledged "I'll set an alarm for 16."
+    from types import SimpleNamespace
+
+    from prism_rt.kernel.replies import action_phrase
+    store = SimpleNamespace(catalog={"phone_set_alarm": SimpleNamespace(label="Set an alarm for {time}")})
+    assert action_phrase(store, "phone_set_alarm", {"time": "16"}) == "set an alarm for 4 PM"

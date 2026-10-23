@@ -85,6 +85,9 @@ def action_phrase(store, tool: str, args: dict) -> str | None:
         return None
     values = {k: _clock_time(re.sub(r"^(the|my)\s+", "", v.strip(), flags=re.IGNORECASE)) if isinstance(v, str) else v
               for k, v in (args or {}).items()}
+    if isinstance(values.get("time"), str) and re.fullmatch(r"\d{1,2}", values["time"]):
+        values["time"] = _clock_time(values["time"] + ":00")  # an alarm "for 16"
+
     try:
         text = spec.label.format(**values)
     except (KeyError, IndexError, ValueError):
@@ -390,11 +393,29 @@ def confirmed_writes(store, goal_id: str) -> list:
     return _consumed_writes(store, lambda call: call.goal_id == goal_id)
 
 
-def earlier_confirmed_writes(store, goal_id: str | None, tools) -> list:
+def earlier_confirmed_writes(store, goal_id: str | None, tools, actions=()) -> list:
     """Writes with one of `tools` that went through for any goal other than
-    `goal_id` (None: any goal at all)."""
+    `goal_id` (None: any goal at all). A tool declared `ask_before_repeat`
+    counts only with the same arguments as one of `actions` (tool, args)."""
     wanted = {t for t in tools if not _repeatable(store, t)}
-    return _consumed_writes(store, lambda call: call.goal_id != goal_id and call.tool in wanted)
+    same = {(a.tool, _plain_args(a.args)) for a in actions if _asks_before_repeat(store, a.tool)}
+
+    def keep(call) -> bool:
+        if call.goal_id == goal_id:
+            return False
+        return call.tool in wanted or (call.tool, _plain_args(call.args)) in same
+
+    return _consumed_writes(store, keep)
+
+
+def _plain_args(args) -> tuple:
+    """Arguments compared as said: "06:30" and "6:30" are the same time."""
+    return tuple(sorted((k, re.sub(r"^0(?=\d)", "", str(v).strip().lower())) for k, v in (args or {}).items()))
+
+
+def _asks_before_repeat(store, tool: str) -> bool:
+    spec = store.catalog.get(tool)
+    return bool(spec is not None and spec.ask_before_repeat)
 
 
 def _repeatable(store, tool: str) -> bool:
