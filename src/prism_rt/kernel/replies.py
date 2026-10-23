@@ -67,6 +67,15 @@ def _clock_time(value: str) -> str:
     return f"{h12} {'AM' if hour < 12 else 'PM'}" if minute == 0 else f"{h12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
 
 
+_TWENTY_FOUR_HOUR = re.compile(r"\b(0\d|1[3-9]|2[0-3]|00):([0-5]\d)\b(?!\s*[ap]\.?\s?m\b)", re.IGNORECASE)
+
+
+def spoken_clock_times(text: str) -> str:
+    """A model's own sentence with 24-hour times said as "6:30 AM"; a time
+    already said with AM/PM, or "6:30" (no padding), is left alone."""
+    return _TWENTY_FOUR_HOUR.sub(lambda m: _clock_time(m.group(0)), text)
+
+
 def action_phrase(store, tool: str, args: dict) -> str | None:
     """"lock the front door": the tool's manifest `label` with its arguments
     filled in (a leading "the"/"my" in an argument is dropped, the label has
@@ -344,8 +353,12 @@ def abort_text(store, goal_id: str) -> str:
     return "Okay, I've dropped that request. Nothing was done."
 
 
-def duplicate_write_text(tool: str, args: dict) -> str:
-    """An identical write whose effect is confirmed: say which one."""
+def duplicate_write_text(tool: str, args: dict, store=None) -> str:
+    """An identical write whose effect is confirmed: say which one (with demo
+    speech polish, as the action: "set an alarm for 6:30 AM")."""
+    phrase = action_phrase(store, tool, args) if store is not None and store.config.demo_speech_polish_enabled else None
+    if phrase:
+        return f"That's already done: you asked me to {phrase} earlier and it went through, so I won't repeat it."
     values = ", ".join(str(v) for v in args.values())
     what = f"{_human(tool)} ({values})" if values else _human(tool)
     return f"I've already done that — {what} went through earlier, so I won't repeat it."

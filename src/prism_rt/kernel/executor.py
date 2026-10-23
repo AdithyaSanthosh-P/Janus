@@ -1095,7 +1095,7 @@ class PlanExecutor:
         store.goals.update(goal_id, task_state=TaskState.RESPONDING)
         store.facts.set(
             f"compose.{goal_id}.text",
-            duplicate_write_text(step.tool, args),
+            duplicate_write_text(step.tool, args, store),
             FactStatus.COMMITTED,
             Provenance(source="system", step_no=step_no, ts_us=now_us),
             rule="executor.already_done",

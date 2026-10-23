@@ -219,6 +219,20 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "Set an alarm for six thirty tomorrow morning."),
         ("settle", 30),
     ],
+    "alarm_hedge": [
+        ("note", "a hedged request is asked about first; the yes sets it once"),
+        ("say", "Set an alarm for six thirty tomorrow morning, I think."),
+        ("settle", 20),
+        ("say", "Yes, please."),
+        ("settle", 30),
+    ],
+    "alarm_hedge_no": [
+        ("note", "a hedged request answered with a correction: only seven reaches the phone"),
+        ("say", "Set an alarm for six thirty tomorrow morning, I think."),
+        ("settle", 20),
+        ("say", "No, make it seven."),
+        ("settle", 30),
+    ],
     "timer": [
         ("note", "a phone timer"),
         ("say", "Start a five minute timer."),

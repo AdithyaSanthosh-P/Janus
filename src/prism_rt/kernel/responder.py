@@ -58,6 +58,7 @@ from prism_rt.kernel.replies import (
     done_summary,
     duplicate_write_text,
     said_result_final,
+    spoken_clock_times,
     unconfirmed_text,
     unconfirmed_writes,
 )
@@ -301,7 +302,7 @@ class FastResponder:
         fact = store.facts.get(f"goal.{goal_id}.ack_phrase")
         if fact is None or fact.status == FactStatus.RETRACTED or not fact.value:
             return None
-        return fact.value
+        return spoken_clock_times(fact.value) if store.config.demo_speech_polish_enabled else fact.value
 
     def _content_ack_text(self, store) -> str | None:
         """Phase 6 (`docs/prompt 2.txt` §9.3): "emit a content-bearing ACK
@@ -539,7 +540,7 @@ class FastResponder:
             confirmed = blocking_effect is not None and blocking_effect.status == EffectStatus.CONFIRMED
             text = INFORM_DUPLICATE_WRITE if confirmed else INFORM_UNKNOWN_WRITE_OUTCOME
             if confirmed and store.config.conversational_replies_enabled:
-                text = duplicate_write_text(call.tool, call.args)
+                text = duplicate_write_text(call.tool, call.args, store)
             actions.append(
                 IntendedAction(
                     action_type=ActionType.SPEAK,

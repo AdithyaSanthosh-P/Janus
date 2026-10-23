@@ -9,6 +9,7 @@ import pytest
 from test_phone import _intent, finals, say, setup
 
 from prism_rt.kernel.interpret_apply import _HEDGE
+from prism_rt.kernel.replies import spoken_clock_times
 from prism_rt.model.types import ActionType
 from prism_rt.sim.checker import TraceChecker
 
@@ -86,3 +87,22 @@ def test_hedges(text):
 @pytest.mark.parametrize("text", ["set an alarm for 6:30", "make it 7", "yes please", "thinking of 7", "mayberry"])
 def test_not_hedges(text):
     assert not _HEDGE.search(text)
+
+
+def test_the_same_alarm_again_is_named_as_the_action():
+    h, sent = hedged_setup()
+    say(h, 100_000, "set an alarm for 6:30", 5_000_000)
+    assert finals(say(h, 5_100_000, "set an alarm for 6:30", 10_000_000)) == [
+        "That's already done: you asked me to set an alarm for 6:30 AM earlier and it went through, so I won't repeat it."]
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("text, said", [
+    ("I'll set an alarm for 06:30 tomorrow morning.", "I'll set an alarm for 6:30 AM tomorrow morning."),
+    ("I'll update your alarm time to 07:00.", "I'll update your alarm time to 7 AM."),
+    ("Alarm at 19:15.", "Alarm at 7:15 PM."),
+    ("Alarm at 6:30 tomorrow.", "Alarm at 6:30 tomorrow."),
+    ("Alarm at 07:00 am.", "Alarm at 07:00 am."),
+])
+def test_a_model_sentence_says_times_as_a_person_would(text, said):
+    assert spoken_clock_times(text) == said
