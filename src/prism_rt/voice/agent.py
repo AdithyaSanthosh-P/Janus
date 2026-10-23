@@ -355,7 +355,8 @@ async def entrypoint(ctx: JobContext) -> None:
     logger.info("janus joining room %s", room_name)
 
     if STT_BACKEND == "openai":
-        recognizer = OpenAITranscribeSTT(prompt=OPENAI_STT_PROMPT + (DEMO_STT_VOCABULARY if MODE == "demo" else ""))
+        recognizer = OpenAITranscribeSTT(prompt=OPENAI_STT_PROMPT + (DEMO_STT_VOCABULARY if MODE == "demo" else ""),
+                                         drop_prompt_echo=MODE == "demo")
     else:
         recognizer = FasterWhisperSTT(
             userdata["whisper"],

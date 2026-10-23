@@ -245,7 +245,7 @@ class FastResponder:
             text = f"I'll {_join_phrases(phrases)}." if phrases and all(phrases) else ACK_DEFAULT
             change = self._corrected_values(store, goal_id, pending)
             if change and phrases and all(phrases):
-                text = f"Okay, {change[0]}, not {change[1]}: {text}"  # the change, said out loud
+                text = spoken_clock_times(f"Okay, {change[0]}, not {change[1]}: ") + text  # the change, said out loud
         goal = store.goals.get(goal_id)
         if (
             text == ACK_DEFAULT and store.config.no_generic_ack_before_question

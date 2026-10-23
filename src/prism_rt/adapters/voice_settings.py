@@ -3,6 +3,8 @@ check them (everything under `prism_rt/voice/` imports livekit-agents)."""
 
 from __future__ import annotations
 
+import re
+
 # livekit-agents' own default (agent_session._DEFAULT_AEC_WARMUP_DURATION).
 LIVEKIT_AEC_WARMUP_S = 3.0
 
@@ -24,3 +26,14 @@ def aec_warmup_duration(mode: str, raw: str | None) -> float | None:
     if seconds < 0:
         raise ValueError(f"JANUS_AEC_WARMUP_S must be >= 0, not {raw!r}")
     return seconds or None
+
+
+def echoes_prompt(text: str, prompt: str, *, run: int = 5) -> bool:
+    """True when a transcript repeats `run` or more consecutive words of the
+    speech-to-text prompt: the recognizer, given noise or a near-silent
+    segment, returned its own instructions (found on a phone, 23 Oct: "The
+    speaker is talking in English … set alarms and timers on the phone." came
+    through as the user's words and was acted on)."""
+    words = lambda s: re.findall(r"[a-z0-9']+", s.lower())  # noqa: E731
+    said, source = words(text), " " + " ".join(words(prompt)) + " "
+    return any(" " + " ".join(said[i:i + run]) + " " in source for i in range(len(said) - run + 1))

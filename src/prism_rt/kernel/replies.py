@@ -35,7 +35,15 @@ def capabilities_text(store, limit: int = 5) -> str:
 def unsupported_text(store, what: str) -> str:
     # Quoted, not spliced into a sentence: the model's phrase is often a noun
     # phrase ("team maker tool"), which read as "I can't team maker tool".
+    if store.config.demo_speech_polish_enabled:
+        # The tool-name list ("identify indicator, lookup error code, …")
+        # read as jargon on a phone (23 Oct); say what Janus is for.
+        return f"Sorry — \"{what.rstrip('.')}\" isn't something I can do from here.{DEMO_CAPABILITIES}"
     return f"Sorry — \"{what.rstrip('.')}\" isn't something I can do here.{capabilities_text(store)}"
+
+
+DEMO_CAPABILITIES = (" I can control your smart-home devices, look into a problem with your washer, book a technician, "
+                     "and set alarms and timers.")
 
 
 def unconfirmed_writes(store, goal_id: str) -> list:

@@ -36,6 +36,7 @@ from prism_rt.model.types import (
     InterpretAct,
     Provenance,
     SlotOp,
+    StepKind,
     TaskState,
     TurnInterpretation,
 )
@@ -638,6 +639,19 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         # is mapped onto the one action's own slot ("a1.destination"); an
         # ADDITION appends its new actions to the compiled plan.
         compiled_goal = action_plans.is_compiled(txn.store, gid)
+        if compiled_goal and interp.act != InterpretAct.ADDITION and _device_write_went_through(txn.store, gid):
+            # Demo: "No, make it 23" just after 22 went through. The step's
+            # lineage is spent (CommitGate G6), so the correction used to end
+            # the request "a previous … already went through" (found on a
+            # phone, 23 Oct). A device command is repeatable: the corrected
+            # one runs as a new request, as after a finished task.
+            actions = action_plans.redo_actions(txn.store, gid, interp.slot_deltas) if interp.slot_deltas else None
+            if actions:
+                return apply_interpretation(
+                    dataclasses.replace(interp, act=InterpretAct.NEW_GOAL, intent=actions[0].tool, actions=tuple(actions),
+                                        slot_deltas=(), unsupported=None),
+                    txn, now_us, step_no, event_id=event_id,
+                )
         deltas = interp.slot_deltas
         extended = False
         if compiled_goal:
@@ -682,6 +696,12 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             # Demo: a hedged correction ("maybe 7 then") is asked about too,
             # even when the request itself was a firm one.
             _mark_hedged(txn, gid, now_us, step_no, event_id=event_id)
+        elif interp.act != InterpretAct.CONFIRM and _second_one_pending(txn.store, gid):
+            # Demo: a repeat of a write that already went through ("Shall I
+            # book … anyway, as a second one?") goes out only on a yes. Found
+            # on a phone, 23 Oct: a misheard "…since morning?" was read as
+            # "make it morning" with commit intent and booked a second visit.
+            pass
         elif interp.commit_intent or (interp.act == InterpretAct.CONFIRM and _awaiting_confirmation(txn.store, gid)):
             # A "yes" to responder._confirm_unconfirmed_write's question counts
             # as the commit intent the held write was waiting for.
@@ -781,7 +801,8 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 turn = txn.store.turn_log.get(interp.turn_id)
                 text = replies.social_reply(" ".join(c.text for c in turn.chunks) if turn is not None else "") or text
             replies.set_honest_reply(txn, interp.turn_id, text, now_us, step_no, event_id=event_id)
-        elif idle_replies and txn.store.goals.all() and _turn_word_count(txn.store, interp.turn_id) >= 3:
+        elif (idle_replies and txn.store.goals.all() and _turn_word_count(txn.store, interp.turn_id) >= 3
+              and _may_ask_about_status(txn.store, interp.turn_id)):
             # An unclear turn right after a finished task is most often about
             # that task ("has it been booked?" -- the status_question flag is
             # unreliable on a small model, found live): say where it stands,
@@ -795,6 +816,22 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         else:
             _flag_unclear_no_goal(txn, interp.turn_id, now_us, step_no, event_id=event_id)
     return gid
+
+
+_STATUS_WORDS = re.compile(
+    r"\b(done|booked|sent|set|locked|unlocked|finished|through|happened|worked|working|status|confirmed)\b", re.IGNORECASE)
+
+
+def _may_ask_about_status(store, turn_id: str) -> bool:
+    """Demo speech polish: an unclear turn is answered with where the last
+    task stands only when it sounds like a question about it ("has it been
+    booked?"); otherwise it is re-asked. Found on a phone, 23 Oct: a misheard
+    "My camera stopped with this error. What does it mean?" got "For your last
+    request, I ran lock (front door)"."""
+    if not store.config.demo_speech_polish_enabled:
+        return True
+    turn = store.turn_log.get(turn_id)
+    return bool(turn is not None and _STATUS_WORDS.search(" ".join(c.text for c in turn.chunks)))
 
 
 def _turn_word_count(store, turn_id: str) -> int:
@@ -986,6 +1023,29 @@ def _hedged(interp: TurnInterpretation, store) -> bool:
     turn = store.turn_log.get(interp.turn_id)
     text = " ".join(chunk.text for chunk in turn.chunks) if turn is not None else ""
     return _HEDGE.search(text) is not None
+
+
+def _device_write_went_through(store, gid: str) -> bool:
+    """Demo speech polish: a repeatable write (a device command) of this goal
+    has already been confirmed."""
+    if not store.config.demo_speech_polish_enabled:
+        return False
+    for call in store.call_ledger.all():
+        if call.goal_id != gid or call.kind != StepKind.WRITE or call.status != CallStatus.CONSUMED:
+            continue
+        spec = store.catalog.get(call.tool)
+        effect = store.effect_ledger.by_fingerprint(call.fingerprint)
+        if spec is not None and spec.repeatable and effect is not None and effect.status == EffectStatus.CONFIRMED:
+            return True
+    return False
+
+
+def _second_one_pending(store, gid: str) -> bool:
+    """Demo speech polish: the goal repeats a write that already went through
+    (goal.<gid>.repeat_of), so only an explicit yes may send it."""
+    if not store.config.demo_speech_polish_enabled:
+        return False
+    return _active(store.facts.get(f"goal.{gid}.repeat_of"))
 
 
 def _mark_hedged(txn: StoreTxn, gid: str, now_us: int, step_no: int, *, event_id: str) -> None:
