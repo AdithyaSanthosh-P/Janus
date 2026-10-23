@@ -37,6 +37,7 @@ Environment:
   JANUS_STT               "openai" (hosted transcription, the default; needs OPENAI_API_KEY;
                           OPENAI_BASE_URL is honoured) or "local" (faster-whisper on the GPU)
   JANUS_STT_MODEL         override the hosted transcription model (default: speech.OPENAI_STT_MODEL)
+  JANUS_STT_MIN_RMS       demo mode: segments quieter than this RMS are not transcribed (default 0.025; 0 = off)
   JANUS_WHISPER_HOTWORDS  1 = prime the recognizer with the tool vocabulary (off by default;
                           not yet A/B-tested on the benchmark)
   JANUS_WHISPER_COMPUTE   CTranslate2 compute type on GPU (default float16; the dev
@@ -356,7 +357,8 @@ async def entrypoint(ctx: JobContext) -> None:
         # Demo mode no longer names the home's devices in the prompt
         # (it used to list them): with them, noise came back as invented
         # commands (23 Oct). Known mishearings are fixed after the fact instead.
-        recognizer = OpenAITranscribeSTT(drop_prompt_echo=MODE == "demo", demo_fixes=MODE == "demo")
+        recognizer = OpenAITranscribeSTT(drop_prompt_echo=MODE == "demo", demo_fixes=MODE == "demo",
+                                         min_rms=float(os.environ.get("JANUS_STT_MIN_RMS", "0.025")) if MODE == "demo" else 0.0)
     else:
         recognizer = FasterWhisperSTT(
             userdata["whisper"],

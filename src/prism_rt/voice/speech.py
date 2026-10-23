@@ -286,7 +286,7 @@ class OpenAITranscribeSTT(_ReportsRecognition):
     (scripts/fdb_v3/openai_stt_relay.py)."""
 
     def __init__(self, *, model: str | None = None, language: str = "en", timeout_s: float = 15.0, prompt: str = OPENAI_STT_PROMPT,
-                 drop_prompt_echo: bool = False, demo_fixes: bool = False) -> None:
+                 drop_prompt_echo: bool = False, demo_fixes: bool = False, min_rms: float = 0.0) -> None:
         super().__init__(capabilities=stt.STTCapabilities(streaming=False, interim_results=False))
         import openai
 
@@ -296,6 +296,11 @@ class OpenAITranscribeSTT(_ReportsRecognition):
         self._drop_prompt_echo = drop_prompt_echo
         # Demo mode: known mishearings fixed (voice_settings.fix_misheard_words).
         self._demo_fixes = demo_fixes
+        # Demo mode: a segment quieter than this (RMS of the 16 kHz samples) is
+        # not transcribed. On a phone (23 Oct) the tester's own speech measured
+        # 0.06-0.16; background voices and noise, transcribed as "Hola", "El
+        # disco", "You need ChatGPT", mostly below 0.03. 0 = off.
+        self._min_rms = min_rms
         self._client = openai.AsyncOpenAI(timeout=timeout_s, max_retries=0)
         self._model = model or os.environ.get("JANUS_STT_MODEL") or OPENAI_STT_MODEL
         self._language = language
@@ -312,6 +317,14 @@ class OpenAITranscribeSTT(_ReportsRecognition):
             "janus.voice.speech: recognizing buffer -- %d samples (%.2fs at %dHz) via %s",
             len(audio), len(audio) / WHISPER_SAMPLE_RATE, WHISPER_SAMPLE_RATE, self._model,
         )
+        rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0
+        if rms < self._min_rms:
+            logger.info("janus.voice.speech: skipped a quiet segment (rms=%.4f < %.4f, %.2fs)",
+                        rms, self._min_rms, len(audio) / WHISPER_SAMPLE_RATE)
+            return stt.SpeechEvent(
+                type=stt.SpeechEventType.FINAL_TRANSCRIPT,
+                alternatives=[stt.SpeechData(language=self._language, text="")],
+            )
         data = _wav_bytes(audio)
         text = ""
         for attempt in (1, 2):
@@ -333,7 +346,6 @@ class OpenAITranscribeSTT(_ReportsRecognition):
                 logger.exception("janus.voice.speech: transcription attempt %d failed", attempt)
                 if attempt == 1:
                     await asyncio.sleep(0.2)
-        rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0
         logger.info("janus.voice.speech: recognized text=%r (rms=%.4f, %.2fs)", text, rms, len(audio) / WHISPER_SAMPLE_RATE)
         return stt.SpeechEvent(
             type=stt.SpeechEventType.FINAL_TRANSCRIPT,

@@ -32,7 +32,8 @@ MANIFEST: list[dict] = [
         "name": "phone_set_alarm",
         "description": "Set an alarm on the user's phone. The time is on a 24-hour clock as HH:MM: 6:30 in the morning is "
         "06:30, 7 in the evening is 19:00. When the user does not say morning or evening, choose the next time that "
-        "time comes round.",
+        "time comes round. Janus cannot see or check the phone's existing alarms: a question about whether an "
+        "alarm is set is not a request to set one.",
         "mutability": "state_changing",
         # Each alarm is its own; the same one asked for again is asked about,
         # since the user may have deleted it (Janus cannot see the phone's alarms).
