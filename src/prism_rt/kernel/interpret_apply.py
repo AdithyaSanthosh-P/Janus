@@ -535,6 +535,11 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.repeat_write",
             )
+        elif interp.commit_intent and _hedged(interp, txn.store):
+            # Demo: "set an alarm for 6:30, I think" -- the go-ahead is
+            # withheld (CommitGate G4 holds the write) and the user is asked
+            # (responder._confirm_unconfirmed_write); reads still run.
+            _mark_hedged(txn, gid, now_us, step_no, event_id=event_id)
         elif interp.commit_intent:
             txn.facts.set(
                 f"goal.{gid}.commit_intent",
@@ -673,6 +678,10 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
                 Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us),
                 rule="interpret_apply.deny",
             )
+        elif changed and _hedged(interp, txn.store):
+            # Demo: a hedged correction ("maybe 7 then") is asked about too,
+            # even when the request itself was a firm one.
+            _mark_hedged(txn, gid, now_us, step_no, event_id=event_id)
         elif interp.commit_intent or (interp.act == InterpretAct.CONFIRM and _awaiting_confirmation(txn.store, gid)):
             # A "yes" to responder._confirm_unconfirmed_write's question counts
             # as the commit intent the held write was waiting for.
@@ -960,6 +969,29 @@ _REPEAT_REQUEST = re.compile(
     r"|\bcome\s+again\b|\bpardon\b|\bwhat\s+did\s+you\s+(just\s+)?say\b",
     re.IGNORECASE,
 )
+
+
+_HEDGE = re.compile(
+    r"\b(i\s+think|i\s+guess|i\s+suppose|maybe|perhaps|probably|or\s+so|or\s+something|something\s+like"
+    r"|not\s+(?:too\s+|really\s+|quite\s+|a\s*hundred\s+percent\s+)?sure)\b",
+    re.IGNORECASE,
+)
+
+
+def _hedged(interp: TurnInterpretation, store) -> bool:
+    """Demo speech polish: the request or correction is said with a hedge ("I
+    think", "maybe", "or so", "not sure"). A yes or a no is never one."""
+    if not store.config.demo_speech_polish_enabled or interp.act in (InterpretAct.CONFIRM, InterpretAct.DENY):
+        return False
+    turn = store.turn_log.get(interp.turn_id)
+    text = " ".join(chunk.text for chunk in turn.chunks) if turn is not None else ""
+    return _HEDGE.search(text) is not None
+
+
+def _mark_hedged(txn: StoreTxn, gid: str, now_us: int, step_no: int, *, event_id: str) -> None:
+    prov = Provenance(source="user", event_id=event_id, step_no=step_no, ts_us=now_us)
+    txn.facts.set(f"goal.{gid}.commit_intent", False, FactStatus.COMMITTED, prov, rule="interpret_apply.hedged")
+    txn.facts.set(f"goal.{gid}.hedged", True, FactStatus.COMMITTED, prov, rule="interpret_apply.hedged")
 
 
 def _asks_to_repeat(interp: TurnInterpretation, store) -> str | None:

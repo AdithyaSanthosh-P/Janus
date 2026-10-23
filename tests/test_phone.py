@@ -124,7 +124,7 @@ def test_no_answer_is_sent_but_not_confirmed():
 def test_the_recap_lists_the_alarm():
     h, _ = setup()
     say(h, 100_000, "set an alarm for 6:30", 5_000_000)
-    assert finals(say(h, 5_100_000, "what did you do", 9_000_000)) == ["Done: set an alarm for 06:30."]
+    assert finals(say(h, 5_100_000, "what did you do", 9_000_000)) == ["Done: set an alarm for 6:30 AM."]
 
 
 @pytest.mark.parametrize("value,expected", [("06:30", (6, 30)), ("6:30", (6, 30)), ("0630", (6, 30)),

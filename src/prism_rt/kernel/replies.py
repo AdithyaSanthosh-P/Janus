@@ -56,6 +56,17 @@ NOTHING_PENDING_YES = "There's nothing waiting for a yes right now. What would y
 NOTHING_PENDING_NO = "Okay. Nothing is waiting, so nothing was done."
 
 
+def _clock_time(value: str) -> str:
+    """"06:30" -> "6:30 AM", "19:00" -> "7 PM" (an alarm's 24-hour argument,
+    said as a person would); any other value unchanged."""
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", value)
+    if match is None or int(match.group(1)) > 23 or int(match.group(2)) > 59:
+        return value
+    hour, minute = int(match.group(1)), int(match.group(2))
+    h12 = hour % 12 or 12
+    return f"{h12} {'AM' if hour < 12 else 'PM'}" if minute == 0 else f"{h12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
+
+
 def action_phrase(store, tool: str, args: dict) -> str | None:
     """"lock the front door": the tool's manifest `label` with its arguments
     filled in (a leading "the"/"my" in an argument is dropped, the label has
@@ -63,7 +74,7 @@ def action_phrase(store, tool: str, args: dict) -> str | None:
     spec = store.catalog.get(tool) if store is not None else None
     if spec is None or not spec.label:
         return None
-    values = {k: re.sub(r"^(the|my)\s+", "", v.strip(), flags=re.IGNORECASE) if isinstance(v, str) else v
+    values = {k: _clock_time(re.sub(r"^(the|my)\s+", "", v.strip(), flags=re.IGNORECASE)) if isinstance(v, str) else v
               for k, v in (args or {}).items()}
     try:
         text = spec.label.format(**values)

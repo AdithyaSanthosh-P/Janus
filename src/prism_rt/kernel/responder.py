@@ -779,6 +779,11 @@ class FastResponder:
                     # sentence names the old arguments, so ask about the new ones.
                     phrase = action_phrase(store, call.tool, call.args)
                     text = f"Okay — shall I {phrase}?" if phrase else text
+            hedged = store.facts.get(f"goal.{goal_id}.hedged")
+            if decision.rule_id == "G4" and hedged is not None and hedged.status != FactStatus.RETRACTED and hedged.value:
+                # interpret_apply._hedged: "6:30, I think" -- check before sending.
+                phrase = action_phrase(store, call.tool, call.args)
+                text = f"Just to check — {phrase}, right?" if phrase else text
             repeat = store.facts.get(f"goal.{goal_id}.repeat_of")
             if repeat is not None and repeat.status != FactStatus.RETRACTED:
                 phrase = action_phrase(store, call.tool, call.args) if store.config.demo_speech_polish_enabled else None

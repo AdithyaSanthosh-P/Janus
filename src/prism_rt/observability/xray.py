@@ -28,6 +28,7 @@ LANES = ("USER", "KERNEL", "AGENT", "TOOLS")
 _UNDERSTOOD = {
     "interpret_apply.commit_intent": "user committed to the action",
     "interpret_apply.deny": "user declined",
+    "interpret_apply.hedged": "user sounded unsure: ask before acting",
     "interpret_apply.requested_actions": "actions understood",
     "speculation.applied": "speculative interpretation applied (no extra wait)",
     "speculation.inert_tail_promoted": "speculative interpretation kept across a trailing filler word",
