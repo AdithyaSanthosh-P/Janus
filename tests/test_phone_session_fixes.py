@@ -107,3 +107,10 @@ def test_the_prompt_echoed_back_is_recognised():
 
 def test_finals_helper_is_shared():
     assert finals([]) == [] and ActionType.FINAL
+
+
+def test_known_mishearings_are_fixed_in_demo_transcripts():
+    from prism_rt.adapters.voice_settings import fix_misheard_words
+    assert fix_misheard_words("Set the Tomos Tractor to 22.") == "Set the thermostat to 22."
+    assert fix_misheard_words("Hello Janice, set the homostat to 21") == "Hello Janus, set the thermostat to 21"
+    assert fix_misheard_words("Set the thermostat to 22.") == "Set the thermostat to 22."

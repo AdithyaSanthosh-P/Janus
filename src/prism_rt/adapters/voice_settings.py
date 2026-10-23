@@ -37,3 +37,20 @@ def echoes_prompt(text: str, prompt: str, *, run: int = 5) -> bool:
     words = lambda s: re.findall(r"[a-z0-9']+", s.lower())  # noqa: E731
     said, source = words(text), " " + " ".join(words(prompt)) + " "
     return any(" " + " ".join(said[i:i + run]) + " " in source for i in range(len(said) - run + 1))
+
+
+# Demo mode: words the recognizer is known to mishear in this home, fixed in
+# the transcript (22 Oct rehearsal: "Tomos Tractor", "thermal start",
+# "Homostat"; "Janice"). This replaced naming them in the recognizer's prompt,
+# which made it invent whole commands from background noise ("Janus, turn on
+# the AC and set the thermostat to 72 degrees", 23 Oct, sent as the user's).
+_MISHEARD = (
+    (re.compile(r"\b(?:tomos\s+tractor|thermal\s+start|homo\s*stat|thermo\s+stat|thermos\s+stat)\b", re.IGNORECASE), "thermostat"),
+    (re.compile(r"\bjanice\b", re.IGNORECASE), "Janus"),
+)
+
+
+def fix_misheard_words(text: str) -> str:
+    for pattern, word in _MISHEARD:
+        text = pattern.sub(word, text)
+    return text

@@ -23,7 +23,7 @@ from livekit import rtc
 from livekit.agents import DEFAULT_API_CONNECT_OPTIONS, APIConnectOptions, stt, tts, utils
 from livekit.agents.types import NOT_GIVEN, NotGivenOr
 
-from prism_rt.adapters.voice_settings import echoes_prompt
+from prism_rt.adapters.voice_settings import echoes_prompt, fix_misheard_words
 
 WHISPER_REPO = "dropbox-dash/faster-whisper-large-v3-turbo"
 WHISPER_REVISION = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
@@ -263,15 +263,6 @@ OPENAI_STT_PROMPT = (
     "Transcribe exactly what they say, in English, using the Latin alphabet."
 )
 
-# Demo mode only (the benchmark keeps the prompt above): the home's own words.
-# Found in the 22 Oct rehearsal: "thermostat" came back as "Tomos Tractor",
-# "thermal start" and "Homostat", and "Janus" as "Janice".
-DEMO_STT_VOCABULARY = (
-    " The assistant is called Janus. It controls a smart home: the thermostat, the AC, the garage, "
-    "the front door lock, the light switch, and a Samsung washer; it can book a technician visit, and set "
-    "alarms and timers on the phone."
-)
-
 
 def _wav_bytes(audio: np.ndarray) -> bytes:
     import io
@@ -295,7 +286,7 @@ class OpenAITranscribeSTT(_ReportsRecognition):
     (scripts/fdb_v3/openai_stt_relay.py)."""
 
     def __init__(self, *, model: str | None = None, language: str = "en", timeout_s: float = 15.0, prompt: str = OPENAI_STT_PROMPT,
-                 drop_prompt_echo: bool = False) -> None:
+                 drop_prompt_echo: bool = False, demo_fixes: bool = False) -> None:
         super().__init__(capabilities=stt.STTCapabilities(streaming=False, interim_results=False))
         import openai
 
@@ -303,6 +294,8 @@ class OpenAITranscribeSTT(_ReportsRecognition):
         # Demo mode: a transcript that only repeats the prompt is dropped
         # (adapters/voice_settings.py.echoes_prompt).
         self._drop_prompt_echo = drop_prompt_echo
+        # Demo mode: known mishearings fixed (voice_settings.fix_misheard_words).
+        self._demo_fixes = demo_fixes
         self._client = openai.AsyncOpenAI(timeout=timeout_s, max_retries=0)
         self._model = model or os.environ.get("JANUS_STT_MODEL") or OPENAI_STT_MODEL
         self._language = language
@@ -333,12 +326,15 @@ class OpenAITranscribeSTT(_ReportsRecognition):
                 if self._drop_prompt_echo and echoes_prompt(text, self._prompt):
                     logger.warning("janus.voice.speech: dropped a transcript that repeats the prompt: %r", text)
                     text = ""
+                if self._demo_fixes:
+                    text = fix_misheard_words(text)
                 break
             except Exception:  # noqa: BLE001 - same never-raise rule as FasterWhisperSTT
                 logger.exception("janus.voice.speech: transcription attempt %d failed", attempt)
                 if attempt == 1:
                     await asyncio.sleep(0.2)
-        logger.info("janus.voice.speech: recognized text=%r", text)
+        rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0
+        logger.info("janus.voice.speech: recognized text=%r (rms=%.4f, %.2fs)", text, rms, len(audio) / WHISPER_SAMPLE_RATE)
         return stt.SpeechEvent(
             type=stt.SpeechEventType.FINAL_TRANSCRIPT,
             alternatives=[stt.SpeechData(language=self._language, text=text)],
