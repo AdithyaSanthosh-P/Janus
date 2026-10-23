@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, View, Text, KeyboardAvoidingView, Platform, Pressable, ScrollView } from 'react-native';
+import { Modal, View, Text, KeyboardAvoidingView, Platform, Pressable, ScrollView, useWindowDimensions } from 'react-native';
 import { X } from 'lucide-react-native';
 import { Tokens } from '../theme/colors';
 import { type } from '../theme/type';
@@ -15,7 +15,12 @@ interface SheetProps {
 }
 
 /** A bottom sheet: a dimming scrim (tap to dismiss), a grabber, a title row and a scrolling body. */
-export const Sheet: React.FC<SheetProps> = ({ visible, t, title, subtitle, onClose, children }) => (
+export const Sheet: React.FC<SheetProps> = ({ visible, t, title, subtitle, onClose, children }) => {
+  // The body's height in pixels: a percentage cap or flexShrink alone left the
+  // drill sheet's scroll stuck part-way on Android, sometimes (22-23 Oct).
+  const { height } = useWindowDimensions();
+  const bodyMax = Math.max(200, height * 0.88 - 110);
+  return (
   <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: t.scrim }}>
       <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityLabel="Close" />
@@ -30,11 +35,12 @@ export const Sheet: React.FC<SheetProps> = ({ visible, t, title, subtitle, onClo
             <X size={16} color={t.ink2} />
           </Press>
         </View>
-        {/* flexShrink: inside a sheet capped by maxHeight, an unconstrained ScrollView
-            took its full content height on Android and could not scroll until a tap
-            re-laid it out (found on a phone, 22 Oct). */}
+        {/* A ScrollView sized by its content inside a maxHeight sheet could not
+            scroll on Android until a tap re-laid it out (22 Oct), and with
+            flexShrink it still stopped part-way at times (23 Oct): its own
+            pixel maxHeight makes the scroll range definite. */}
         <ScrollView
-          style={{ flexGrow: 0, flexShrink: 1 }}
+          style={{ flexGrow: 0, maxHeight: bodyMax }}
           showsVerticalScrollIndicator
           keyboardShouldPersistTaps="handled"
           nestedScrollEnabled
@@ -45,7 +51,8 @@ export const Sheet: React.FC<SheetProps> = ({ visible, t, title, subtitle, onClo
       </View>
     </KeyboardAvoidingView>
   </Modal>
-);
+  );
+};
 
 /** An inset group: a heading above one rounded container whose rows are split by hairlines. */
 export const Group: React.FC<{ t: Tokens; title?: string; footer?: string; children: React.ReactNode }> = ({ t, title, footer, children }) => {
