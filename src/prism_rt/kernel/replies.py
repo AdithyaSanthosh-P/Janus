@@ -333,12 +333,17 @@ def capability_reply(text: str) -> str | None:
     return f"{DEMO_CAPABILITIES.strip()} What would you like me to do?"
 
 
+_ARE_YOU_THERE = re.compile(r"\b(?:are you (?:still )?(?:there|here|listening|with me)|can you hear me)\b", re.IGNORECASE)
+
+
 def social_reply(text: str) -> str | None:
     """Demo speech polish: a reply that fits a greeting, thanks or goodbye
     (canonical.social_kind) -- "You're welcome." to "Thank you.", not an
     invitation to make a request. None for anything else."""
     if _WHATS_UP.fullmatch(str(text or "").strip()):
         return "Not much — I'm here and ready. What can I do for you?"
+    if _ARE_YOU_THERE.search(str(text or "")):
+        return "Yes, I'm here."
     kind = social_kind(text)
     if kind is None:
         return None

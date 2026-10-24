@@ -227,6 +227,5 @@ def test_demo_polish_answers_chat_while_a_question_is_open():
     drain(h, 3_000_000, stop_on_final=False)
     actions = say(h, 3_100_000, "hello janus are you there", 7_000_000)
     assert calls(actions) == []
-    assert "Hi! What can I do for you? I'm still waiting for your answer: shall I unlock the front door?" in speaks(actions) \
-        or any("still waiting for your answer: shall I unlock the front door?" in t for t in speaks(actions))
+    assert "Yes, I'm here. I'm still waiting for your answer: shall I unlock the front door?" in speaks(actions)
     assert_clean(h)
