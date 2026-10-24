@@ -254,6 +254,15 @@ SELF_INTERRUPT_PREFIXES: tuple[str, ...] = (
     tuple(t.split("{")[0].strip() for t in (EVIDENCE_WITHDRAWN, EVIDENCE_REASK)) if MODE == "demo" else ())
 
 
+def _code_optional(tool: dict) -> dict:
+    schema = dict(tool["params_schema"])
+    properties = dict(schema["properties"])
+    properties["code"] = {**properties["code"], "description": "The code on the display, for example 4C. Leave it out to read "
+                          "whatever the display shows now through the camera."}
+    return {**tool, "params_schema": {**schema, "properties": properties,
+                                      "required": [r for r in schema.get("required", []) if r != "code"]}}
+
+
 def demo_toolset() -> Toolset:
     from prism_rt.smartthings.factory import backend_mode, combine, make_backend
     from prism_rt.smartthings.tools import SmartThingsToolset
@@ -303,6 +312,14 @@ def demo_toolset() -> Toolset:
             if execute.look is not None and tool_name in ("get_device_status", "lookup_error_code") \
                     and _device_key(care.kb, args.get("device_type")) == "washer":
                 seen, value = await execute.look("washer")
+            if tool_name == "lookup_error_code" and not str(args.get("code") or "").strip():
+                # No code given ("is there an error now?"): the one on the
+                # display, as the camera reads it, else as the washer reports it.
+                code = value if seen and value != "clear" else None if seen else care.status.get("washer", {}).get("error_code")
+                if not code:
+                    return {"found": True, "device": care.kb["devices"]["washer"]["name"], "code": None,
+                            "message": "The washer's display shows no error code right now."}
+                args = {**args, "code": code}
             result = await execute(tool_name, args)
             if tool_name == "lookup_error_code" and seen and value == "clear" and isinstance(result, dict):
                 result["display_now"] = "The washer's display shows no error code right now."
@@ -320,6 +337,10 @@ def demo_toolset() -> Toolset:
     # of this demo: given any picture with a light in it, the model reached for
     # it and explained a router fault (phone, 24 Oct). JANUS_ROUTER=1 keeps it.
     care = [t for t in CARE_MANIFEST if _flag_env("JANUS_ROUTER", False) or t["name"] != "identify_indicator"]
+    # The code is optional here: without one, it is read off the camera
+    # (demo_toolset's executor), so "is there an error now?" is answered,
+    # not met with "what should code be?" (24 Oct).
+    care = [_code_optional(t) if t["name"] == "lookup_error_code" else t for t in care]
     return Toolset(manifest=[*care, *ST_MANIFEST, *RECAP_MANIFEST, *PHONE_MANIFEST], make_executor=make_executor)
 
 
