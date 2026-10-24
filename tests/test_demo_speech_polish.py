@@ -288,3 +288,42 @@ def test_a_new_request_is_not_queued_behind_an_unanswered_question():
     assert clarifies(second) == []
     assert [c[3] for c in mock.commands if c[2] == "setCoolingSetpoint"] == [[21]]
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def _booking_session():
+    from prism_rt.devicecare.tools import MANIFEST as CARE
+    book = {"act": "new_goal", "intent": "book_technician", "slot_deltas": [], "commit_intent": True,
+            "actions": [{"tool": "book_technician", "args": {"date": "Friday", "time_slot": "morning", "device": "washer"}}]}
+    provider = ScriptedProvider()
+    provider.register("interpret", "what can you do", {"act": "smalltalk", "slot_deltas": []})
+    provider.register("interpret", "cancel whatever", {"act": "abort", "slot_deltas": []})
+    provider.register("interpret", "book a technician", book)
+    # The composer that misread the refusal live (24 Oct).
+    provider.register("compose", "", {"text": "A technician was booked for Friday morning.", "claims": []})
+    refused = {"booked": False, "message": "Nothing has been diagnosed yet, so there is nothing to book a technician for."}
+    tools = {"book_technician": {"latency_ms": 200, "response": refused}}
+    h = SimHarness(demo_config(), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h.send(0, [manifest_event(CARE)])
+    return h
+
+
+def test_a_refused_booking_is_never_said_as_booked_or_as_already_done():
+    h = _booking_session()
+    actions = say(h, 100_000, "book a technician for friday morning", 5_000_000)
+    finals = [a for a in actions if a.action_type == ActionType.FINAL]
+    assert finals[-1].body.text.startswith("I couldn't book a technician")
+    assert "nothing has been diagnosed yet" in finals[-1].body.text
+    assert finals[-1].body.task_completed is False
+    # Asking again is a new attempt, not "I already did that earlier".
+    actions = say(h, 5_100_000, "book a technician for friday morning", 10_000_000)
+    assert not any("already" in t.lower() for t in spoken(actions))
+    assert [a.body.tool_name for a in actions if a.action_type == ActionType.TOOL_CALL] == ["book_technician"]
+    actions = say(h, 10_100_000, "cancel whatever I said", 14_000_000)
+    assert not any("went through" in t for t in spoken(actions))
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
+def test_what_can_you_do_says_what_janus_is_for():
+    h = _booking_session()
+    actions = say(h, 100_000, "so what can you do for me janus", 4_000_000)
+    assert any(t.startswith("I can control your smart-home devices") for t in spoken(actions))

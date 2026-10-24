@@ -57,6 +57,7 @@ from prism_rt.kernel.replies import (
     device_write_final,
     done_summary,
     duplicate_write_text,
+    refused_write_final,
     said_result_final,
     spoken_clock_times,
     unconfirmed_text,
@@ -455,6 +456,10 @@ class FastResponder:
             ran = done_summary(store, goal.goal_id)  # the writes that did confirm, if any
             said = unconfirmed_text(unconfirmed, store)
             text = f"{ran} {said}" if ran else said
+            task_completed = False
+        elif store.config.demo_speech_polish_enabled and not is_watchdog_salvage \
+                and (built := refused_write_final(store, goal.goal_id)) is not None:
+            text = built  # the service said no: never the composer's "booked"
             task_completed = False
         elif store.config.demo_speech_polish_enabled and task_completed and not is_watchdog_salvage \
                 and (built := device_write_final(store, goal.goal_id)) is not None:

@@ -620,6 +620,13 @@ class TraceChecker:
                     if call is not None and call.attempt > 1:
                         seen[fp] = (report.step_no, body.call_id)
                         continue  # legitimate retry, not a duplicate
+                    prev_result = store.facts.get(f"result.{prev_call}") if store is not None else None
+                    prev_value = getattr(prev_result, "value", None)
+                    if isinstance(prev_value, dict) and any(prev_value.get(k) is False for k in ("done", "booked", "opened")):
+                        # The earlier one was refused ({"booked": False}): nothing
+                        # happened, so asking again is not a duplicate effect.
+                        seen[fp] = (report.step_no, body.call_id)
+                        continue
                     violations.append(
                         Violation(
                             "W1",

@@ -319,6 +319,17 @@ def salvage_text(store, goal_id: str) -> str:
 
 
 POLITE_REPLY = "Happy to help — what would you like me to do?"
+_CAPABILITY_QUESTION = re.compile(
+    r"\bwhat\b.{0,20}\b(?:can|could)\s+you\s+(?:do|help)|\b(?:your|you have)\b.{0,12}\b(?:functions|features|capabilities|skills)\b"
+    r"|\bwhat\s+do\s+you\s+do\b|\bhow\s+can\s+you\s+help\b", re.IGNORECASE)
+
+
+def capability_reply(text: str) -> str | None:
+    """Demo speech polish: "What can you do?" answered with what Janus is for,
+    not "Happy to help — what would you like me to do?" (phone, 24 Oct)."""
+    if not _CAPABILITY_QUESTION.search(text or ""):
+        return None
+    return f"{DEMO_CAPABILITIES.strip()} What would you like me to do?"
 
 
 def social_reply(text: str) -> str | None:
@@ -380,10 +391,50 @@ def duplicate_write_text(tool: str, args: dict, store=None) -> str:
 
 
 def _consumed_writes(store, keep) -> list:
+    # Demo speech polish: a write the service refused ({"booked": False})
+    # did not go through, so it is never "already done" (phone, 24 Oct).
+    refused_out = store.config.demo_speech_polish_enabled
     return [
         call for call in store.call_ledger.all()
         if call.status == CallStatus.CONSUMED and call.kind == StepKind.WRITE and keep(call)
+        and not (refused_out and refused_result(store, call) is not None)
     ]
+
+
+_SUCCESS_FLAGS = ("done", "booked", "opened")
+
+
+def refused_result(store, call) -> dict | None:
+    """The call's result when it says its own success flag is false (the call
+    worked, the service said no: {"booked": False, "message": ...}), else None."""
+    fact = store.facts.get(f"result.{call.call_id}")
+    result = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
+    if isinstance(result, dict) and any(result.get(k) is False for k in _SUCCESS_FLAGS):
+        return result
+    return None
+
+
+def refused_write_final(store, goal_id: str) -> str | None:
+    """Config.demo_speech_polish_enabled: the final when a write of this goal
+    was refused by the service, said from its result. Found live (24 Oct): a
+    booking answered "Nothing has been diagnosed yet" was composed as "A
+    technician was booked". None when no write was refused."""
+    parts = []
+    for call in store.call_ledger.all():
+        if call.goal_id != goal_id or call.kind != StepKind.WRITE or call.status != CallStatus.CONSUMED:
+            continue
+        result = refused_result(store, call)
+        if result is None:
+            continue
+        phrase = action_phrase(store, call.tool, call.args) or _human(call.tool)
+        message = str(result.get("message") or "").strip().rstrip(".")
+        parts.append(f"I couldn't {phrase}: {message[:1].lower()}{message[1:]}." if message else f"I couldn't {phrase}.")
+    if not parts:
+        return None
+    done = [c for c in confirmed_writes(store, goal_id)]
+    if done:
+        parts.append(f"Done: {write_summary(done, store)}.")
+    return " ".join(parts)
 
 
 def nothing_to_cancel_text(store) -> str:
@@ -392,7 +443,7 @@ def nothing_to_cancel_text(store) -> str:
     all. Say what stands; no tool here undoes a confirmed write."""
     writes = _consumed_writes(store, lambda call: True)
     if writes:
-        done = write_summary(writes[-1:])
+        done = write_summary(writes[-1:], store)
         return (
             f"There's nothing in progress to cancel. {done[0].upper()}{done[1:]} already went through, "
             "and I can't cancel it from here."

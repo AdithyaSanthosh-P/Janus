@@ -415,7 +415,7 @@ def test_cancel_after_the_booking_went_through_gets_an_honest_reply():
 
     assert len(tk.bookings) == 1 and calls(actions) == []
     said = [a.body.text for a in actions if a.action_type in (ActionType.SPEAK, ActionType.FINAL)]
-    assert said == ["There's nothing in progress to cancel. Book technician (Thursday, morning) already went through, "
+    assert said == ["There's nothing in progress to cancel. Book a technician for Thursday morning already went through, "
                     "and I can't cancel it from here."]
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
 

@@ -114,6 +114,14 @@ class ResultRouter:
             # G7 blocks a blind resend of the same lineage and no reply may
             # call it done.
             _settle_pending_effect(store, call, ok=not unknown)
+            if store.config.demo_speech_polish_enabled and call.kind == StepKind.WRITE and not unknown \
+                    and isinstance(result.result, dict) and any(result.result.get(k) is False for k in ("done", "booked", "opened")):
+                # The service said no ({"booked": False}): nothing happened, so
+                # the effect is FAILED and asking again is not a duplicate
+                # (phone, 24 Oct: "I already did that earlier" for a refusal).
+                effect = store.effect_ledger.by_fingerprint(call.fingerprint)
+                if effect is not None and effect.status == EffectStatus.CONFIRMED:
+                    store.effect_ledger.set_status(call.fingerprint, EffectStatus.FAILED)
             return RouteOutcome(call.call_id, "consumed", CallStatus.CONSUMED, "RES.CONSUMED")
 
         # result.status == "error": tool executed but failed. §5.8 step 6 /

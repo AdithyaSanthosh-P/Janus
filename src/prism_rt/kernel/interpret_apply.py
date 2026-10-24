@@ -799,7 +799,8 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             text = replies.POLITE_REPLY
             if txn.store.config.demo_speech_polish_enabled:
                 turn = txn.store.turn_log.get(interp.turn_id)
-                text = replies.social_reply(" ".join(c.text for c in turn.chunks) if turn is not None else "") or text
+                said = " ".join(c.text for c in turn.chunks) if turn is not None else ""
+                text = replies.capability_reply(said) or replies.social_reply(said) or text
             replies.set_honest_reply(txn, interp.turn_id, text, now_us, step_no, event_id=event_id)
         elif (idle_replies and txn.store.goals.all() and _turn_word_count(txn.store, interp.turn_id) >= 3
               and _may_ask_about_status(txn.store, interp.turn_id)):
