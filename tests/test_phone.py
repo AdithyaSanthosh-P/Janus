@@ -128,12 +128,15 @@ def test_the_recap_lists_the_alarm():
 
 
 @pytest.mark.parametrize("value,expected", [("06:30", (6, 30)), ("6:30", (6, 30)), ("0630", (6, 30)),
-                                            ("19:00", (19, 0)), ("7", (7, 0)), ("7.15", (7, 15))])
+                                            ("19:00", (19, 0)), ("7", (7, 0)), ("7.15", (7, 15)),
+                                            ("seven", (7, 0)), ("seven thirty", (7, 30)), ("six forty-five", (6, 45)),
+                                            ("seven a.m.", (7, 0)), ("7 pm", (19, 0)), ("twelve am", (0, 0)),
+                                            ("seven o'clock", (7, 0)), ("twenty one", (21, 0))])
 def test_times(value, expected):
     assert parse_time(value) == expected
 
 
-@pytest.mark.parametrize("value", ["25:00", "6:75", "six", ""])
+@pytest.mark.parametrize("value", ["25:00", "6:75", "noon", "seven seventy", "twenty-five", ""])
 def test_not_times(value):
     with pytest.raises(ValueError):
         parse_time(value)

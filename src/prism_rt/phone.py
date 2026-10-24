@@ -77,13 +77,51 @@ class PhoneRefused(RuntimeError):
     pass
 
 
+_UNITS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+    "seventeen eighteen nineteen".split())}
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50}
+
+
+def _number_words(words: list[str]) -> int | None:
+    """"seven" -> 7, "forty five" -> 45; None when the words are not a number up to 59."""
+    if len(words) == 1 and words[0] in _UNITS:
+        return _UNITS[words[0]]
+    if len(words) == 1 and words[0] in _TENS:
+        return _TENS[words[0]]
+    if len(words) == 2 and words[0] in _TENS and 1 <= _UNITS.get(words[1], 0) <= 9:
+        return _TENS[words[0]] + _UNITS[words[1]]
+    return None
+
+
 def parse_time(value) -> tuple[int, int]:
-    """(hour, minute) from "06:30", "6:30", "0630" or "7"; ValueError otherwise."""
+    """(hour, minute) from "06:30", "6:30", "0630", "7", "seven", "seven thirty",
+    "7 pm" or "seven a.m."; ValueError otherwise."""
     text = str(value or "").strip().lower().replace(".", ":")
+    meridiem = None
+    found = re.fullmatch(r"(.*?)\s*([ap])\s*:?\s*m\s*:?", text)
+    if found is not None:
+        text, meridiem = found.group(1).strip(), found.group(2)
+    text = re.sub(r"\s*o'?clock$", "", text).strip()
     match = re.fullmatch(r"(\d{1,2})(?::?(\d{2}))?", text)
-    if match is None:
-        raise ValueError(f"not a time: {value!r}")
-    hour, minute = int(match.group(1)), int(match.group(2) or 0)
+    if match is not None:
+        hour, minute = int(match.group(1)), int(match.group(2) or 0)
+    else:
+        words = [w for w in re.split(r"[\s-]+", text) if w]
+        # "seven", "seven thirty", "six forty five": the longest hour first, so
+        # "twenty one" is 21:00, not 20:01.
+        hour = minute = None
+        for cut in range(len(words), 0, -1):
+            h, m = _number_words(words[:cut]), _number_words(words[cut:]) if cut < len(words) else 0
+            if h is not None and m is not None:
+                hour, minute = h, m
+                break
+        if hour is None:
+            raise ValueError(f"not a time: {value!r}")
+    if meridiem == "p" and hour < 12:
+        hour += 12
+    elif meridiem == "a" and hour == 12:
+        hour = 0
     if hour > 23 or minute > 59:
         raise ValueError(f"not a time: {value!r}")
     return hour, minute
