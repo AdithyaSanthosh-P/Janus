@@ -48,8 +48,8 @@ EXPECT: dict[str, tuple[list[str], list[str], int]] = {
     "alarm_hedge": ([r"Just to check", r"alarm is set for 6:30 AM"], [], 0),
     "alarm_hedge_no": ([r"7 AM"], [r"not a time"], 0),
     "timer": ([r"timer for 5 minutes"], [], 0),
-    "stress_rapid_changes": ([r"thermostat is now 24"], [r"CONFIRMED: Janus Thermostat 2[02]"], 0),
-    "stress_cancel_all": ([r"dropped that request|Nothing was done"], [r"CONFIRMED: Janus Switch"], 0),
+    "stress_rapid_changes": ([r"thermostat is now 24"], [r"CONFIRMED: Janus Thermostat 2[02]"], 2),  # three corrections, one answer
+    "stress_cancel_all": ([r"dropped that request|Nothing was done"], [r"CONFIRMED: Janus Switch"], 1),  # request + never mind, one answer
     "stress_offer_confusion": ([], [], 99),
     "voice_fast": ([], [], 99),
     "voice_quiet": ([r"front door"], [], 1),
