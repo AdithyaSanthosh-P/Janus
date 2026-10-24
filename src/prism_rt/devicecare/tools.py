@@ -25,6 +25,7 @@ the companion app's device tiles use; the backend is always reported as mock.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Awaitable, Callable
 
@@ -63,6 +64,18 @@ def _device_key(kb: dict, raw) -> str | None:
         if alias in text:
             return key
     return None
+
+
+_DAY_WORDS = re.compile(
+    r"\b(?:today|tonight|tomorrow|day after tomorrow|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|"
+    r"fri(?:day)?|sat(?:urday)?|sun(?:day)?|weekend|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?|\b\d{1,2}(?:st|nd|rd|th)\b",
+    re.IGNORECASE)
+
+
+def _is_day(text: str) -> bool:
+    """Whether `text` names a day: a weekday, today/tomorrow, a month, or a numeric date."""
+    return bool(_DAY_WORDS.search(text or ""))
 
 
 def _error_code(raw) -> str:
@@ -341,6 +354,12 @@ class DeviceCareToolset:
 
     # ---- writes -------------------------------------------------------
     def _book_technician(self, a: dict) -> dict:
+        when = str(a.get("date") or "").strip()
+        if not _is_day(when):
+            # "How about Nope?" (a misheard "No, how about ...") was booked for
+            # the date "Nope" (phone, 24 Oct).
+            return {"booked": False, "message": f"{when!r} is not a day I can book. Say a weekday, today, tomorrow or a date."
+                    if when else "I need a day for the visit."}
         issue_id = self._issue(a)
         if issue_id is None:
             return {"booked": False, "message": "Nothing has been diagnosed yet, so there is nothing to book a technician for."}

@@ -831,3 +831,17 @@ def test_a_camera_reading_moves_the_simulated_washer():
     care.observe_display("washer", "4c")
     status = care._get_device_status({"device_type": "washer"})
     assert status["error_code"] == "4C" and status["machine_state"] == "paused"
+
+
+def test_a_booking_needs_a_real_day():
+    """"How about Nope?" (a misheard "No, how about ...") was booked for the date "Nope" (24 Oct)."""
+    from prism_rt.devicecare import DeviceCareToolset
+
+    care = DeviceCareToolset()
+    care._get_device_status({"device_type": "washer"})  # opens the case
+    refused = care._book_technician({"date": "Nope", "time_slot": "morning"})
+    assert refused["booked"] is False and "'Nope' is not a day" in refused["message"]
+    assert care._book_technician({"time_slot": "morning"})["message"] == "I need a day for the visit."
+    assert care.bookings == []
+    for day in ("Friday", "tomorrow", "day after tomorrow", "next Friday", "2026-10-30", "the 28th", "October 28"):
+        assert care._book_technician({"date": day, "time_slot": "afternoon"})["booked"] is True

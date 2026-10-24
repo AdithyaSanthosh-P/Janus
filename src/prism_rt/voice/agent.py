@@ -312,6 +312,14 @@ def demo_toolset() -> Toolset:
             if execute.look is not None and tool_name in ("get_device_status", "lookup_error_code") \
                     and _device_key(care.kb, args.get("device_type")) == "washer":
                 seen, value = await execute.look("washer")
+            asks_display = tool_name == "get_device_status" or (
+                tool_name == "lookup_error_code" and not str(args.get("code") or "").strip())
+            if seen and value is None and asks_display:
+                # The camera is on but no display is in view (a wall, a hand):
+                # the simulated washer's own 4C and 34 minutes would be a
+                # guess about what the user is pointing at (phone, 24 Oct).
+                return {"found": True, "device": care.kb["devices"]["washer"]["name"], "display_visible": False,
+                        "message": "The camera can't make out the washer's display. Point it at the display and ask again."}
             if tool_name == "lookup_error_code" and not str(args.get("code") or "").strip():
                 # No code given ("is there an error now?"): the one on the
                 # display, as the camera reads it, else as the washer reports it.

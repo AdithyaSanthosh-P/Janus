@@ -391,6 +391,15 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "No, just book a technician for Saturday morning."),
         ("settle", 40, 8),
     ],
+    "greet_early": [
+        ("note", "greetings in the first seconds of a session, while the spare worker process loads its models"),
+        ("say", "Hello."),
+        ("settle", 12, 5),
+        ("say", "Hello, Janus."),
+        ("settle", 12, 5),
+        ("say", "Hello Janus, how are you?"),
+        ("settle", 15, 5),
+    ],
     "washer_offer_clears": [
         ("note", "the camera shows 4C; Janus offers a technician; the display clears before the yes"),
         ("video", "4C"),
@@ -515,6 +524,8 @@ class Driver:
         self.room = room
         self.source = source
         self.t0 = time.monotonic()
+        self._b_start = 0.0
+        self._b_last: float | None = None
         self.queue: asyncio.Queue[bytes] = asyncio.Queue()
         self.last_activity = time.monotonic()
         self.marker: float | None = None  # end of our last line
@@ -598,11 +609,22 @@ class Driver:
         self.last_activity = self.marker
 
     # -- the agent's sound ------------------------------------------------------
+    def flush_burst(self) -> None:
+        """Log how long the agent's last stretch of sound lasted (a clipped reply is short)."""
+        if self._b_last is not None:
+            self.log(f"AGENT AUDIO burst {self._b_last - self._b_start:.1f}s")
+        self._b_last = None
+
     async def listen_audio(self, track: rtc.Track) -> None:
         async for event in rtc.AudioStream(track):
             data = np.frombuffer(event.frame.data, dtype=np.int16)
             if data.size and float(np.sqrt(np.mean(data.astype(np.float32) ** 2))) > 300:
                 now = time.monotonic()
+                if self._b_last is not None and now - self._b_last > 0.8:
+                    self.flush_burst()
+                if self._b_last is None:
+                    self._b_start = now
+                self._b_last = now
                 self.last_activity = now
                 if self.marker is not None and self.first_sound is None:
                     self.first_sound = now - self.marker
@@ -639,6 +661,7 @@ class Driver:
         while time.monotonic() - start < max_s:
             await asyncio.sleep(0.25)
             if time.monotonic() - self.last_activity >= quiet_s:
+                self.flush_burst()
                 return
         self.log("  (settle: still active at the limit)")
 
