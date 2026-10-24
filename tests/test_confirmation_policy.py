@@ -229,3 +229,36 @@ def test_demo_polish_answers_chat_while_a_question_is_open():
     assert calls(actions) == []
     assert "Yes, I'm here. I'm still waiting for your answer: shall I unlock the front door?" in speaks(actions)
     assert_clean(h)
+
+
+SWITCH = {"name": "st_switch", "mutability": "state_changing", "repeatable": True, "label": "Turn the {device} {state}",
+          "parameters": {"type": "object", "properties": {"device": {"type": "string"}, "state": {"type": "string"}},
+                         "required": ["device", "state"]}}
+
+
+def test_demo_polish_a_new_request_sets_an_open_question_aside():
+    """F33/F34 (scripted runs, 24 Oct): with "Shall I unlock the front door?" open, "turn
+    off the switch" waited behind the question in silence, and the next "yes" unlocked
+    the door and turned off the switch together. A new request now starts on its own;
+    the question it moved away from is dropped unsent, so a later yes cannot release it."""
+    labelled = dict(UNLOCK, label="Unlock the {device}")
+    provider = ScriptedProvider()
+    provider.register("interpret", "yes please", {"act": "confirm", "slot_deltas": []})
+    provider.register("interpret", "turn off the switch", {
+        "act": "new_goal", "intent": "st_switch", "slot_deltas": [], "commit_intent": True,
+        "actions": [{"tool": "st_switch", "args": {"device": "switch", "state": "off"}}]})
+    provider.register("interpret", "unlock the front", new_goal("st_unlock", "front door"))
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    tools = {"st_unlock": {"latency_ms": 200, "response": {"done": True}},
+             "st_switch": {"latency_ms": 200, "response": {"done": True}}}
+    h = SimHarness(config(demo_speech_polish_enabled=True), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h.send(0, [manifest_event([labelled, SWITCH])])
+    h.send(100_000, [chunk_event("unlock the front door")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + drain(h, 3_000_000, stop_on_final=False)
+    assert "That's a security action. Shall I unlock the front door?" in speaks(actions)
+    actions = say(h, 3_100_000, "turn off the switch", 8_000_000)
+    assert calls(actions) == [("st_switch", {"device": "switch", "state": "off"})]
+    assert any(t.startswith("Okay, I won't unlock the front door.") for t in speaks(actions)), speaks(actions)
+    actions = say(h, 8_100_000, "yes please", 13_000_000)
+    assert calls(actions) == [], "a yes after moving on must not unlock the door"
+    assert_clean(h)

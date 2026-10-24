@@ -472,6 +472,10 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         txn.store.goals.update(gid, task_state=TaskState.EXECUTING if compiled_goal else TaskState.PLANNING)
         return gid
 
+    set_aside = None
+    if interp.act == InterpretAct.NEW_GOAL and txn.store.config.demo_speech_polish_enabled:
+        set_aside = _set_aside_open_question(txn, now_us, step_no, event_id=event_id)
+
     if interp.act == InterpretAct.NEW_GOAL and _append_to_running_goal(txn, interp, now_us, step_no, event_id=event_id):
         return active_goal_id(txn.store)
 
@@ -488,6 +492,14 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             )
         )
         _set_active_goal(txn, gid, now_us, step_no, event_id=event_id)
+        if set_aside:
+            txn.facts.set(
+                f"goal.{gid}.set_aside",
+                set_aside,
+                FactStatus.COMMITTED,
+                Provenance(source="system", event_id=event_id, step_no=step_no, ts_us=now_us),
+                rule="interpret_apply.question_set_aside",
+            )
         if interp.intent:
             txn.facts.set(
                 f"goal.{gid}.intent",
@@ -886,6 +898,25 @@ def _flag_unclear_no_goal(txn: StoreTxn, turn_id: str, now_us: int, step_no: int
 
 def _live_followups(store) -> bool:
     return store.config.conversational_replies_enabled and store.config.action_plans_enabled
+
+
+def _set_aside_open_question(txn: StoreTxn, now_us: int, step_no: int, *, event_id: str) -> str | None:
+    """Demo speech polish: a new request while a write waits for the user's yes
+    moves on from that question. The waiting request is dropped unsent, as a
+    "no" would drop it, and the new one starts on its own. Before, it was
+    appended to the waiting goal: it sat behind the question in silence and
+    the next "yes" released both (scripted runs, 24 Oct: a second technician
+    visit was booked by a yes meant for an unlock, and the unlock's question
+    borrowed the booking's "as a second one?" wording). Returns what was set
+    aside ("unlock the front door"), for the new request's acknowledgement."""
+    gid = active_goal_id(txn.store)
+    if gid is None or not _awaiting_confirmation(txn.store, gid):
+        return None
+    held = txn.store.call_ledger.get(txn.store.facts.get(f"goal.{gid}.awaiting_confirmation").value)
+    phrase = replies.action_phrase(txn.store, held.tool, held.args) if held is not None else None
+    txn.facts.retract(f"goal.{gid}.awaiting_confirmation", rule="interpret_apply.question_set_aside")
+    _abandon_goal(txn, gid, now_us, step_no, event_id=event_id, text="Okay, I've left that one: nothing was sent.")
+    return phrase
 
 
 def _append_to_running_goal(txn: StoreTxn, interp: TurnInterpretation, now_us: int, step_no: int, *, event_id: str) -> bool:

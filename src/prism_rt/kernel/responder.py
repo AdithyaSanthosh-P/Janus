@@ -189,6 +189,16 @@ class FastResponder:
         return actions
 
     @staticmethod
+    def _with_set_aside(store, goal_id: str, text: str) -> str:
+        """Demo polish: the request this one moved away from is said to be
+        dropped ("Okay, I won't unlock the front door. I'll turn off the
+        switch."), so the user knows a later yes will not release it."""
+        fact = store.facts.get(f"goal.{goal_id}.set_aside")
+        if fact is None or fact.status == FactStatus.RETRACTED or not fact.value:
+            return text
+        return f"Okay, I won't {fact.value}. {text}"
+
+    @staticmethod
     def _question_follows(store, goal_id: str) -> bool:
         """Demo polish: the request includes a write that will be held for the
         user's yes (no commit intent: "should I get a technician?", or a
@@ -222,6 +232,7 @@ class FastResponder:
         text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
         if self._question_follows(store, goal_id):
             return []
+        text = self._with_set_aside(store, goal_id, text)
         # A re-plan (a re-extracted value, a correction) dispatches a new PLAN
         # job; say the ACK again only if it now says something different --
         # found in the 1 Oct audit (ecommerce_13): the identical ACK, twice.
@@ -272,6 +283,7 @@ class FastResponder:
                 text = spoken_clock_times(f"Okay, {change[0]}, not {change[1]}: ") + text  # the change, said out loud
         if self._question_follows(store, goal_id):
             return []
+        text = self._with_set_aside(store, goal_id, text)
         goal = store.goals.get(goal_id)
         if (
             text == ACK_DEFAULT and store.config.no_generic_ack_before_question
