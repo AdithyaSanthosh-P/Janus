@@ -102,6 +102,22 @@ def test_ambiguous_device_is_an_honest_error_not_a_guess():
     assert call(ts, "st_lock", device="back door")["device"] == "Back Door Lock"
 
 
+def test_a_place_the_home_does_not_have_is_not_guessed_as_the_only_device():
+    """One lock at home: "front door", "the door" and "lock" are it; "back door" is not."""
+    mock, ts = toolset(MockSmartThings())
+    for spoken in ("front door", "the door", "lock", "my front door"):
+        assert call(ts, "st_lock", device=spoken)["device"] == "Janus Lock"
+    mock.commands.clear()
+    for spoken in ("back door", "the side door", "kitchen door"):
+        with pytest.raises(SmartThingsError, match="only one I can see is called Janus Lock"):
+            call(ts, "st_unlock", device=spoken)
+    assert mock.commands == []
+    with pytest.raises(SmartThingsError, match="can't find"):
+        run(ts.read_target("st_unlock", "back door"))
+    # A lamp is not a door: "the living room light" is still the one switch.
+    assert call(ts, "st_switch", device="living room light", state="off")["device"] == "Janus Switch"
+
+
 def test_garage_capability_is_detected_from_the_device():
     mock = MockSmartThings(garage_capability="doorControl")
     _, ts = toolset(mock)

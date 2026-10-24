@@ -29,6 +29,13 @@ _KIND_WORDS = {
 }
 
 
+# A place named in the request that the only matching device does not carry:
+# "unlock the back door" is not the one lock at home (24 Oct: Janus asked
+# "Shall I unlock the back door?" and a yes would have unlocked the front one).
+_OTHER_PLACE_WORDS = frozenset((
+    "back rear side kitchen bedroom bathroom patio basement garden yard office upstairs downstairs balcony "
+    "second other living").split())
+
 _KIND_ORDER = ("garage", "thermostat", "switch", "lock")
 
 # What each watched write targets: (capabilities, kind, attribute). The same
@@ -141,9 +148,11 @@ class SmartThingsToolset:
         named = [d for d in pool if words & set(_norm(d.get("label")).split()) - {"janus"}]
         if len(named) == 1:
             return named[0]
-        if kind and words & set(_KIND_WORDS[kind]) and len(pool) == 1:
-            return pool[0]
         if len(pool) == 1:
+            other = (words & _OTHER_PLACE_WORDS) - set(_norm(pool[0].get("label")).split())
+            if other and self._kind(pool[0]) in ("lock", "garage"):  # a wrong guess matters for a door, not for a lamp
+                raise SmartThingsError(
+                    f"I can't find a {spoken}. The only one I can see is called {pool[0].get('label')}.")
             return pool[0]
         options = ", ".join(d["label"] for d in (named or pool)) or "none"
         raise SmartThingsError(f"I couldn't tell which device you mean by {spoken!r}. I can see: {options}.")
