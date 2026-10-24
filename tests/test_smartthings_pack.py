@@ -178,13 +178,22 @@ def test_client_maps_http_errors_to_honest_messages(code, word):
     assert word in str(exc.value).lower()
 
 
-def test_client_rate_budget_refuses_the_13th_call_in_a_minute():
-    http, c = client([(200, {"components": {}})] * 12)
+def test_client_rate_budget_refuses_the_13th_command_in_a_minute():
+    http, c = client([(200, {})] * 12)
     for _ in range(12):
-        run(c.status("dev-1"))
+        run(c.command("dev-1", "switch", "on"))
     with pytest.raises(SmartThingsError) as exc:
-        run(c.status("dev-1"))
+        run(c.command("dev-1", "switch", "on"))
     assert "rate" in str(exc.value).lower() and len(http.requests) == 12
+
+
+def test_client_read_budget_refuses_the_61st_status_read_in_a_minute():
+    http, c = client([(200, {"components": {}})] * 60)
+    for _ in range(60):
+        run(c.status("dev-1"))
+    with pytest.raises(SmartThingsError, match="rate limit"):
+        run(c.status("dev-1"))
+    assert len(http.requests) == 60
 
 
 def test_client_set_mode_shape():
@@ -349,3 +358,23 @@ def test_two_degrees_cooler_changes_the_current_setting():
     assert result["done"] is True and float(result["state"]) == float(before) - 2
     with pytest.raises(SmartThingsError, match="between 16 and 30"):
         call(ts, "st_set_cooling_setpoint", device="thermostat", change_by=-40)
+
+
+def test_status_reads_do_not_use_up_the_command_budget():
+    """F42 (scripted run, 24 Oct): the 4th switch command within a minute was refused,
+    because status reads (before and after each command, and the evidence watch) shared
+    the 12-a-minute command budget."""
+    clock = [0.0]
+
+    def http(method, url, headers, body):
+        return 200, {}, b"{}"
+
+    client = SmartThingsClient("token", http=http, clock=lambda: clock[0])
+    for _ in range(40):
+        run(client.status("dev-1"))
+    for _ in range(12):
+        run(client.command("dev-1", "switch", "on"))
+    with pytest.raises(SmartThingsError, match="rate limit"):
+        run(client.command("dev-1", "switch", "on"))
+    clock[0] = 61.0
+    run(client.command("dev-1", "switch", "on"))

@@ -15,7 +15,12 @@ from collections import defaultdict, deque
 from typing import Callable
 
 BASE = "https://api.smartthings.com/v1"
-BUDGET_PER_MINUTE = 12
+BUDGET_PER_MINUTE = 12  # commands (and account-level calls) per device per minute
+# Status reads have their own budget: a command spends up to five of them (the
+# read before it and the confirmation reads after), and the evidence watch reads
+# a device every few seconds while a question is open. Sharing the command budget
+# refused the 4th switch command within a minute (scripted run, 24 Oct).
+READ_BUDGET_PER_MINUTE = 60
 log = logging.getLogger("prism_rt.smartthings")
 
 
@@ -44,7 +49,7 @@ class SmartThingsClient:
         window = self._sent[key]
         while window and now - window[0] >= 60.0:
             window.popleft()
-        if len(window) >= BUDGET_PER_MINUTE:
+        if len(window) >= (READ_BUDGET_PER_MINUTE if key.endswith(":read") else BUDGET_PER_MINUTE):
             raise SmartThingsError("I'm holding off to stay within SmartThings' rate limit for this device. Try again in a minute.")
         window.append(now)
 
@@ -75,7 +80,7 @@ class SmartThingsClient:
         return (await self._request("GET", "/devices")).get("items", [])
 
     async def status(self, device_id: str) -> dict:
-        return await self._request("GET", f"/devices/{device_id}/status", key=device_id)
+        return await self._request("GET", f"/devices/{device_id}/status", key=f"{device_id}:read")
 
     async def command(self, device_id: str, capability: str, command: str, args=None) -> dict:
         body = {"commands": [{"component": "main", "capability": capability, "command": command, "arguments": list(args or [])}]}
