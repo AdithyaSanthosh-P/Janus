@@ -24,7 +24,7 @@ EXPECT: dict[str, tuple[list[str], list[str], int]] = {
     "slowmodel": ([r"switch"], [], 0),
     "offer_withdraw": ([r"Never mind: the garage is already closed"], [], 0),
     "offer_yes": ([r"garage is now closed"], [], 0),
-    "offer_no": ([r"dropped that request|Nothing was done"], [], 0),
+    "offer_no": ([r"dropped that request|[Nn]othing was (?:done|sent)"], [r"CONFIRMED: Janus Lock locked"], 0),
     "camera": ([r"4C|Never mind: the washer"], [], 0),
     "camera_explain": ([r"4C", r"water is not being supplied"], [], 0),
     "status": ([r"front door"], [], 0),
