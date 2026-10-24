@@ -477,6 +477,129 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "What did you do this morning?"), ("settle", 35, 8),
         ("say", "Thank you."), ("settle", 15, 5),
     ],
+    # ---- probes: edge cases looking for failures (24 Oct) ----
+    "probe_echo_light": [
+        ("note", "loudspeaker: Janus hears its own voice at 30 %"),
+        ("echo", 0.3),
+        ("say", "Hello Janus."), ("settle", 15, 5),
+        ("say", "What can you do?"), ("settle", 25, 6),
+        ("say", "Is the front door locked?"), ("settle", 25, 6),
+    ],
+    "probe_echo_loud": [
+        ("note", "loudspeaker close to the mic: Janus hears its own voice at 80 %"),
+        ("echo", 0.8),
+        ("say", "Hello Janus."), ("settle", 15, 5),
+        ("say", "What can you do?"), ("settle", 25, 6),
+        ("say", "Set the thermostat to twenty-two."), ("settle", 35, 8),
+    ],
+    "probe_thermostat_range": [
+        ("note", "values a thermostat should not take"),
+        ("say", "Set the thermostat to fifty."), ("settle", 35, 8),
+        ("say", "Set the thermostat to minus five."), ("settle", 35, 8),
+    ],
+    "probe_thermostat_decimal": [
+        ("say", "Set the thermostat to twenty-one point five."), ("settle", 35, 8),
+    ],
+    "probe_thermostat_relative": [
+        ("say", "Make it two degrees cooler."), ("settle", 35, 8),
+    ],
+    "probe_alarm_relative": [
+        ("say", "Set an alarm for ten minutes from now."), ("settle", 30, 8),
+    ],
+    "probe_alarm_evening": [
+        ("say", "Set an alarm for six thirty in the evening."), ("settle", 30, 8),
+    ],
+    "probe_timer_seconds": [
+        ("say", "Start a ninety second timer."), ("settle", 30, 8),
+    ],
+    "probe_cancel_things": [
+        ("note", "things there is no tool for: cancel an alarm, undo, cancel a booking"),
+        ("say", "Set an alarm for six thirty."), ("settle", 30, 8),
+        ("say", "Cancel my alarm."), ("settle", 30, 8),
+        ("say", "Set the thermostat to twenty-three."), ("settle", 30, 8),
+        ("say", "Undo that."), ("settle", 30, 8),
+    ],
+    "probe_pronoun_first": [
+        ("note", "'it' with nothing before it"),
+        ("say", "Turn it off."), ("settle", 30, 8),
+    ],
+    "probe_device_synonyms": [
+        ("say", "Turn off the lights."), ("settle", 30, 8),
+        ("say", "Switch the lamp back on."), ("settle", 30, 8),
+        ("say", "Make it cooler in here."), ("settle", 35, 8),
+    ],
+    "probe_two_security": [
+        ("note", "two security actions in one sentence, then a single yes"),
+        ("say", "Unlock the front door and open the garage."), ("settle", 30, 8),
+        ("say", "Yes."), ("settle", 40, 8),
+    ],
+    "probe_conditional": [
+        ("say", "If the front door is unlocked, lock it."), ("settle", 35, 8),
+    ],
+    "probe_negation": [
+        ("say", "Don't turn off the switch."), ("settle", 30, 8),
+    ],
+    "probe_past_question": [
+        ("say", "Set the thermostat to twenty-three."), ("settle", 30, 8),
+        ("say", "Did you change the thermostat?"), ("settle", 30, 8),
+        ("say", "Did you lock the front door?"), ("settle", 30, 8),
+    ],
+    "probe_yes_during_question": [
+        ("note", "the user says yes while Janus is still asking"),
+        ("say", "Unlock the front door."),
+        ("await_agent", 20),
+        ("pause", 0.6),
+        ("say", "Yes, yes."), ("settle", 40, 8),
+    ],
+    "probe_late_yes": [
+        ("note", "a long silence after the security question, then yes"),
+        ("say", "Unlock the front door."), ("settle", 25, 6),
+        ("pause", 75.0),
+        ("say", "Yes."), ("settle", 40, 8),
+    ],
+    "probe_switch_flapping": [
+        ("note", "six commands to one device in quick succession (SmartThings rate limit)"),
+        ("say", "Turn off the switch."), ("settle", 20, 4),
+        ("say", "Turn on the switch."), ("settle", 20, 4),
+        ("say", "Turn off the switch."), ("settle", 20, 4),
+        ("say", "Turn on the switch."), ("settle", 20, 4),
+        ("say", "Turn off the switch."), ("settle", 20, 4),
+        ("say", "Turn on the switch."), ("settle", 25, 6),
+    ],
+    "probe_camera_off_mid_offer": [
+        ("note", "the camera shows 4C for the offer, then the user turns away to a wall while Janus waits"),
+        ("video", "4C"), ("pause", 3.0),
+        ("drill", "offer", True, {"kind": "washer_error"}), ("await_agent", 15),
+        ("pause", 2.0),
+        ("video", None), ("settle", 25, 8),
+        ("say", "Yes, book it."), ("settle", 40, 8),
+    ],
+    "probe_other_code": [
+        ("note", "the display shows a different code (5C)"),
+        ("video", "5C"), ("pause", 3.0),
+        ("say", "What does this error on my washer mean?"), ("settle", 40, 8),
+    ],
+    "probe_offer_twice": [
+        ("note", "the washer offer, a yes, then the offer again"),
+        ("video", "4C"), ("pause", 3.0),
+        ("drill", "offer", True, {"kind": "washer_error"}), ("settle", 20, 6),
+        ("say", "Yes please."), ("settle", 35, 8),
+        ("drill", "offer", True, {"kind": "washer_error"}), ("settle", 20, 6),
+    ],
+    "probe_off_topic": [
+        ("note", "general questions a jury might ask"),
+        ("say", "What's the weather like today?"), ("settle", 25, 6),
+        ("say", "Who made you?"), ("settle", 25, 6),
+        ("say", "Tell me a joke."), ("settle", 25, 6),
+    ],
+    "probe_numbers_spoken_oddly": [
+        ("say", "Set the thermostat to two two."), ("settle", 35, 8),
+    ],
+    "probe_change_after_done": [
+        ("note", "a correction after the first value was already confirmed"),
+        ("say", "Set the thermostat to twenty-two."), ("settle", 35, 8),
+        ("say", "Actually, make it twenty-one."), ("settle", 35, 8),
+    ],
     "washer_offer_clears": [
         ("note", "the camera shows 4C; Janus offers a technician; the display clears before the yes"),
         ("video", "4C"),
@@ -604,6 +727,10 @@ class Driver:
         self._b_start = 0.0
         self._b_last: float | None = None
         self.queue: asyncio.Queue[bytes] = asyncio.Queue()
+        # ("echo", gain): Janus's own voice fed back into our microphone, as a
+        # phone on loudspeaker does (0 = off).
+        self.echo_gain = 0.0
+        self.echo_buf = bytearray()
         self.last_activity = time.monotonic()
         self.marker: float | None = None  # end of our last line
         self.first_sound: float | None = None
@@ -628,6 +755,11 @@ class Driver:
                     pending = b""
             chunk, pending = (pending[:step], pending[step:]) if pending else (silence, b"")
             chunk = chunk.ljust(step, b"\x00")
+            if self.echo_buf:
+                echo = bytes(self.echo_buf[:step]).ljust(step, b"\x00")
+                del self.echo_buf[:step]
+                mixed = np.frombuffer(chunk, dtype=np.int16).astype(np.int32) + np.frombuffer(echo, dtype=np.int16)
+                chunk = np.clip(mixed, -32768, 32767).astype(np.int16).tobytes()
             await self.source.capture_frame(rtc.AudioFrame(chunk, KOKORO_SAMPLE_RATE, 1, step // 2))
 
     async def pump_video(self) -> None:
@@ -693,8 +825,11 @@ class Driver:
         self._b_last = None
 
     async def listen_audio(self, track: rtc.Track) -> None:
-        async for event in rtc.AudioStream(track):
+        async for event in rtc.AudioStream(track, sample_rate=KOKORO_SAMPLE_RATE, num_channels=1):
             data = np.frombuffer(event.frame.data, dtype=np.int16)
+            if self.echo_gain > 0 and data.size:
+                self.echo_buf += (data.astype(np.float32) * self.echo_gain).astype(np.int16).tobytes()
+                del self.echo_buf[:-KOKORO_SAMPLE_RATE * 2 * 5]  # at most 5 s behind
             if data.size and float(np.sqrt(np.mean(data.astype(np.float32) ** 2))) > 300:
                 now = time.monotonic()
                 if self._b_last is not None and now - self._b_last > 1.6:  # longer than the pause Kokoro leaves between sentences
@@ -754,6 +889,9 @@ class Driver:
             op = step[0]
             if op == "say":
                 await self.say(step[1], step[2] if len(step) > 2 else None)
+            elif op == "echo":
+                self.echo_gain = float(step[1])
+                self.log(f"ECHO     Janus's voice fed back into the microphone at {self.echo_gain:g}")
             elif op == "pause":
                 await asyncio.sleep(step[1])
             elif op == "settle":
