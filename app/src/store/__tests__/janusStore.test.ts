@@ -172,6 +172,22 @@ describe('JanusStore Event Reducer & Validator', () => {
     expect(Object.keys(store.getState().devices).length).toBe(0);
   });
 
+  it('keeps the card the agent changed last as the one in view', () => {
+    const store = new JanusEventReducer();
+    const plan = (seq: number, id: string) =>
+      ({ v: 1, seq, t_ms: seq * 10, type: 'call_planned', call_id: id, tool: 'st_unlock', label: id, kind: 'write' } as JanusEvent);
+    expect(store.getState().lastActionId).toBeNull();
+    store.processEvent(plan(1, 'c-1'));
+    store.processEvent(plan(2, 'c-2'));
+    expect(store.getState().lastActionId).toBe('c-2');
+    // A later update to the first card brings it back into view.
+    store.processEvent({ v: 1, seq: 3, t_ms: 30, type: 'call_sent', call_id: 'c-1' } as JanusEvent);
+    expect(store.getState().lastActionId).toBe('c-1');
+    // An event for a call the app never saw planned changes nothing.
+    store.processEvent({ v: 1, seq: 4, t_ms: 40, type: 'call_sent', call_id: 'c-9' } as JanusEvent);
+    expect(store.getState().lastActionId).toBe('c-1');
+  });
+
   it('agent_interrupted marks the last agent caption, never a user caption', () => {
     const store = new JanusEventReducer();
     store.processEvent({ v: 1, seq: 1, t_ms: 10, type: 'agent_said', text: 'The washer shows', kind: 'inform' } as JanusEvent);

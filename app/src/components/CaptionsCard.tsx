@@ -11,10 +11,12 @@ interface CaptionsCardProps {
   captions: CaptionEntry[];
   isDark: boolean;
   userSpeaking: boolean;
+  /** Grow to fill the space the screen gives it (the live layout); otherwise a short fixed card. */
+  fill?: boolean;
 }
 
 /** The conversation as a transcript: your words in a bubble on the right, Janus's on the left. */
-export const CaptionsCard: React.FC<CaptionsCardProps> = ({ captions, isDark, userSpeaking }) => {
+export const CaptionsCard: React.FC<CaptionsCardProps> = ({ captions, isDark, userSpeaking, fill }) => {
   const t = tokens(isDark);
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -23,10 +25,17 @@ export const CaptionsCard: React.FC<CaptionsCardProps> = ({ captions, isDark, us
   }, [captions.length, userSpeaking]);
 
   return (
-    <View>
+    <View style={fill ? { flex: 1, minHeight: 200 } : undefined}>
       <SectionHeader t={t} title="Conversation" />
-      <View style={{ backgroundColor: t.surface, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 12, maxHeight: 210 }}>
-        <ScrollView ref={scrollViewRef} showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 2 }}>
+      <View style={[{ backgroundColor: t.surface, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 12 }, fill ? { flex: 1 } : { maxHeight: 210 }]}>
+        {/* nestedScrollEnabled: on Android an inner ScrollView inside the page's ScrollView only scrolls with it. */}
+        <ScrollView
+          ref={scrollViewRef}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={captions.length > 0}
+          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+          contentContainerStyle={{ gap: 10, paddingVertical: 2 }}
+        >
           {captions.length === 0 ? (
             <Text style={[type.subhead, { color: t.ink3, paddingVertical: 12 }]}>
               Say something to Janus, or play the demo file.

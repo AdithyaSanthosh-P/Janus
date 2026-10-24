@@ -233,14 +233,15 @@ export const ActionCard: React.FC<ActionCardProps> = ({ card, isDark }) => {
         accessibilityRole="button"
         accessibilityLabel={basedOn.length ? 'Show what this action was built on' : undefined}
       >
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+      {/* The status pill wraps under the category when both don't fit on one line (a long pill used to overlap it). */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: 8, rowGap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
           {glyph}
-          <Text style={[type.footnote, { color: t.ink2 }]} numberOfLines={1}>
+          <Text style={[type.footnote, { color: t.ink2, flexShrink: 1 }]} numberOfLines={1}>
             {cardCategory(card.tool, card.kind)}
           </Text>
           {card.security && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 2 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 2, flexShrink: 0 }}>
               <ShieldAlert size={13} color={t.caution.ink} />
               <Text style={[type.caption, { color: t.caution.ink, fontWeight: '600' }]}>Security</Text>
             </View>

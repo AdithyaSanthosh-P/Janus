@@ -67,10 +67,11 @@ export const Pill: React.FC<{ text: string; ink: string; bg: string; dot?: strin
       borderRadius: 12,
       backgroundColor: bg,
       flexShrink: 0,
+      maxWidth: '100%',
     }}
   >
     {dot ? <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: dot }} /> : null}
-    <Text style={[type.caption, { color: ink, fontWeight: '600' }]} numberOfLines={1}>
+    <Text style={[type.caption, { color: ink, fontWeight: '600', flexShrink: 1 }]} numberOfLines={1}>
       {text}
     </Text>
   </View>

@@ -11,13 +11,16 @@ import { SectionHeader } from './primitives';
 interface ActionTimelineProps {
   actions: ActionCardData[];
   isDark: boolean;
+  title?: string;
+  /** The count shown beside the title (defaults to the number of cards). */
+  note?: string;
 }
 
-export const ActionTimeline: React.FC<ActionTimelineProps> = ({ actions, isDark }) => {
+export const ActionTimeline: React.FC<ActionTimelineProps> = ({ actions, isDark, title = 'Actions', note }) => {
   const t = tokens(isDark);
   return (
     <Animated.View layout={AppLayoutTransition}>
-      <SectionHeader t={t} title="Actions" note={actions.length > 0 ? String(actions.length) : undefined} />
+      <SectionHeader t={t} title={title} note={note ?? (actions.length > 0 ? String(actions.length) : undefined)} />
       {actions.length === 0 ? (
         <View style={{ backgroundColor: t.surface, borderRadius: 18, padding: 16 }}>
           <Text style={[type.subhead, { color: t.ink2 }]}>Nothing planned yet.</Text>

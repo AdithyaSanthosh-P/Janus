@@ -19,6 +19,8 @@ export interface JanusState {
   connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'demo' | 'error';
   connectionError: string | null;
   activeTurnId: string | null;
+  /** The action card the agent changed last: the one the screen keeps in view. */
+  lastActionId: string | null;
 }
 
 export const INITIAL_DEVICES: Record<string, DeviceStateData> = {
@@ -86,6 +88,7 @@ export const INITIAL_STATE: JanusState = {
   connectionStatus: 'disconnected',
   connectionError: null,
   activeTurnId: null,
+  lastActionId: null,
 };
 
 export class JanusEventReducer {
@@ -438,6 +441,11 @@ export class JanusEventReducer {
         // Contract rule: Safely ignore unknown event types
         break;
       }
+    }
+
+    const callId = (event as { call_id?: unknown }).call_id;
+    if (typeof callId === 'string' && this.state.actions.some(a => a.callId === callId)) {
+      this.state = { ...this.state, lastActionId: callId };
     }
 
     this.notify();

@@ -31,6 +31,7 @@ export default function App() {
   const [isDrillActive, setIsDrillActive] = useState<boolean>(drillService.isAnyActive());
   const [demoStatus, setDemoStatus] = useState(demoPlaybackService.getStatus());
   const [isCameraOn, setIsCameraOn] = useState(false);
+  const [viewportHeight, setViewportHeight] = useState(0);
 
   // Camera on/off follows the LiveKit service (it resets on disconnect).
   useEffect(() => livekitService.subscribe(s => setIsCameraOn(s.isCameraOn)), []);
@@ -99,6 +100,12 @@ export default function App() {
   });
   const orbState = useHeldOrbState(liveOrbState);
 
+  // The first screen is the conversation plus the action the agent is working
+  // on right now, so a demo never needs a scroll; earlier actions and the
+  // home tiles sit below it.
+  const focused = state.actions.find(a => a.callId === state.lastActionId) ?? state.actions[state.actions.length - 1];
+  const earlier = state.actions.filter(a => a !== focused).reverse();
+
   return (
     <SafeAreaView
       style={{
@@ -136,6 +143,7 @@ export default function App() {
       {/* Main Portrait Scroll Content */}
       <ScrollView
         showsVerticalScrollIndicator={false}
+        onLayout={e => setViewportHeight(e.nativeEvent.layout.height)}
         contentContainerStyle={{
           padding: 16,
           gap: 24,
@@ -143,15 +151,25 @@ export default function App() {
         }}
         style={{ flex: 1 }}
       >
-        {/* Area 1: Live Captions */}
-        <CaptionsCard
-          captions={state.captions}
-          isDark={isDark}
-          userSpeaking={state.userSpeaking}
-        />
+        {/* First screen: the conversation fills what the current action card leaves */}
+        <View style={{ gap: 24, minHeight: viewportHeight > 0 ? viewportHeight - 32 : undefined }}>
+          {/* Area 1: Live Captions */}
+          <CaptionsCard
+            captions={state.captions}
+            isDark={isDark}
+            userSpeaking={state.userSpeaking}
+            fill={viewportHeight > 0}
+          />
 
-        {/* Area 2: Action Timeline (Planned -> Held -> Waiting for Yes -> Sent -> Confirmed / Never Sent) */}
-        <ActionTimeline actions={state.actions} isDark={isDark} />
+          {/* Area 2: the action being worked on (Planned -> Held -> Waiting for Yes -> Sent -> Confirmed / Never Sent) */}
+          <ActionTimeline
+            actions={focused ? [focused] : []}
+            isDark={isDark}
+            note={state.actions.length > 1 ? `${state.actions.length} · earlier below` : undefined}
+          />
+        </View>
+
+        {earlier.length > 0 && <ActionTimeline title="Earlier actions" actions={earlier} isDark={isDark} />}
 
         {/* Area 3: Home Device Tiles (Lock, Garage, AC, Light, Washer) */}
         <DeviceTiles devices={state.devices} isDark={isDark} backend={state.backend} />
