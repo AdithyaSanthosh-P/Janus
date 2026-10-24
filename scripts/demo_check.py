@@ -112,9 +112,14 @@ def silent_turns(lines: list[str]) -> int:
 def main() -> int:
     path = sys.argv[1]
     verbose = "--verbose" in sys.argv
-    secs = sections(open(path).read())
+    raw = open(path).read()
+    secs = sections(raw)
+    finished = "=== DONE" in raw
     rows, bad = [], 0
-    for name, lines in secs.items():
+    for i, (name, lines) in enumerate(secs.items()):
+        if not finished and i == len(secs) - 1:
+            rows.append((name, "RUN", "still running"))
+            continue
         text = "\n".join(lines)
         rule = EXPECT.get(name)
         problems: list[str] = []
