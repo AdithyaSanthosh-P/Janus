@@ -357,6 +357,9 @@ class OpenAITranscribeSTT(_ReportsRecognition):
 # output, and it invents far less text from noise than Whisper. NeMo is already
 # in the speech image (FDB scores with this same model).
 PARAKEET_REPO = "nvidia/parakeet-tdt-0.6b-v2"
+# Silence added on both sides of a segment: a bare "Yes." cut tight by the VAD
+# came back empty without it (Kokoro test clips, 24 Oct; 0.6 s fixed it).
+PARAKEET_PAD_S = 0.6
 
 
 def load_parakeet(device: str | None = None):
@@ -376,6 +379,8 @@ def load_parakeet(device: str | None = None):
 
 
 def _parakeet_transcribe(model, audio: np.ndarray) -> str:
+    pad = np.zeros(int(WHISPER_SAMPLE_RATE * PARAKEET_PAD_S), dtype=np.float32)
+    audio = np.concatenate([pad, audio, pad])
     with _GPU_LOCK:
         out = model.transcribe([audio], batch_size=1, verbose=False)
     if isinstance(out, tuple):  # older NeMo returned (best, all) for TDT models
