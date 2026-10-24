@@ -697,7 +697,7 @@ class Driver:
             data = np.frombuffer(event.frame.data, dtype=np.int16)
             if data.size and float(np.sqrt(np.mean(data.astype(np.float32) ** 2))) > 300:
                 now = time.monotonic()
-                if self._b_last is not None and now - self._b_last > 0.8:
+                if self._b_last is not None and now - self._b_last > 1.6:  # longer than the pause Kokoro leaves between sentences
                     self.flush_burst()
                 if self._b_last is None:
                     self._b_start = now
