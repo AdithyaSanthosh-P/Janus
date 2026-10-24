@@ -244,6 +244,9 @@ FILLER_MIN_WORDS = _int_env("JANUS_FILLER_MIN_WORDS", 1 if MODE == "demo" else 3
 FILLER_MIN_GAP_S = float(os.environ.get("JANUS_FILLER_MIN_GAP_S") or (12 if MODE == "demo" else 0))
 AEC_WARMUP_S = aec_warmup_duration(MODE, os.environ.get("JANUS_AEC_WARMUP_S"))
 DRILLS_ENABLED = MODE == "demo" and os.environ.get("JANUS_DRILLS") == "1"
+# Demo mode: how long a closed session waits for a rejoining phone before it
+# deletes the room (see _end_for_rejoin).
+REJOIN_GRACE_S = float(os.environ.get("JANUS_REJOIN_GRACE_S") or 2.0)
 # Demo mode: a withdrawal or re-ask arriving while Janus is still speaking cuts
 # its current sentence first (VoiceBridge.interrupt_prefixes).
 SELF_INTERRUPT_PREFIXES: tuple[str, ...] = (
@@ -295,7 +298,11 @@ def demo_toolset() -> Toolset:
     from prism_rt.recap import MANIFEST as RECAP_MANIFEST
     from prism_rt.smartthings.tools import MANIFEST as ST_MANIFEST
 
-    return Toolset(manifest=[*CARE_MANIFEST, *ST_MANIFEST, *RECAP_MANIFEST, *PHONE_MANIFEST], make_executor=make_executor)
+    # The router indicator lookup is the earlier device-care story, not part
+    # of this demo: given any picture with a light in it, the model reached for
+    # it and explained a router fault (phone, 24 Oct). JANUS_ROUTER=1 keeps it.
+    care = [t for t in CARE_MANIFEST if _flag_env("JANUS_ROUTER", False) or t["name"] != "identify_indicator"]
+    return Toolset(manifest=[*care, *ST_MANIFEST, *RECAP_MANIFEST, *PHONE_MANIFEST], make_executor=make_executor)
 
 
 # One model set per worker process. Under the default PROCESS executor each
@@ -734,15 +741,39 @@ async def entrypoint(ctx: JobContext) -> None:
 
     if MODE == "demo":
 
+        async def _end_for_rejoin() -> None:
+            # A phone rejoining with the same identity replaces its old
+            # connection, which closes this session; the new one shows up a
+            # moment later. Deleting the room then would throw out the phone
+            # that just joined ("Connected", then offline; phone, 24 Oct),
+            # so wait briefly and, if someone is in the room, send it a fresh
+            # agent instead.
+            await asyncio.sleep(REJOIN_GRACE_S)
+            people = [p.identity for p in ctx.room.remote_participants.values() if not p.identity.startswith("agent-")]
+            if not people:
+                logger.info("session closed; deleting room %s for a fresh rejoin", ctx.room.name)
+                ctx.delete_room()
+                return
+            logger.info("session closed with %s in room %s; sending a fresh agent", ", ".join(people), ctx.room.name)
+            from livekit import api as lk_api
+
+            try:
+                await ctx.api.agent_dispatch.create_dispatch(
+                    lk_api.CreateAgentDispatchRequest(agent_name=AGENT_NAME, room=ctx.room.name))
+            except Exception:
+                logger.exception("fresh dispatch failed; deleting room %s instead", ctx.room.name)
+                ctx.delete_room()
+                return
+            ctx.shutdown(reason="session closed; a fresh agent takes over")
+
         @session.on("close")
         def _on_close(_ev) -> None:
             # The phone left (the app was closed, or the network dropped): the
             # session closes, but the worker stayed in the room, so a rejoin
             # found an agent that no longer listened and no new one was sent.
-            # Found on a phone, 23 Oct. Deleting the room ends this job; the
-            # next join creates the room again and gets a fresh agent.
-            logger.info("session closed; deleting room %s for a fresh rejoin", ctx.room.name)
-            ctx.delete_room()
+            # Found on a phone, 23 Oct. Ending this job (deleting the room, or
+            # handing over to a fresh agent) lets the next join be heard.
+            _spawn(_end_for_rejoin())
 
     await session.start(room=ctx.room, agent=Agent(instructions=""))
 
