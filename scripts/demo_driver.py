@@ -195,6 +195,41 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("drill", "offer", True, {"kind": "washer_error"}),
         ("settle", 20),
     ],
+    "washer_wall": [
+        ("note", "the camera shows a wall, not the washer; the offer asks to see the display and books nothing"),
+        ("video", None),
+        ("pause", 3.0),
+        ("drill", "offer", True, {"kind": "washer_error"}),
+        ("settle", 20),
+    ],
+    "washer_clears_then_ask": [
+        ("note", "the error clears while Janus waits; asked again, Janus goes by what the camera shows now"),
+        ("video", "4C"),
+        ("pause", 3.0),
+        ("drill", "offer", True, {"kind": "washer_error"}),
+        ("await_agent", 15),
+        ("pause", 4.0),
+        ("video", "1:05"),
+        ("settle", 25, 6),
+        ("say", "My washer isn't working. What's wrong with it?"),
+        ("settle", 30),
+        ("say", "Look through my camera. Is there an error now?"),
+        ("settle", 30),
+    ],
+    **{f"photo_{look}": [
+        ("note", f"the real washer photos ({look}): 4C is offered, the cleared display withdraws it, a status question goes by the camera"),
+        ("photo", "demo_images/washer_4c.png", look == "phone"),
+        ("pause", 3.0),
+        ("say", "My washer stopped and it's showing this error. What does it mean?"),
+        ("settle", 40, 8),
+        ("drill", "offer", True, {"kind": "washer_error"}),
+        ("await_agent", 15),
+        ("pause", 4.0),
+        ("photo", "demo_images/washer_clear.png", look == "phone"),
+        ("settle", 25, 6),
+        ("say", "Is there still an error on my washer?"),
+        ("settle", 30),
+    ] for look in ("clean", "phone")},
     "washer_offer_clears": [
         ("note", "the camera shows 4C; Janus offers a technician; the display clears before the yes"),
         ("video", "4C"),
@@ -284,11 +319,33 @@ def washer_frame(text: str, width: int = 640, height: int = 480) -> bytes:
         small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
     except OSError:
         font = small = ImageFont.load_default()
+    if text is None:  # no washer in view: a plain wall
+        return Image.new("RGBA", (width, height), (196, 186, 170, 255)).tobytes()
     if text:
         colour = (120, 220, 140, 255) if ":" in text else (255, 70, 50, 255)  # a time left is green, a code red
         d.text((420, 230), text, fill=colour, font=font, anchor="mm")
     d.text((320, 120), "WASHER", fill=(200, 205, 210, 255), font=small, anchor="mm")
     return img.tobytes()
+
+
+def photo_frame(path: str, width: int = 640, height: int = 480, *, phone: bool = False) -> bytes:
+    """An RGBA frame of a photo (`docs-personal/app/washer_4c.png`). phone=True
+    makes it look filmed off a laptop screen: tilted, slightly blurred, dimmer,
+    with a glare band, which is harder to read than the clean picture."""
+    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+
+    img = Image.open(path).convert("RGBA")
+    img.thumbnail((width, height))
+    canvas = Image.new("RGBA", (width, height), (20, 20, 22, 255))
+    canvas.paste(img, ((width - img.width) // 2, (height - img.height) // 2))
+    if phone:
+        canvas = canvas.rotate(6, resample=Image.BICUBIC, fillcolor=(20, 20, 22, 255))
+        canvas = canvas.filter(ImageFilter.GaussianBlur(1.6))
+        canvas = ImageEnhance.Brightness(canvas).enhance(0.8)
+        glare = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        ImageDraw.Draw(glare).polygon([(120, 0), (220, 0), (90, height), (-10, height)], fill=(255, 255, 255, 60))
+        canvas = Image.alpha_composite(canvas, glare)
+    return canvas.tobytes()
 
 
 class Driver:
@@ -406,7 +463,8 @@ class Driver:
                 await self.settle(step[1], step[2] if len(step) > 2 else 5.0)
             elif op == "drill":
                 await self.drill(step[1], step[2], step[3])
-            elif op == "video":
+            elif op in ("video", "photo"):
+                self.last_activity = time.monotonic()  # a settle after a camera change waits from the change
                 if self.video is None:
                     self.video = rtc.VideoSource(640, 480)
                     await self.room.local_participant.publish_track(
@@ -414,8 +472,12 @@ class Driver:
                         rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_CAMERA),
                     )
                     asyncio.ensure_future(self.pump_video())
-                self.video_frame = washer_frame(step[1])
-                self.log(f"CAMERA   shows {step[1]!r}" if step[1] else "CAMERA   shows a blank display")
+                if op == "photo":  # ("photo", path, phone_look)
+                    self.video_frame = photo_frame(step[1], phone=len(step) > 2 and step[2])
+                    self.log(f"CAMERA   shows photo {os.path.basename(step[1])}{' (filmed off a screen)' if len(step) > 2 and step[2] else ''}")
+                else:
+                    self.video_frame = washer_frame(step[1])
+                    self.log("CAMERA   shows a wall" if step[1] is None else f"CAMERA   shows {step[1]!r}" if step[1] else "CAMERA   shows a blank display")
             elif op == "await_agent":
                 # Wait until Janus says a real line after our last say/drill (it
                 # is speaking from about now on), so the next step lands over it.

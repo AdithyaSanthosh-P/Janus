@@ -778,6 +778,9 @@ class FastResponder:
                     text = f"That's a security action. Shall I {phrase}?"  # not "unlock (front door)"
             else:
                 text = f"Shall I go ahead and {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
+                phrase = action_phrase(store, call.tool, call.args) if store.config.demo_speech_polish_enabled else None
+                if phrase:
+                    text = f"Shall I {phrase}?"  # not "book technician (Thursday, morning, washer)"
             offer = store.facts.get(f"goal.{goal_id}.offer_text")
             if offer is not None and offer.status != FactStatus.RETRACTED and offer.value:
                 offered = store.facts.get(f"goal.{goal_id}.offer_args")

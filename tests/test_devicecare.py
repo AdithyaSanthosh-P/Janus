@@ -816,3 +816,18 @@ def test_clarify_options_only_for_single_word_lists():
     assert _OPTIONS.match("solid, blinking or off.") and _OPTIONS.match("morning, afternoon or evening.")
     for description in ("City name or zip code", "Date or time", "Name or ID of the account"):
         assert not _OPTIONS.match(description)
+
+
+def test_a_camera_reading_moves_the_simulated_washer():
+    """The simulated SmartThings washer follows what the camera reads, so a
+    status read after the error cleared does not repeat the old code."""
+    from prism_rt.devicecare import DeviceCareToolset
+
+    care = DeviceCareToolset()
+    assert care._get_device_status({"device_type": "washer"})["error_code"] == "4C"
+    care.observe_display("washer", "clear")
+    status = care._get_device_status({"device_type": "washer"})
+    assert status["error_code"] is None and status["machine_state"] == "running"
+    care.observe_display("washer", "4c")
+    status = care._get_device_status({"device_type": "washer"})
+    assert status["error_code"] == "4C" and status["machine_state"] == "paused"

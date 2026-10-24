@@ -57,11 +57,13 @@ class DisplayReader:
         fallback: Callable[[str], str | None],
         *,
         max_age_s: float = 4.0,
+        observe: Callable[[str, str], None] | None = None,
     ) -> None:
         self._complete_json = complete_json
         self._latest_frame = latest_frame
         self._fallback = fallback
         self._max_age_s = max_age_s
+        self._observe = observe  # told every code or "clear" the camera reads
 
     async def read(self, device: str) -> str | None:
         seen, value = await self.look(device)
@@ -83,4 +85,9 @@ class DisplayReader:
             return False, None
         value = reading(answer)
         log.info("display read for %s: %s -> %s", device, answer, value)
+        if value is not None and self._observe is not None:
+            try:
+                self._observe(device, value)
+            except Exception:  # noqa: BLE001 - reporting never breaks a read
+                log.warning("display observe failed", exc_info=True)
         return True, value

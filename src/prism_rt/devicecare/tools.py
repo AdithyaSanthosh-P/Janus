@@ -229,6 +229,28 @@ class DeviceCareToolset:
         except Exception:  # noqa: BLE001 - the app must never break a tool call
             pass
 
+    def observe_display(self, device: str, value: str) -> None:
+        """What the camera read off an appliance's display (demo mode): the
+        code ("4C") or "clear". The simulated SmartThings status follows it, so
+        every tool agrees with what the camera shows (phone, 24 Oct: the camera
+        saw the error clear, then get_device_status still said 4C)."""
+        dev = _device_key(self.kb, device)
+        if dev is None or dev not in self.status or not value:
+            return
+        st = self.status[dev]
+        if value == "clear":
+            if st.get("error_code") is None and st["machine_state"] == "run":
+                return
+            # The time left is on the display, not in this reading: unknown
+            # rather than the stale simulated 34 minutes.
+            st.update(error_code=None, machine_state="run", job_state=st.get("job_state") or "washing", remaining_min=None)
+        else:
+            code = value.upper()
+            if st.get("error_code") == code:
+                return
+            st.update(error_code=code, machine_state="pause")
+        self._report(dev)
+
     async def snapshot_states(self) -> None:
         """Every connected appliance's state, through `on_device_state` (the app's initial tiles)."""
         for dev in self.status:
@@ -304,7 +326,9 @@ class DeviceCareToolset:
         st = self.status[dev]
         self._report(dev)
         out = {"found": True, "device": self.kb["devices"][dev]["name"], "machine_state": _STATE_WORD[st["machine_state"]],
-               "cycle_phase": st["job_state"], "minutes_remaining": st["remaining_min"]}
+               "cycle_phase": st["job_state"]}
+        if st.get("remaining_min") is not None:
+            out["minutes_remaining"] = st["remaining_min"]
         code = st.get("error_code")
         entry = self.kb["devices"][dev].get("error_codes", {}).get(code) if code else None
         if entry is not None:

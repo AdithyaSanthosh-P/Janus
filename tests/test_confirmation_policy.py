@@ -186,3 +186,22 @@ def test_a_yes_for_the_same_argument_restated_still_counts():
     actions = say(h, 3_100_000, "yes the front door", 8_000_000)
     assert calls(actions) == [("st_unlock", {"device": "front door"})]
     assert_clean(h)
+
+
+def test_demo_polish_asks_an_ordinary_question_in_words_too():
+    book = {"name": "book_technician", "mutability": "state_changing", "label": "Book a technician for {date} {time_slot}",
+            "parameters": {"type": "object", "properties": {"date": {"type": "string"}, "time_slot": {"type": "string"},
+                                                            "device": {"type": "string"}}, "required": ["date", "time_slot"]}}
+    provider = ScriptedProvider()
+    provider.register("interpret", "should i get a technician", {
+        "act": "new_goal", "intent": "book_technician", "slot_deltas": [], "commit_intent": False,
+        "actions": [{"tool": "book_technician", "args": {"date": "Thursday", "time_slot": "morning", "device": "washer"}}]})
+    provider.register("compose", "a0", {"text": "Done.", "claims": []})
+    h = SimHarness(config(demo_speech_polish_enabled=True), seed=1, provider=provider,
+                   tools={"book_technician": {"latency_ms": 200, "response": {"booked": True}}}, worker_latency_us=FAST)
+    h.send(0, [manifest_event([book])])
+    h.send(100_000, [chunk_event("should i get a technician for thursday morning")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + drain(h, 3_000_000, stop_on_final=False)
+    assert calls(actions) == []
+    assert "Shall I book a technician for Thursday morning?" in speaks(actions)
+    assert_clean(h)

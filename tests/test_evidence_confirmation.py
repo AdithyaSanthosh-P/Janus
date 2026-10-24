@@ -190,7 +190,7 @@ def washer_booking(codes):
     h.send(50_000, [frame_event("cam-1")])
     h.send(100_000, [chunk_event("my washer shows this code, book a technician for Thursday morning")])
     actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + drain(h, 3_000_000, stop_on_final=False)
-    assert any("book technician (Thursday, morning)" in t for t in said(actions))
+    assert any("Shall I book a technician for Thursday morning?" in t for t in said(actions))
     for i, t in enumerate(range(3_200_000, 9_000_000, 1_000_000)):
         h.send(t, [frame_event(f"cam-{i + 2}")])
         actions += drain(h, t + 900_000, stop_on_final=False)

@@ -114,6 +114,7 @@ from prism_rt.adapters.voice_settings import aec_warmup_duration
 from prism_rt.adapters.offers import build_offer, no_offer_text
 from prism_rt.adapters.world_watch import WorldWatcher
 from prism_rt.devicecare import DeviceCareToolset
+from prism_rt.devicecare.tools import _device_key
 from prism_rt.entry import setup
 from prism_rt.observability.effects import effect_summary, format_effect_summary
 from prism_rt.observability.xray import TracedQueue
@@ -292,7 +293,24 @@ def demo_toolset() -> Toolset:
             return status
 
         execute.read_appliance = read_appliance
-        return execute
+        execute.observe_display = care.observe_display
+        execute.look = None  # set once the camera's display reader exists
+
+        async def execute_seen(tool_name: str, args: dict) -> dict:
+            # A washer question with the camera on reads the display first, so
+            # the answer is what the camera shows now, not the earlier error.
+            seen, value = False, None
+            if execute.look is not None and tool_name in ("get_device_status", "lookup_error_code") \
+                    and _device_key(care.kb, args.get("device_type")) == "washer":
+                seen, value = await execute.look("washer")
+            result = await execute(tool_name, args)
+            if tool_name == "lookup_error_code" and seen and value == "clear" and isinstance(result, dict):
+                result["display_now"] = "The washer's display shows no error code right now."
+            return result
+
+        execute_seen.__dict__.update(execute.__dict__)
+        execute_seen.set_look = lambda look: setattr(execute, "look", look)
+        return execute_seen
 
     from prism_rt.devicecare.tools import MANIFEST as CARE_MANIFEST
     from prism_rt.recap import MANIFEST as RECAP_MANIFEST
@@ -547,7 +565,10 @@ async def entrypoint(ctx: JobContext) -> None:
             return status.get("error_code") or CLEAR
 
         # Not the drilled provider: a "model down" drill is about the conversation.
-        display["reader"] = DisplayReader(provider.complete_json, frames.latest, _washer_status)
+        display["reader"] = DisplayReader(provider.complete_json, frames.latest, _washer_status,
+                                          observe=getattr(executor, "observe_display", None))
+        if getattr(executor, "set_look", None) is not None:
+            executor.set_look(display["reader"].look)
     if drills is not None:
         provider = DrilledProvider(provider, drills)
     if MODE == "demo":
@@ -752,7 +773,10 @@ async def entrypoint(ctx: JobContext) -> None:
             # so wait briefly and, if someone is in the room, send it a fresh
             # agent instead.
             await asyncio.sleep(REJOIN_GRACE_S)
-            people = [p.identity for p in ctx.room.remote_participants.values() if not p.identity.startswith("agent-")]
+            # A "viewer-" (the app on a test emulator, watching a scripted
+            # run) only watches: it keeps no room alive.
+            people = [p.identity for p in ctx.room.remote_participants.values()
+                      if not p.identity.startswith(("agent-", "viewer-"))]
             if not people:
                 logger.info("session closed; deleting room %s for a fresh rejoin", ctx.room.name)
                 ctx.delete_room()
