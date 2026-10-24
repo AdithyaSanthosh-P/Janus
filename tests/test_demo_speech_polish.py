@@ -327,3 +327,10 @@ def test_what_can_you_do_says_what_janus_is_for():
     h = _booking_session()
     actions = say(h, 100_000, "so what can you do for me janus", 4_000_000)
     assert any(t.startswith("I can control your smart-home devices") for t in spoken(actions))
+
+
+def test_whats_up_and_a_bare_hey_janus_get_a_greeting():
+    from prism_rt.kernel.replies import social_reply
+    assert social_reply("Hey Janus, what's up?").startswith("Not much")
+    assert social_reply("Hey Janus.") == "Hi! What can I do for you?"
+    assert social_reply("What's up with my washer?") is None

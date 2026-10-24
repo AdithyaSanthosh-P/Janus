@@ -319,6 +319,7 @@ def salvage_text(store, goal_id: str) -> str:
 
 
 POLITE_REPLY = "Happy to help — what would you like me to do?"
+_WHATS_UP = re.compile(r"(?:(?:hey|hi|hello|okay|ok)\W+)?(?:janus\W+)?(?:what'?s up|wassup|sup)(?:\W+janus)?\W*", re.IGNORECASE)
 _CAPABILITY_QUESTION = re.compile(
     r"\bwhat\b.{0,20}\b(?:can|could)\s+you\s+(?:do|help)|\b(?:your|you have)\b.{0,12}\b(?:functions|features|capabilities|skills)\b"
     r"|\bwhat\s+do\s+you\s+do\b|\bhow\s+can\s+you\s+help\b", re.IGNORECASE)
@@ -336,6 +337,8 @@ def social_reply(text: str) -> str | None:
     """Demo speech polish: a reply that fits a greeting, thanks or goodbye
     (canonical.social_kind) -- "You're welcome." to "Thank you.", not an
     invitation to make a request. None for anything else."""
+    if _WHATS_UP.fullmatch(str(text or "").strip()):
+        return "Not much — I'm here and ready. What can I do for you?"
     kind = social_kind(text)
     if kind is None:
         return None

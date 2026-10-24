@@ -117,3 +117,5 @@ def test_known_mishearings_are_fixed_in_demo_transcripts():
     assert fix_misheard_words("Now.") == "No." and fix_misheard_words("now") == "No"
     assert fix_misheard_words("Now make it 21.") == "Now make it 21."
     assert fix_misheard_words("Unlock the thread door.") == "Unlock the front door."
+    assert fix_misheard_words("A. Janus.") == "Hey Janus." and fix_misheard_words("Aeganus set the thermostat") == "Hey Janus set the thermostat"
+    assert fix_misheard_words("A technician for Friday") == "A technician for Friday"
