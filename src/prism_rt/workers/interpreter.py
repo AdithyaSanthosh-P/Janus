@@ -199,9 +199,11 @@ def _action_plans_block(view: dict) -> str:
             "- A request a listed tool does is never unsupported, even if its value "
             "looks odd or out of range (\"fifty degrees\", \"two two\" for "
             "twenty-two): put the value in that tool's parameter and let the tool "
-            "say what it accepts. A change relative to the current setting (\"two "
-            "degrees cooler\", \"make it warmer\") uses that tool's change_by "
-            "parameter when it has one.\n"
+            "say what it accepts. A number the user names as the value is the value "
+            "(\"minus five\" is -5, \"fifty\" is 50). Only a change relative to the "
+            "current setting (\"two degrees cooler\", \"make it warmer\") uses that "
+            "tool's change_by parameter, when it has one; \"cooler\" or \"warmer\" "
+            "without a number is -1 or +1.\n"
         )
     last = view.get("last_task") or []
     if last:

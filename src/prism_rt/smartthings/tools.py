@@ -95,8 +95,9 @@ MANIFEST: list[dict] = [
     _write("st_open_garage", "Open the garage door. A security action: the user is asked to confirm first.", {"device": _device("garage")}, ["device"], security=True, label="Open the {device}", done_when="open"),
     _write("st_close_garage", "Close the garage door.", {"device": _device("garage")}, ["device"], label="Close the {device}", done_when="closed"),
     _write("st_set_cooling_setpoint", "Set the air-conditioner / thermostat cooling temperature in degrees Celsius (16 to 30), "
-           "to a value (celsius) or by a change from the current setting (change_by: -2 for two degrees cooler; "
-           "\"cooler\" without a number is -1, \"warmer\" +1).",
+           "to a value (celsius) or by a change from the current setting (change_by: -2 for \"two degrees cooler\"; "
+           "\"cooler\" without a number is -1, \"warmer\" +1). A temperature the user names is always celsius, "
+           "even a negative or out-of-range one (\"minus five\" is celsius -5); change_by only for cooler/warmer/up/down.",
            {"device": _device("thermostat"), "celsius": {"type": "number", "description": "Target temperature in Celsius, 16 to 30."},
             "change_by": {"type": "number", "description": "Degrees to change the current setting by, instead of celsius: negative is cooler."}},
            ["device"], label="Set the {device} to {celsius} degrees", done_when="{celsius}", state_unit="degrees"),
@@ -309,11 +310,12 @@ class SmartThingsToolset:
                 a = {**a, "celsius": float(current) + change}
             except (TypeError, ValueError):
                 raise SmartThingsError("I couldn't read the current temperature setting.") from None
+        low, high = SETPOINT_RANGE
         try:
             celsius = float(a.get("celsius"))
         except (TypeError, ValueError):
-            raise SmartThingsError("I need a temperature in degrees Celsius.") from None
-        low, high = SETPOINT_RANGE
+            raise SmartThingsError(f"Tell me the temperature you want, between {low} and {high} degrees, "
+                                   "or how many degrees cooler or warmer.") from None
         if not low <= celsius <= high:
             raise SmartThingsError(f"I can only set the cooling temperature between {low} and {high} degrees.")
         celsius = int(celsius) if celsius == int(celsius) else celsius

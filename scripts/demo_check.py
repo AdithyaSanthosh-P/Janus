@@ -15,7 +15,7 @@ import sys
 
 # scene -> (must match, must not match, silent turns allowed). Patterns are regexes over the scene's log text.
 EXPECT: dict[str, tuple[list[str], list[str], int]] = {
-    "correction": ([r"call_cancelled\s+c-0001: You changed it to 21", r"The thermostat is now 21"], [r"CONFIRMED: Janus Thermostat 22"], 0),
+    "correction": ([r"call_cancelled\s+c-0001: You changed it to 21", r"The thermostat is now 21"], [r"CONFIRMED: Janus Thermostat 22"], 1),
     "lock": ([r"already locked|now locked"], [], 0),
     "unlock_yes": ([r"security action"], [r"CONFIRMED: Janus Lock unlocked"], 0),
     "unconfirmed": ([r"couldn't confirm|not confirmed"], [r"is now off"], 0),

@@ -154,12 +154,14 @@ def _spoken_write_failure(store, call) -> str | None:
     fact = store.facts.get(f"error.{call.call_id}")
     message = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
     action = replies.action_phrase(store, call.tool, call.args)
-    if not message or not action:
+    if not message:
         return None
     message = message.strip()
     if message[-1] not in ".!?":
         message += "."
-    return f"{message} So I couldn't {action}."
+    # No action phrase (an argument the label names is missing): the tool's own
+    # words alone, not "st set cooling setpoint failed" (scripted run, 24 Oct).
+    return f"{message} So I couldn't {action}." if action else message
 
 
 class PlanExecutor:

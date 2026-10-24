@@ -378,3 +378,11 @@ def test_status_reads_do_not_use_up_the_command_budget():
         run(client.command("dev-1", "switch", "on"))
     clock[0] = 61.0
     run(client.command("dev-1", "switch", "on"))
+
+
+def test_a_setpoint_without_a_value_says_what_it_needs():
+    """Scripted run, 24 Oct: with celsius optional, "two two" and "make it cooler in
+    here" reached the tool with no value and were said as "st set cooling setpoint failed"."""
+    _mock, ts = toolset()
+    with pytest.raises(SmartThingsError, match="Tell me the temperature you want, between 16 and 30"):
+        call(ts, "st_set_cooling_setpoint", device="thermostat")
