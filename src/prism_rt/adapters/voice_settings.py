@@ -59,3 +59,26 @@ def fix_misheard_words(text: str) -> str:
     for pattern, word in _MISHEARD:
         text = pattern.sub(word, text)
     return text
+
+
+# Demo mode: the end-of-turn filler varies with the turn instead of always
+# "Okay, one moment." (team feedback, 24 Oct: the same phrase every turn
+# sounded mechanical). A question gets a "checking" phrase, a request an
+# acknowledgement; the same phrase is never used twice in a row.
+FILLERS_FOR_QUESTION = ("Let me check.", "One sec.", "Let me see.")
+FILLERS_FOR_REQUEST = ("Okay.", "Sure.", "Mm-hmm.", "Alright.", "Okay, one moment.")
+_QUESTION_START = re.compile(
+    r"^\W*(?:what|what's|whats|is|are|was|were|did|does|do|how|why|when|where|who|which|has|have)\b", re.IGNORECASE)
+_REQUEST_START = re.compile(r"^\W*(?:can|could|would|will)\s+you\b|^\W*please\b", re.IGNORECASE)
+
+
+def choose_filler(said: str, last: str | None = None, rng=None) -> str:
+    """The filler for a turn: a "checking" phrase for a question ("Is the door
+    locked?"), an acknowledgement for a request ("Turn off the switch.", "Can you
+    lock it?"); never `last` again."""
+    import random
+
+    text = str(said or "").strip()
+    question = not _REQUEST_START.match(text) and (bool(_QUESTION_START.match(text)) or text.endswith("?"))
+    pool = [f for f in (FILLERS_FOR_QUESTION if question else FILLERS_FOR_REQUEST) if f != last]
+    return (rng or random).choice(pool)

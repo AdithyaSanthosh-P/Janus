@@ -812,3 +812,22 @@ async def test_self_echo_filter_is_off_by_default():
     bridge.on_agent_speaking_changed(True)
     await bridge.on_segment_final("Okay one moment.")
     assert [e for e in await _drain_nowait(events) if e and e["type"] == "text_chunk"]
+
+
+async def test_the_bridge_plays_the_filler_chosen_for_the_turn():
+    bridge, events, _actions, _said = _make_bridge(t_eot_ms=5)
+    played: list[str] = []
+
+    async def play_filler() -> None:
+        played.append(bridge.filler_now)
+
+    bridge.play_filler = play_filler
+    bridge.filler_min_words = 1
+    bridge.drop_self_echo = True
+    bridge.choose_filler = lambda said: "Let me check." if said.strip().endswith("?") else "Sure."
+    await bridge.on_speech_start()
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("Is the front door locked?")
+    await asyncio.sleep(0.05)
+    assert played == ["Let me check."]
+    assert any(text == "Let me check." for _, text in bridge._recent_said)

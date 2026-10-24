@@ -154,6 +154,10 @@ class VoiceBridge:
     # Oct: Janus answered its own capability list and filler, in a loop, and
     # once called its own echoed acknowledgement "already done". `filler_text`
     # is what the host's filler says, so its echo is recognised too.
+    # Demo mode: picks the filler for the turn's words (voice_settings.choose_filler);
+    # the host plays `filler_now`. None = always `filler_text`.
+    choose_filler: "Callable[[str], str] | None" = None
+    filler_now: str = ""
     drop_self_echo: bool = False
     self_echo_window_s: float = 3.0
     filler_text: str = ""
@@ -445,7 +449,8 @@ class VoiceBridge:
             self._filler_turn = True
             self._filler_active = True
             self._last_filler_at = self._loop_now()
-            self._remember_said(self.filler_text)
+            self.filler_now = self.choose_filler(said) if self.choose_filler is not None else self.filler_text
+            self._remember_said(self.filler_now)
             await self.play_filler()
 
     async def _give_up_at(self, deadline: float) -> None:

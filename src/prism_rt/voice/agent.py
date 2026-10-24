@@ -110,7 +110,7 @@ from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest
 from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter
 from prism_rt.adapters.voice_bridge import VoiceBridge, is_social_turn
-from prism_rt.adapters.voice_settings import aec_warmup_duration
+from prism_rt.adapters.voice_settings import FILLERS_FOR_QUESTION, FILLERS_FOR_REQUEST, aec_warmup_duration, choose_filler
 from prism_rt.adapters.offers import build_offer, no_offer_text
 from prism_rt.adapters.world_watch import WorldWatcher
 from prism_rt.devicecare import DeviceCareToolset
@@ -239,6 +239,9 @@ def _flag_env(name: str, default: bool) -> bool:
 
 FILLER_ENABLED = _flag_env("JANUS_FILLER", MODE == "demo")
 FILLER_TEXT = os.environ.get("JANUS_FILLER_TEXT") or "Okay, one moment."
+# Demo mode: the filler varies with the turn (voice_settings.choose_filler);
+# JANUS_FILLER_VARIED=0 keeps the single FILLER_TEXT.
+FILLER_VARIED = _flag_env("JANUS_FILLER_VARIED", MODE == "demo")
 TTS_CHUNKED = _flag_env("JANUS_TTS_CHUNKED", MODE == "demo")
 FILLER_PROTECTED = _flag_env("JANUS_FILLER_PROTECTED", MODE == "demo")
 FILLER_MIN_WORDS = _int_env("JANUS_FILLER_MIN_WORDS", 1 if MODE == "demo" else 3)
@@ -378,6 +381,10 @@ def _shared_models() -> dict:
                 # Synthesized once per process, so the filler plays with no
                 # synthesis delay at the end of every turn.
                 _SHARED["filler_pcm"] = _SHARED["kokoro"].synthesize_pcm16(FILLER_TEXT)
+                if FILLER_VARIED:
+                    pcms = {text: _SHARED["kokoro"].synthesize_pcm16(text)
+                            for text in (*FILLERS_FOR_QUESTION, *FILLERS_FOR_REQUEST)}
+                    _SHARED["filler_pcms"] = {text: pcm for text, pcm in pcms.items() if pcm}
             _SHARED["toolset"] = demo_toolset() if MODE == "demo" else fdb_toolset()
         return _SHARED
 
@@ -465,6 +472,8 @@ async def entrypoint(ctx: JobContext) -> None:
         session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
 
     filler_pcm: bytes = userdata.get("filler_pcm") or b""
+    filler_pcms: dict = userdata.get("filler_pcms") or {}
+    last_filler: dict = {}
     # Device tiles for the app: the executor reports each device state it reads.
     state_sink: dict = {}
     # Failure drills from the companion app (demo mode, JANUS_DRILLS=1 only).
@@ -520,16 +529,21 @@ async def entrypoint(ctx: JobContext) -> None:
         # Pre-synthesized audio; plain synthesis only if the cache is empty.
         try:
             interruptible = not FILLER_PROTECTED
-            if filler_pcm:
-                handle = session.say(FILLER_TEXT, audio=pcm_frames(filler_pcm), allow_interruptions=interruptible,
+            text = bridge.filler_now or FILLER_TEXT
+            pcm = filler_pcms.get(text) or (filler_pcm if text == FILLER_TEXT else b"")
+            if not pcm:  # a varied filler that did not synthesize: the default one
+                text, pcm = FILLER_TEXT, filler_pcm
+            last_filler["text"] = text
+            if pcm:
+                handle = session.say(text, audio=pcm_frames(pcm), allow_interruptions=interruptible,
                                      add_to_chat_ctx=False)
             else:
-                handle = session.say(FILLER_TEXT, allow_interruptions=interruptible, add_to_chat_ctx=False)
+                handle = session.say(text, allow_interruptions=interruptible, add_to_chat_ctx=False)
             # Whether the filler was actually heard (latency analysis).
             handle.add_done_callback(lambda h: logger.info("filler %s", "interrupted" if h.interrupted else "finished"))
             if feed is not None:
-                feed.agent_said(FILLER_TEXT, "filler")
-            logger.info("filler played")
+                feed.agent_said(text, "filler")
+            logger.info("filler played: %s", text)
         except Exception:  # noqa: BLE001 - a filler must never break the bridge
             logger.warning("filler failed", exc_info=True)
 
@@ -557,6 +571,7 @@ async def entrypoint(ctx: JobContext) -> None:
         filler_min_words=FILLER_MIN_WORDS,
         filler_min_gap_s=FILLER_MIN_GAP_S,
         filler_skip=is_social_turn if MODE == "demo" else None,
+        choose_filler=(lambda said: choose_filler(said, last_filler.get("text"))) if FILLER_VARIED and filler_pcms else None,
         interrupt_prefixes=SELF_INTERRUPT_PREFIXES,
         on_interruption_logged=lambda msg: logger.info("bridge: %s", msg),
         generic_ack_texts=(ACK_DEFAULT,),

@@ -36,3 +36,21 @@ def test_explicit_seconds():
 def test_bad_value_is_rejected(raw):
     with pytest.raises(ValueError):
         aec_warmup_duration("fdb", raw)
+
+
+def test_the_filler_fits_the_turn_and_never_repeats():
+    """Team feedback, 24 Oct: "Okay, one moment." every turn sounded mechanical."""
+    import random
+
+    from prism_rt.adapters.voice_settings import FILLERS_FOR_QUESTION, FILLERS_FOR_REQUEST, choose_filler
+
+    rng = random.Random(1)
+    for said in ("Is the front door locked?", "What does this error mean?", "did you lock it"):
+        assert choose_filler(said, rng=rng) in FILLERS_FOR_QUESTION
+    for said in ("Turn off the switch.", "Can you lock the front door?", "Set an alarm for six thirty."):
+        assert choose_filler(said, rng=rng) in FILLERS_FOR_REQUEST
+    last = None
+    for _ in range(30):
+        now = choose_filler("Turn off the switch.", last, rng=rng)
+        assert now != last
+        last = now
