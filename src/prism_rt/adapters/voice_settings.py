@@ -47,6 +47,7 @@ def echoes_prompt(text: str, prompt: str, *, run: int = 5) -> bool:
 _MISHEARD = (
     (re.compile(r"\b(?:tomos\s+tractor|thermal\s+start|homo\s*stat|thermo\s+stat|thermos\s+stat)\b", re.IGNORECASE), "thermostat"),
     (re.compile(r"\bjanice\b", re.IGNORECASE), "Janus"),
+    (re.compile(r"\b(?:thread|threat|friend)\s+door\b", re.IGNORECASE), "front door"),
     # A whole utterance of just "Now" is an answer: "No" (Parakeet, 24 Oct).
     (re.compile(r"^\s*now\s*([.!]?)\s*$", re.IGNORECASE), r"No\1"),
 )

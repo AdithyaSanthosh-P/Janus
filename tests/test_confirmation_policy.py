@@ -102,6 +102,31 @@ def test_no_sends_nothing_and_finishes_honestly():
     assert_clean(h)
 
 
+def test_demo_polish_asks_in_words_and_a_no_says_nothing_was_sent():
+    labelled = dict(UNLOCK, label="Unlock the {device}")
+    provider = ScriptedProvider()
+    # "Uh, you know what, Janus? No." came back as an abort (phone, 24 Oct).
+    provider.register("interpret", "cancel that", {"act": "abort", "slot_deltas": []})
+    provider.register("interpret", "unlock the front", new_goal("st_unlock", "front door"))
+    provider.register("interpret", "secure the", new_goal("st_lock", "front door"))
+    provider.register("compose", "a0", {"text": "Done.", "claims": []})
+    tools = {"st_unlock": {"latency_ms": 200, "response": {"done": True}},
+             "st_lock": {"latency_ms": 200, "response": {"done": True}}}
+    h = SimHarness(config(demo_speech_polish_enabled=True), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h.send(0, [manifest_event([labelled, LOCK])])
+    # An earlier request that ran, so the "no" has an earlier goal behind it.
+    h.send(100_000, [chunk_event("secure the front door")])
+    drain(h, 150_000, stop_on_final=False)
+    h.send(150_000, [eot_event()])
+    drain(h, 3_000_000)
+    actions = say(h, 3_100_000, "unlock the front door", 6_000_000)
+    assert "That's a security action. Shall I unlock the front door?" in speaks(actions)
+    actions = say(h, 6_100_000, "cancel that", 11_000_000)
+    assert calls(actions) == []
+    assert [f.body.text for f in finals(actions)] == ["Okay, I've dropped that request. Nothing was sent."]
+    assert_clean(h)
+
+
 def test_tool_without_the_field_is_not_asked():
     provider = ScriptedProvider()
     provider.register("interpret", "lock the", new_goal("st_lock", "front door"))

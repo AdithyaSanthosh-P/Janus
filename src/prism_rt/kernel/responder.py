@@ -768,6 +768,9 @@ class FastResponder:
             values = ", ".join(str(v) for v in call.args.values())
             if decision.rule_id == "G12":
                 text = CONFIRM_SECURITY.format(action=call.tool.removeprefix("st_").replace("_", " "), args=f" ({values})" if values else "")
+                phrase = action_phrase(store, call.tool, call.args) if store.config.demo_speech_polish_enabled else None
+                if phrase:
+                    text = f"That's a security action. Shall I {phrase}?"  # not "unlock (front door)"
             else:
                 text = f"Shall I go ahead and {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
             offer = store.facts.get(f"goal.{goal_id}.offer_text")

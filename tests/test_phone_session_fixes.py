@@ -116,3 +116,4 @@ def test_known_mishearings_are_fixed_in_demo_transcripts():
     assert fix_misheard_words("Set the thermostat to 22.") == "Set the thermostat to 22."
     assert fix_misheard_words("Now.") == "No." and fix_misheard_words("now") == "No"
     assert fix_misheard_words("Now make it 21.") == "Now make it 21."
+    assert fix_misheard_words("Unlock the thread door.") == "Unlock the front door."

@@ -359,6 +359,10 @@ def abort_text(store, goal_id: str) -> str:
     if done:
         return f"Okay, I've stopped. {done} That part already went through."
     earlier = last_goal_that_ran(store, exclude=goal_id)
+    if earlier is not None and store.config.demo_speech_polish_enabled:
+        # "your earlier request still stands" read as if something were still
+        # pending after a plain "no" (phone, 24 Oct).
+        return "Okay, I've dropped that request. Nothing was sent."
     if earlier is not None:
         return "Okay, I've dropped that request. Nothing new was done — your earlier request still stands."
     return "Okay, I've dropped that request. Nothing was done."
