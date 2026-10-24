@@ -195,13 +195,16 @@ def test_demo_polish_asks_an_ordinary_question_in_words_too():
     provider = ScriptedProvider()
     provider.register("interpret", "should i get a technician", {
         "act": "new_goal", "intent": "book_technician", "slot_deltas": [], "commit_intent": False,
+        "ack_phrase": "I'll book a technician for Thursday morning.",
         "actions": [{"tool": "book_technician", "args": {"date": "Thursday", "time_slot": "morning", "device": "washer"}}]})
     provider.register("compose", "a0", {"text": "Done.", "claims": []})
-    h = SimHarness(config(demo_speech_polish_enabled=True), seed=1, provider=provider,
+    h = SimHarness(config(demo_speech_polish_enabled=True, echo_ack_enabled=True), seed=1, provider=provider,
                    tools={"book_technician": {"latency_ms": 200, "response": {"booked": True}}}, worker_latency_us=FAST)
     h.send(0, [manifest_event([book])])
     h.send(100_000, [chunk_event("should i get a technician for thursday morning")])
     actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + drain(h, 3_000_000, stop_on_final=False)
     assert calls(actions) == []
     assert "Shall I book a technician for Thursday morning?" in speaks(actions)
+    # No "I'll book ..." before asking whether to book (phone, 24 Oct).
+    assert not any(t.startswith("I'll") for t in speaks(actions))
     assert_clean(h)

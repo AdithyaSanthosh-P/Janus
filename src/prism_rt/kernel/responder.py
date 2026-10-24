@@ -78,6 +78,7 @@ from prism_rt.model.types import (
     JobKind,
     Provenance,
     StepKind,
+    ToolMutability,
     TaskState,
 )
 
@@ -187,6 +188,26 @@ class FastResponder:
 
         return actions
 
+    @staticmethod
+    def _question_follows(store, goal_id: str) -> bool:
+        """Demo polish: the request includes a write that will be held for the
+        user's yes (no commit intent: "should I get a technician?", or a
+        security write). An "I'll book ..." acknowledgement would promise
+        what the next sentence asks permission for; the filler already
+        covered the wait, and the question is the acknowledgement."""
+        if not store.config.demo_speech_polish_enabled:
+            return False
+        fact = store.facts.get(f"goal.{goal_id}.actions")
+        tools = fact.value if fact is not None and fact.status != FactStatus.RETRACTED and isinstance(fact.value, list) else []
+        specs = [store.catalog.get(t) for t in tools]
+        writes = [spec for spec in specs if spec is not None and spec.mutability != ToolMutability.READ_ONLY]
+        if not writes:
+            return False
+        if store.config.confirmation_policy_enabled and any(spec.requires_confirmation for spec in writes):
+            return True
+        intent = store.facts.get(f"goal.{goal_id}.commit_intent")
+        return intent is None or intent.status == FactStatus.RETRACTED or intent.value is not True
+
     def _ack_plan_dispatch(self, store, goal_id: str, now_us: int, step_no: int) -> list[IntendedAction]:
         running = store.jobs.running_by_kind_goal(JobKind.PLAN, goal_id)
         if not running:
@@ -199,6 +220,8 @@ class FastResponder:
         store.facts.set(f"ack.{goal_id}.acked_job", job_id, FactStatus.COMMITTED, provenance, rule="responder.ack")
         grade = ClaimGrade.UNDERSTOOD if store.config.claim_grades_enabled else None
         text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
+        if self._question_follows(store, goal_id):
+            return []
         # A re-plan (a re-extracted value, a correction) dispatches a new PLAN
         # job; say the ACK again only if it now says something different --
         # found in the 1 Oct audit (ecommerce_13): the identical ACK, twice.
@@ -247,6 +270,8 @@ class FastResponder:
             change = self._corrected_values(store, goal_id, pending)
             if change and phrases and all(phrases):
                 text = spoken_clock_times(f"Okay, {change[0]}, not {change[1]}: ") + text  # the change, said out loud
+        if self._question_follows(store, goal_id):
+            return []
         goal = store.goals.get(goal_id)
         if (
             text == ACK_DEFAULT and store.config.no_generic_ack_before_question
