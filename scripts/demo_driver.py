@@ -602,6 +602,22 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "Set the thermostat to twenty-two."), ("settle", 35, 8),
         ("say", "Actually, make it twenty-one."), ("settle", 35, 8),
     ],
+    "probe_new_request_while_asked": [
+        ("note", "a security question is open; the user asks for something else, then says yes"),
+        ("say", "Unlock the front door."), ("settle", 25, 6),
+        ("say", "Turn off the switch."), ("settle", 30, 8),
+        ("say", "Yes."), ("settle", 40, 8),
+    ],
+    "probe_stale_question_yes": [
+        ("note", "mixed_session_a minimal: a second-booking question is left open, the user moves on, a later yes"),
+        ("video", "4C"), ("pause", 3.0),
+        ("say", "My washer shows this. What does it mean?"), ("settle", 35, 8),
+        ("say", "Book a technician for Friday afternoon."), ("settle", 35, 8),
+        ("say", "Actually, make that Saturday."), ("settle", 35, 8),
+        ("say", "Unlock the front door."), ("settle", 30, 8),
+        ("say", "Yes."), ("settle", 40, 8),
+        ("say", "What did you do so far?"), ("settle", 30, 8),
+    ],
     "washer_offer_clears": [
         ("note", "the camera shows 4C; Janus offers a technician; the display clears before the yes"),
         ("video", "4C"),
