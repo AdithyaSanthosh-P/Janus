@@ -333,6 +333,8 @@ def capability_reply(text: str) -> str | None:
     return f"{DEMO_CAPABILITIES.strip()} What would you like me to do?"
 
 
+_WHO_ARE_YOU = re.compile(r"\b(?:who|what)\s+(?:are|r)\s+you\b|\bwho\s+(?:made|built|created)\s+you\b|\byour\s+name\b", re.IGNORECASE)
+_JOKE = re.compile(r"\b(?:tell|know)\b.{0,12}\bjokes?\b|\bmake me laugh\b", re.IGNORECASE)
 _ARE_YOU_THERE = re.compile(r"\b(?:are you (?:still )?(?:there|here|listening|with me)|can you hear me)\b", re.IGNORECASE)
 
 
@@ -344,6 +346,10 @@ def social_reply(text: str) -> str | None:
         return "Not much — I'm here and ready. What can I do for you?"
     if _ARE_YOU_THERE.search(str(text or "")):
         return "Yes, I'm here."
+    if _WHO_ARE_YOU.search(str(text or "")):
+        return f"I'm Janus, a voice assistant for your home. {DEMO_CAPABILITIES.strip()}"
+    if _JOKE.search(str(text or "")):
+        return "I'm better with thermostats than jokes. Want me to set a timer or check on the washer instead?"
     kind = social_kind(text)
     if kind is None:
         return None

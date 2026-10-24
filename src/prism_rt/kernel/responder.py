@@ -198,6 +198,15 @@ class FastResponder:
             return text
         return f"Okay, I won't {fact.value}. {text}"
 
+    def _with_set_aside_once(self, store, goal_id: str, text: str, now_us: int, step_no: int) -> str:
+        if store.facts.get(f"ack.{goal_id}.set_aside_said") is not None:
+            return text
+        told = self._with_set_aside(store, goal_id, text)
+        if told != text:
+            store.facts.set(f"ack.{goal_id}.set_aside_said", True, FactStatus.COMMITTED,
+                            Provenance(source="system", step_no=step_no, ts_us=now_us), rule="responder.set_aside")
+        return told
+
     @staticmethod
     def _question_follows(store, goal_id: str) -> bool:
         """Demo polish: the request includes a write that will be held for the
@@ -232,7 +241,7 @@ class FastResponder:
         text = self._echo_ack_text(store, goal_id) or self._content_ack_text(store) or ACK_DEFAULT
         if self._question_follows(store, goal_id):
             return []
-        text = self._with_set_aside(store, goal_id, text)
+        text = self._with_set_aside_once(store, goal_id, text, now_us, step_no)
         # A re-plan (a re-extracted value, a correction) dispatches a new PLAN
         # job; say the ACK again only if it now says something different --
         # found in the 1 Oct audit (ecommerce_13): the identical ACK, twice.
@@ -283,7 +292,7 @@ class FastResponder:
                 text = spoken_clock_times(f"Okay, {change[0]}, not {change[1]}: ") + text  # the change, said out loud
         if self._question_follows(store, goal_id):
             return []
-        text = self._with_set_aside(store, goal_id, text)
+        text = self._with_set_aside_once(store, goal_id, text, now_us, step_no)
         goal = store.goals.get(goal_id)
         if (
             text == ACK_DEFAULT and store.config.no_generic_ack_before_question
@@ -848,6 +857,14 @@ class FastResponder:
                         f"You already have {repeat.value} confirmed, and I can't cancel or change it from here. "
                         f"Do you want a second one: {call.tool.replace('_', ' ')}" + (f" ({values})" if values else "") + "?"
                     )
+            if store.facts.get(f"ack.{goal_id}.set_aside_said") is None:
+                # The request this one moved away from is said once, here when
+                # no acknowledgement came first ("Okay, I won't book a technician
+                # for Saturday afternoon. That's a security action. Shall I ...").
+                told = self._with_set_aside(store, goal_id, text)
+                if told != text:
+                    store.facts.set(f"ack.{goal_id}.set_aside_said", True, FactStatus.COMMITTED, prov, rule="responder.set_aside")
+                    text = told
             return [
                 IntendedAction(
                     action_type=ActionType.SPEAK,

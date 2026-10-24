@@ -439,6 +439,8 @@ class TaskStateMachine:
         # Extension (camera-grounded troubleshooting): tell the model a frame
         # exists, so a visible parameter the user never said aloud is looked
         # at instead of asked for. Only when true, so no other prompt changes.
+        if store.config.demo_speech_polish_enabled:
+            view["demo_speech_polish_enabled"] = True  # only when on: every other prompt is unchanged
         if store.config.vision_enabled and store.evidence.observations_by_modality("frame"):
             view["camera_available"] = True
         # With declared write tools a booking needs the user's explicit go-ahead

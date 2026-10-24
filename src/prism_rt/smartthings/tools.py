@@ -94,8 +94,12 @@ MANIFEST: list[dict] = [
     _write("st_unlock", "Unlock a door lock. A security action: the user is asked to confirm first.", {"device": _device("front door")}, ["device"], security=True, label="Unlock the {device}", done_when="unlocked"),
     _write("st_open_garage", "Open the garage door. A security action: the user is asked to confirm first.", {"device": _device("garage")}, ["device"], security=True, label="Open the {device}", done_when="open"),
     _write("st_close_garage", "Close the garage door.", {"device": _device("garage")}, ["device"], label="Close the {device}", done_when="closed"),
-    _write("st_set_cooling_setpoint", "Set the air-conditioner / thermostat cooling temperature in degrees Celsius (16 to 30).",
-           {"device": _device("thermostat"), "celsius": {"type": "number", "description": "Target temperature in Celsius, 16 to 30."}}, ["device", "celsius"], label="Set the {device} to {celsius} degrees", done_when="{celsius}", state_unit="degrees"),
+    _write("st_set_cooling_setpoint", "Set the air-conditioner / thermostat cooling temperature in degrees Celsius (16 to 30), "
+           "to a value (celsius) or by a change from the current setting (change_by: -2 for two degrees cooler; "
+           "\"cooler\" without a number is -1, \"warmer\" +1).",
+           {"device": _device("thermostat"), "celsius": {"type": "number", "description": "Target temperature in Celsius, 16 to 30."},
+            "change_by": {"type": "number", "description": "Degrees to change the current setting by, instead of celsius: negative is cooler."}},
+           ["device"], label="Set the {device} to {celsius} degrees", done_when="{celsius}", state_unit="degrees"),
     _write("st_switch", "Turn a switch or light on or off.", {"device": _device("switch"), "state": _str("on or off.", ["on", "off"])}, ["device", "state"], label="Turn the {device} {state}", done_when="{state}"),
     _write("st_set_location_mode", "Set the home mode (Home, Away or Night).", {"mode": _str("Home, Away or Night.")}, ["mode"], label="Set the home mode to {mode}"),
     _write("st_execute_scene", "Run a saved SmartThings scene by name.", {"scene": _str("The scene's name, for example Goodnight.")}, ["scene"], label="Run the {scene} scene"),
@@ -219,13 +223,37 @@ class SmartThingsToolset:
         by_kind = {"lock": ("lock",), "garage": GARAGE_CAPABILITIES, "thermostat": ("thermostatCoolingSetpoint",), "switch": ("switch",)}
         device = await self._resolve(spoken, by_kind[kind] if kind else None, kind)
         status = await self.backend.status(device["deviceId"])
-        attrs = {cap: {attr: v["value"] for attr, v in body.items()} for cap, body in status["components"]["main"].items()}
         primary = self._primary(device)
         state = attribute_value(status, *primary) if primary else None
         if primary:
             self._report(device, *primary, state)
+        attrs = self._spoken_attributes(device, status, primary)
         return {"found": True, "device": device["label"], "state": state, "attributes": attrs,
                 "note": f"This is the device the user called {spoken!r}." if spoken and _norm(spoken) != _norm(device["label"]) else ""}
+
+    def _spoken_attributes(self, device: dict, status: dict, primary) -> dict:
+        """Only what a person asks about: the device's own state, a lock's
+        battery, and a room temperature when it is plausible. Every raw
+        attribute went to the reply before, and a virtual device's odd ones
+        were read aloud ("set to ondol mode with a temperature reading of
+        4316.7 degrees", "closed, though its contact sensor is reading as
+        open"; scripted runs, 24 Oct)."""
+        out: dict = {}
+        if primary:
+            out[primary[1]] = attribute_value(status, *primary)
+        kind = self._kind(device)
+        if kind == "lock":
+            battery = attribute_value(status, "battery", "battery")
+            if battery is not None:
+                out["battery"] = battery
+        if kind == "thermostat":
+            room = attribute_value(status, "temperatureMeasurement", "temperature")
+            try:
+                if room is not None and -10 <= float(room) <= 50:
+                    out["room_temperature"] = room
+            except (TypeError, ValueError):
+                pass
+        return out
 
     def _garage_cap(self, device: dict) -> str:
         caps = self._caps(device)
@@ -269,6 +297,18 @@ class SmartThingsToolset:
         return await self._set(a.get("device"), ("switch",), "switch", "switch", state, state)
 
     async def _st_set_cooling_setpoint(self, a: dict) -> dict:
+        if a.get("celsius") in (None, "") and a.get("change_by") not in (None, ""):
+            # "Two degrees cooler": from the current setting (24 Oct: refused as
+            # "isn't something I can do").
+            try:
+                change = float(a.get("change_by"))
+            except (TypeError, ValueError):
+                raise SmartThingsError("I need a number of degrees to change it by.") from None
+            current = await self.read_target("st_set_cooling_setpoint", a.get("device") or "thermostat")
+            try:
+                a = {**a, "celsius": float(current) + change}
+            except (TypeError, ValueError):
+                raise SmartThingsError("I couldn't read the current temperature setting.") from None
         try:
             celsius = float(a.get("celsius"))
         except (TypeError, ValueError):

@@ -262,3 +262,61 @@ def test_demo_polish_a_new_request_sets_an_open_question_aside():
     actions = say(h, 8_100_000, "yes please", 13_000_000)
     assert calls(actions) == [], "a yes after moving on must not unlock the door"
     assert_clean(h)
+
+
+def test_demo_polish_a_yes_long_after_the_security_question_asks_again():
+    """F41 (scripted run, 24 Oct): a yes 88 s after "Shall I unlock the front door?"
+    unlocked it. After a minute the question is asked again; a prompt yes then counts."""
+    labelled = dict(UNLOCK, label="Unlock the {device}")
+    provider = ScriptedProvider()
+    provider.register("interpret", "yes please", {"act": "confirm", "slot_deltas": []})
+    provider.register("interpret", "unlock the front", new_goal("st_unlock", "front door"))
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    h = SimHarness(config(demo_speech_polish_enabled=True), seed=1, provider=provider,
+                   tools={"st_unlock": {"latency_ms": 200, "response": {"done": True}}}, worker_latency_us=FAST)
+    h.send(0, [manifest_event([labelled])])
+    h.send(100_000, [chunk_event("unlock the front door")])
+    drain(h, 150_000, stop_on_final=False)
+    h.send(150_000, [eot_event()])
+    drain(h, 3_000_000, stop_on_final=False)
+    actions = say(h, 70_000_000, "yes please", 75_000_000)
+    assert calls(actions) == []
+    assert "That's a security action. Shall I unlock the front door?" in speaks(actions)
+    actions = say(h, 76_000_000, "yes please", 81_000_000)
+    assert calls(actions) == [("st_unlock", {"device": "front door"})]
+    assert_clean(h)
+
+
+def test_demo_polish_what_can_you_do_is_not_a_recap():
+    """F36 (scripted long session, 24 Oct): "What can you do?" became the session recap."""
+    provider = ScriptedProvider()
+    provider.register("interpret", "what can you do", {"act": "new_goal", "intent": "session_recap", "slot_deltas": [],
+                                                       "commit_intent": True, "actions": [{"tool": "session_recap", "args": {}}]})
+    h = SimHarness(config(demo_speech_polish_enabled=True), seed=1, provider=provider, tools={}, worker_latency_us=FAST)
+    h.send(0, [manifest_event([LOCK])])
+    h.send(100_000, [chunk_event("what can you do")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + drain(h, 3_000_000, stop_on_final=False)
+    assert any(t.startswith("I can control your smart-home devices") for t in speaks(actions)), speaks(actions)
+    assert_clean(h)
+
+
+def test_demo_polish_a_security_request_that_sets_a_question_aside_says_so_in_its_question():
+    """Live, 24 Oct: "Unlock the front door." set aside an open question (no
+    acknowledgement comes before a security question), so the drop is said in the question."""
+    labelled = dict(UNLOCK, label="Unlock the {device}")
+    lock_labelled = dict(LOCK, label="Lock the {device}", requires_confirmation=True)
+    provider = ScriptedProvider()
+    provider.register("interpret", "unlock the front", new_goal("st_unlock", "front door"))
+    provider.register("interpret", "lock the back", new_goal("st_lock", "back door"))
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    tools = {"st_unlock": {"latency_ms": 200, "response": {"done": True}}, "st_lock": {"latency_ms": 200, "response": {"done": True}}}
+    h = SimHarness(config(demo_speech_polish_enabled=True), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h.send(0, [manifest_event([labelled, lock_labelled])])
+    h.send(100_000, [chunk_event("unlock the front door")])
+    drain(h, 150_000, stop_on_final=False)
+    h.send(150_000, [eot_event()])
+    drain(h, 3_000_000, stop_on_final=False)
+    actions = say(h, 3_100_000, "lock the back door", 8_000_000)
+    assert "Okay, I won't unlock the front door. That's a security action. Shall I lock the back door?" in speaks(actions), speaks(actions)
+    assert calls(actions) == []
+    assert_clean(h)

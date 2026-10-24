@@ -82,6 +82,9 @@ def is_foreign_segment(text: str) -> bool:
     return accented >= 2 and accented / len(letters) >= 0.15
 
 
+_WORDS = re.compile(r"[a-z0-9']+")
+
+
 @dataclass
 class VoiceBridge:
     events: "asyncio.Queue[dict | None]"
@@ -144,6 +147,16 @@ class VoiceBridge:
     # reply is a sentence back, and "Okay, one moment." before it sounds
     # robotic (found in the 21 Oct rehearsal). None = every worded turn.
     filler_skip: "Callable[[str], bool] | None" = None
+    # Demo mode: a transcript that is only Janus's own recent words, arriving
+    # while Janus speaks or within `self_echo_window_s` after it stops, is its
+    # voice coming back through the user's microphone (a phone on loudspeaker
+    # with weak echo cancellation) and is dropped. Found in scripted runs, 24
+    # Oct: Janus answered its own capability list and filler, in a loop, and
+    # once called its own echoed acknowledgement "already done". `filler_text`
+    # is what the host's filler says, so its echo is recognised too.
+    drop_self_echo: bool = False
+    self_echo_window_s: float = 3.0
+    filler_text: str = ""
     _last_filler_at: "float | None" = field(default=None, init=False, repr=False)
     _turn_text: list = field(default_factory=list, init=False, repr=False)
 
@@ -168,6 +181,8 @@ class VoiceBridge:
     _words_in_turn: int = field(default=0, init=False, repr=False)
     _filler_turn: bool = field(default=False, init=False, repr=False)  # a generic ACK may still be dropped
     _filler_active: bool = field(default=False, init=False, repr=False)  # only the filler can be audible
+    _recent_said: list = field(default_factory=list, init=False, repr=False)  # (loop time, text) Janus said
+    _agent_stopped_at: "float | None" = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._start_wall = self.clock()
@@ -256,8 +271,12 @@ class VoiceBridge:
         # must not then wait for a transcript that already came.
         self._pending_segments -= 1
         self._last_final_at = self._loop_now()
+        echo = self.drop_self_echo and self._is_self_echo(text)
+        if echo:
+            self.on_interruption_logged("dropped Janus's own voice coming back: " + text[:60])
         if not (
-            (self.drop_filler_segments and is_filler_segment(text))
+            echo
+            or (self.drop_filler_segments and is_filler_segment(text))
             or (self.drop_foreign_segments and is_foreign_segment(text))
         ):
             await self.events.put({"type": "text_chunk", "ts_us": self.now_us(), "payload": {"text": text.strip()}})
@@ -305,7 +324,31 @@ class VoiceBridge:
         `on_speech_start` can tell a barge-in from ordinary silence."""
         if self._agent_speaking and not speaking:
             self._filler_active = False  # whatever played (the filler) has finished
+            try:
+                self._agent_stopped_at = self._loop_now()
+            except RuntimeError:  # no running loop (a synchronous caller)
+                self._agent_stopped_at = None
         self._agent_speaking = speaking
+
+    def _remember_said(self, text: str) -> None:
+        if not self.drop_self_echo or not text:
+            return
+        now = self._loop_now()
+        self._recent_said = [(t, s) for t, s in self._recent_said if now - t < 60.0] + [(now, text)]
+
+    def _is_self_echo(self, text: str) -> bool:
+        """Whether `text` (two words or more) is a run of what Janus said in the
+        last minute, heard while it speaks or just after. A user repeating Janus's
+        words after it has finished ("Unlock the front door.") is not dropped."""
+        words = _WORDS.findall(str(text or "").lower())
+        if len(words) < 2 or not self._recent_said:
+            return False
+        now = self._loop_now()
+        stopped = self._agent_stopped_at
+        if not (self._agent_speaking or (stopped is not None and now - stopped < self.self_echo_window_s)):
+            return False
+        said = " " + " ".join(w for _, t in self._recent_said for w in _WORDS.findall(t.lower())) + " "
+        return " " + " ".join(words) + " " in said
 
     @staticmethod
     def _loop_now() -> float:
@@ -402,6 +445,7 @@ class VoiceBridge:
             self._filler_turn = True
             self._filler_active = True
             self._last_filler_at = self._loop_now()
+            self._remember_said(self.filler_text)
             await self.play_filler()
 
     async def _give_up_at(self, deadline: float) -> None:
@@ -446,6 +490,7 @@ class VoiceBridge:
                     if self.interrupt_prefixes and self._agent_speaking and text.startswith(self.interrupt_prefixes):
                         self.stop_speaking()
                         self.on_interruption_logged("agent cut its own sentence: " + text[:40])
+                    self._remember_said(text)
                     await self.say(text)
                 if action_type == "final":
                     self.on_final()

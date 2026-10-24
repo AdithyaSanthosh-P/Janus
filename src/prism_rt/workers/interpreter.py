@@ -191,6 +191,18 @@ def _action_plans_block(view: dict) -> str:
             "them (a name, a time, a reference number), set status_question to "
             "true and leave actions empty -- that is never unsupported.\n"
         )
+    if view.get("demo_speech_polish_enabled"):
+        # Found in scripted runs, 24 Oct: "set the thermostat to two two",
+        # "fifty degrees" and "two degrees cooler" were put in unsupported
+        # although a listed tool does them; the tool checks the value itself.
+        block += (
+            "- A request a listed tool does is never unsupported, even if its value "
+            "looks odd or out of range (\"fifty degrees\", \"two two\" for "
+            "twenty-two): put the value in that tool's parameter and let the tool "
+            "say what it accepts. A change relative to the current setting (\"two "
+            "degrees cooler\", \"make it warmer\") uses that tool's change_by "
+            "parameter when it has one.\n"
+        )
     last = view.get("last_task") or []
     if last:
         rendered = "; ".join(f"{a['tool']} {a['args']}" for a in last)

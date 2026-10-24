@@ -334,3 +334,24 @@ def test_whats_up_and_a_bare_hey_janus_get_a_greeting():
     assert social_reply("Hey Janus, what's up?").startswith("Not much")
     assert social_reply("Hey Janus.") == "Hi! What can I do for you?"
     assert social_reply("What's up with my washer?") is None
+
+
+def test_who_are_you_and_a_joke_get_their_own_reply():
+    """F30 (scripted run, 24 Oct): both got "Happy to help — what would you like me to do?"."""
+    from prism_rt.kernel.replies import social_reply
+
+    assert social_reply("Who made you?").startswith("I'm Janus, a voice assistant for your home.")
+    assert social_reply("What are you?").startswith("I'm Janus")
+    assert social_reply("Tell me a joke.").startswith("I'm better with thermostats than jokes.")
+    assert social_reply("Set the thermostat to 21.") is None
+
+
+def test_the_value_rule_is_in_the_demo_prompt_only():
+    """F38/F43: the 'never unsupported when a tool does it' rule reaches the interpreter only
+    in demo polish, so the benchmark prompt stays byte-identical."""
+    from prism_rt.workers.interpreter import build_prompt
+
+    base = {"transcript": "set the thermostat to two two", "tools": [], "conversational_replies_enabled": True,
+            "action_plans_enabled": True}
+    assert "change_by" not in build_prompt(base)
+    assert "never unsupported, even if its value" in build_prompt({**base, "demo_speech_polish_enabled": True})

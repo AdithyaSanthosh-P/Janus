@@ -150,6 +150,7 @@ class PhoneToolset:
         self._timeout_s = timeout_s
         self._pending: dict[str, asyncio.Future] = {}
         self._ids = itertools.count(1)
+        self._alarms: list[str] = []  # alarms set this session, as said ("6:30 AM")
 
     def on_reply(self, payload: dict) -> None:
         if not isinstance(payload, dict) or payload.get("type") != "phone_result":
@@ -194,4 +195,13 @@ class PhoneToolset:
             self._pending.pop(rid, None)
         if not reply.get("ok"):
             raise PhoneRefused(f"the phone refused: {reply.get('error') or 'no reason given'}")
+        if request.get("action") == "set_alarm":
+            when = spoken_time(request["hour"], request["minute"])
+            earlier = [a for a in self._alarms if a != when]
+            if earlier:
+                # The phone has no way to change or delete an alarm from here:
+                # "make it seven" adds one (24 Oct: said as "I'll update your
+                # alarm" while the 6:30 one stayed).
+                said = said.rstrip(".") + f"; your {earlier[-1]} alarm is still set too."
+            self._alarms.append(when)
         return {"done": True, "say": said, **{k: v for k, v in request.items() if k != "action"}}

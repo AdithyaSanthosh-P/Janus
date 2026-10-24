@@ -107,7 +107,8 @@ def test_another_time_is_a_new_alarm_not_a_repeat():
     h, sent = hedged_setup()
     h.provider._rules.insert(0, ("interpret", "alarm for 7", _intent("phone_set_alarm", {"time": "07:00"})))
     say(h, 100_000, "set an alarm for 6:30", 5_000_000)
-    assert finals(say(h, 5_100_000, "set an alarm for 7", 10_000_000)) == ["Your alarm is set for 7 AM."]
+    # The earlier alarm is still on the phone (a correction cannot remove it): said, not hidden.
+    assert finals(say(h, 5_100_000, "set an alarm for 7", 10_000_000)) == ["Your alarm is set for 7 AM; your 6:30 AM alarm is still set too."]
     assert len(sent) == 2
 
 

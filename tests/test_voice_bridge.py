@@ -782,3 +782,33 @@ async def test_ordinary_speech_while_speaking_cuts_nothing():
     await asyncio.sleep(0.01)
     assert stops == [] and said == ["The garage is now closed."]
     await bridge.stop()
+
+
+async def test_janus_own_voice_coming_back_is_dropped_but_a_user_repeat_is_not():
+    """F29/F37 (scripted echo runs, 24 Oct): Janus's words heard back through the
+    microphone while it speaks, or just after, are not the user's. The same words
+    said by the user a while after Janus finished still count."""
+    bridge, events, _actions, _said = _make_bridge()
+    bridge.drop_self_echo = True
+    bridge.filler_text = "Okay, one moment."
+    bridge._remember_said("Happy to help — what would you like me to do?")
+    bridge._remember_said(bridge.filler_text)
+    bridge.on_agent_speaking_changed(True)
+    await bridge.on_segment_final("Happy to help, what would you like me to do?")
+    await bridge.on_segment_final("Okay one moment.")
+    await bridge.on_segment_final("What would you")
+    assert [e for e in await _drain_nowait(events) if e and e["type"] == "text_chunk"] == []
+    await bridge.on_segment_final("Turn off the switch.")  # new words while Janus speaks: a real barge-in
+    assert [e["payload"]["text"] for e in await _drain_nowait(events) if e and e["type"] == "text_chunk"] == ["Turn off the switch."]
+    bridge.on_agent_speaking_changed(False)
+    bridge._agent_stopped_at -= 10.0  # long after Janus stopped
+    await bridge.on_segment_final("what would you like me to do")
+    assert [e["payload"]["text"] for e in await _drain_nowait(events) if e and e["type"] == "text_chunk"] == ["what would you like me to do"]
+
+
+async def test_self_echo_filter_is_off_by_default():
+    bridge, events, _actions, _said = _make_bridge()
+    bridge._remember_said("Okay, one moment.")
+    bridge.on_agent_speaking_changed(True)
+    await bridge.on_segment_final("Okay one moment.")
+    assert [e for e in await _drain_nowait(events) if e and e["type"] == "text_chunk"]

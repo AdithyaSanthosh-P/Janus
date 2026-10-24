@@ -404,6 +404,13 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
     if _clarify_not_answered(interp, txn, now_us, step_no, event_id=event_id):
         return active_goal_id(txn.store)
 
+    capability = _capability_question(interp, txn.store)
+    if capability is not None:
+        # Demo: "What can you do?" read as a recap request answered "Nothing
+        # yet: I haven't sent ..." (scripted long session, 24 Oct).
+        replies.set_honest_reply(txn, interp.turn_id, capability, now_us, step_no, event_id=event_id)
+        return active_goal_id(txn.store)
+
     if _answers_with_recap(interp, txn.store):
         # Demo (survey H4): "What did you do?" answered from the ledger, word
         # for word, whatever the model made of the question (a live run took
@@ -679,7 +686,13 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         if interp.act == InterpretAct.CONFIRM:
             # G12: the "yes" answers the question about this one call id.
             waiting = txn.store.facts.get(f"goal.{gid}.awaiting_confirmation")
-            if _active(waiting) and waiting.value:
+            if _active(waiting) and waiting.value and _security_question_expired(txn.store, waiting.value, now_us):
+                # Demo: a yes long after the security question (88 s in a
+                # scripted run, 24 Oct) is not taken as the answer to it: the
+                # question is asked again.
+                txn.facts.retract(f"confirm.{waiting.value}.asked", rule="interpret_apply.security_question_expired")
+                txn.facts.retract(f"goal.{gid}.awaiting_confirmation", rule="interpret_apply.security_question_expired")
+            elif _active(waiting) and waiting.value:
                 txn.facts.set(
                     f"confirm.{waiting.value}.granted",
                     True,
@@ -900,6 +913,20 @@ def _live_followups(store) -> bool:
     return store.config.conversational_replies_enabled and store.config.action_plans_enabled
 
 
+def _capability_question(interp: TurnInterpretation, store) -> str | None:
+    """Demo speech polish: the capability answer for "What can you do?" when the
+    model mapped it onto nothing or only the session recap."""
+    if not store.config.demo_speech_polish_enabled:
+        return None
+    if any(a.tool != "session_recap" for a in interp.actions):
+        return None
+    turn = store.turn_log.get(interp.turn_id)
+    said = " ".join(c.text for c in turn.chunks) if turn is not None else ""
+    if _RECAP_QUESTION.search(said):
+        return None
+    return replies.capability_reply(said)
+
+
 def _set_aside_open_question(txn: StoreTxn, now_us: int, step_no: int, *, event_id: str) -> str | None:
     """Demo speech polish: a new request while a write waits for the user's yes
     moves on from that question. The waiting request is dropped unsent, as a
@@ -972,6 +999,22 @@ def _redo_last_goal(txn: StoreTxn, interp: TurnInterpretation) -> TurnInterpreta
     return dataclasses.replace(
         interp, act=InterpretAct.NEW_GOAL, intent=actions[0].tool, actions=tuple(actions), slot_deltas=(), unsupported=None
     )
+
+
+SECURITY_QUESTION_TTL_US = 60_000_000
+
+
+def _security_question_expired(store, call_id: str, now_us: int) -> bool:
+    """Demo speech polish: a security question (G12) answered more than a
+    minute after it was asked."""
+    if not store.config.demo_speech_polish_enabled:
+        return False
+    call = store.call_ledger.get(call_id)
+    spec = store.catalog.get(call.tool) if call is not None else None
+    asked = store.facts.get(f"confirm.{call_id}.asked")
+    if spec is None or not spec.requires_confirmation or not _active(asked):
+        return False
+    return now_us - asked.provenance.ts_us > SECURITY_QUESTION_TTL_US
 
 
 def _awaiting_confirmation(store, goal_id: str) -> bool:

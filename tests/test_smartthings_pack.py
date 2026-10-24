@@ -310,3 +310,42 @@ def test_snapshot_reports_every_device_once():
     run(ts.snapshot_states())
     assert {s[1] for s in seen} == {"Janus Lock", "Janus Garage", "Janus Thermostat", "Janus Switch"}
     assert ("thermo-1", "Janus Thermostat", "thermostatCoolingSetpoint", "coolingSetpoint", 24) in seen
+
+
+def test_a_status_read_carries_only_what_a_person_asks_about():
+    """F40/F12 (scripted runs, 24 Oct): every raw attribute reached the reply, and a
+    virtual device's odd ones were read aloud ("ondol mode", "4316.7 degrees", "its
+    contact sensor is reading as open"). Now: the device's own state, a lock's battery,
+    a plausible room temperature."""
+    mock, ts = toolset()
+    thermostat = call(ts, "st_get_status", device="thermostat")
+    assert set(thermostat["attributes"]) <= {"coolingSetpoint", "room_temperature"}
+    assert thermostat["attributes"].get("room_temperature") == 29
+    lock = call(ts, "st_get_status", device="front door")
+    assert set(lock["attributes"]) <= {"lock", "battery"}
+
+    real_status = mock.status
+
+    async def odd_status(device_id):
+        status = await real_status(device_id)
+        main = status["components"]["main"]
+        main.setdefault("temperatureMeasurement", {})["temperature"] = {"value": 4316.7}
+        main["thermostatMode"] = {"thermostatMode": {"value": "ondol"}}
+        main["contactSensor"] = {"contact": {"value": "open"}}
+        return status
+
+    mock.status = odd_status
+    thermostat = call(ts, "st_get_status", device="thermostat")
+    assert "room_temperature" not in thermostat["attributes"] and "thermostatMode" not in str(thermostat)
+    garage = call(ts, "st_get_status", device="garage")
+    assert "contact" not in str(garage["attributes"])
+
+
+def test_two_degrees_cooler_changes_the_current_setting():
+    """F39 (scripted run, 24 Oct): "Make it two degrees cooler" was refused."""
+    mock, ts = toolset()
+    before = run(ts.read_target("st_set_cooling_setpoint", "thermostat"))
+    result = call(ts, "st_set_cooling_setpoint", device="thermostat", change_by=-2)
+    assert result["done"] is True and float(result["state"]) == float(before) - 2
+    with pytest.raises(SmartThingsError, match="between 16 and 30"):
+        call(ts, "st_set_cooling_setpoint", device="thermostat", change_by=-40)
