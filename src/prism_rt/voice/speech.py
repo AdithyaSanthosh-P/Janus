@@ -559,11 +559,15 @@ class _KokoroStream(tts.ChunkedStream):
         worker = asyncio.ensure_future(asyncio.to_thread(work))
         try:
             first = True
+            index = 0
             while (pcm := await chunks.get()) is not None:
                 if first:
                     logger.info("janus.voice.speech: first audio after %.0f ms (%d chars)",
                                 (time.monotonic() - started) * 1000, len(text))
                     first = False
+                index += 1
+                logger.info("janus.voice.speech: tts chunk %d at %.0f ms, %.2f s of audio",
+                            index, (time.monotonic() - started) * 1000, len(pcm) / 2 / KOKORO_SAMPLE_RATE)
                 output_emitter.push(pcm)
             await worker  # re-raises a synthesis error
         finally:
