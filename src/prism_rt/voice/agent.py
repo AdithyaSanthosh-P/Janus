@@ -35,7 +35,8 @@ Environment:
   JANUS_AGENT_NAME        LiveKit agent name (demo mode default "janus-demo": explicit dispatch
                           only, so a demo worker never takes benchmark rooms; "" = automatic)
   JANUS_STT               "openai" (hosted transcription, the default; needs OPENAI_API_KEY;
-                          OPENAI_BASE_URL is honoured) or "local" (faster-whisper on the GPU)
+                          OPENAI_BASE_URL is honoured), "local" (faster-whisper on the GPU) or
+                          "parakeet" (NVIDIA Parakeet TDT 0.6B v2 on the GPU, via NeMo)
   JANUS_STT_MODEL         override the hosted transcription model (default: speech.OPENAI_STT_MODEL)
   JANUS_STT_MIN_RMS       demo mode: segments quieter than this RMS are not transcribed (default 0.025; 0 = off)
   JANUS_WHISPER_HOTWORDS  1 = prime the recognizer with the tool vocabulary (off by default;
@@ -125,7 +126,9 @@ from prism_rt.voice.speech import (
     FasterWhisperSTT,
     KokoroTTS,
     OpenAITranscribeSTT,
+    ParakeetSTT,
     load_kokoro,
+    load_parakeet,
     load_whisper,
     pcm_frames,
 )
@@ -211,12 +214,13 @@ def fdb_toolset() -> Toolset:
 
 
 MODE = os.environ.get("JANUS_MODE", "fdb").strip().lower()
-# Speech-to-text: "local" (faster-whisper on the GPU, the default) or "openai"
-# (hosted transcription, speech.OPENAI_STT_MODEL; needs OPENAI_API_KEY, and
-# honours OPENAI_BASE_URL so the key can sit behind a relay).
+# Speech-to-text: "openai" (hosted transcription, the default,
+# speech.OPENAI_STT_MODEL; needs OPENAI_API_KEY, and honours OPENAI_BASE_URL so
+# the key can sit behind a relay), "local" (faster-whisper on the GPU) or
+# "parakeet" (speech.PARAKEET_REPO on the GPU).
 STT_BACKEND = os.environ.get("JANUS_STT", "openai").strip().lower()
-if STT_BACKEND not in ("local", "openai"):
-    raise SystemExit(f"JANUS_STT must be 'local' or 'openai', not {STT_BACKEND!r}")
+if STT_BACKEND not in ("local", "openai", "parakeet"):
+    raise SystemExit(f"JANUS_STT must be 'local', 'openai' or 'parakeet', not {STT_BACKEND!r}")
 if MODE not in ("fdb", "demo"):
     raise SystemExit(f"JANUS_MODE must be 'fdb' or 'demo', not {MODE!r}")
 
@@ -313,6 +317,8 @@ def _shared_models() -> dict:
             _SHARED["vad"] = silero.VAD.load(min_speech_duration=0.05, min_silence_duration=0.55)
             if STT_BACKEND == "local":
                 _SHARED["whisper"] = load_whisper()
+            elif STT_BACKEND == "parakeet":
+                _SHARED["parakeet"] = load_parakeet()
             _SHARED["kokoro"] = load_kokoro()
             if FILLER_ENABLED:
                 # Synthesized once per process, so the filler plays with no
@@ -353,12 +359,15 @@ async def entrypoint(ctx: JobContext) -> None:
     toolset: Toolset = userdata["toolset"]
     logger.info("janus joining room %s", room_name)
 
-    if STT_BACKEND == "openai":
+    min_rms = float(os.environ.get("JANUS_STT_MIN_RMS", "0.025")) if MODE == "demo" else 0.0
+    if STT_BACKEND == "parakeet":
+        recognizer = ParakeetSTT(userdata["parakeet"], demo_fixes=MODE == "demo", min_rms=min_rms)
+    elif STT_BACKEND == "openai":
         # Demo mode no longer names the home's devices in the prompt
         # (it used to list them): with them, noise came back as invented
         # commands (23 Oct). Known mishearings are fixed after the fact instead.
         recognizer = OpenAITranscribeSTT(drop_prompt_echo=MODE == "demo", demo_fixes=MODE == "demo",
-                                         min_rms=float(os.environ.get("JANUS_STT_MIN_RMS", "0.025")) if MODE == "demo" else 0.0)
+                                         min_rms=min_rms)
     else:
         recognizer = FasterWhisperSTT(
             userdata["whisper"],

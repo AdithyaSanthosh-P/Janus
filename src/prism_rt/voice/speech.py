@@ -353,6 +353,86 @@ class OpenAITranscribeSTT(_ReportsRecognition):
         )
 
 
+# Local NVIDIA Parakeet (JANUS_STT=parakeet, demo): English-only, punctuated
+# output, and it invents far less text from noise than Whisper. NeMo is already
+# in the speech image (FDB scores with this same model).
+PARAKEET_REPO = "nvidia/parakeet-tdt-0.6b-v2"
+
+
+def load_parakeet(device: str | None = None):
+    import glob
+
+    import nemo.collections.asr as nemo_asr
+    import torch
+    from huggingface_hub import snapshot_download
+
+    path = snapshot_download(PARAKEET_REPO, revision=os.environ.get("JANUS_PARAKEET_REVISION") or None)
+    nemo_file = sorted(glob.glob(os.path.join(path, "*.nemo")))[0]
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    model = nemo_asr.models.ASRModel.restore_from(nemo_file, map_location=device).eval()
+    _parakeet_transcribe(model, np.zeros(WHISPER_SAMPLE_RATE, dtype=np.float32))
+    logger.info("janus.voice.speech: Parakeet loaded on %s, GPU %s (pid %d)", device, _gpu_memory(), os.getpid())
+    return model
+
+
+def _parakeet_transcribe(model, audio: np.ndarray) -> str:
+    with _GPU_LOCK:
+        out = model.transcribe([audio], batch_size=1, verbose=False)
+    if isinstance(out, tuple):  # older NeMo returned (best, all) for TDT models
+        out = out[0]
+    hyp = out[0] if out else ""
+    return clean_transcript(getattr(hyp, "text", hyp) or "")
+
+
+def _segment_rms(audio: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0
+
+
+class ParakeetSTT(_ReportsRecognition):
+    """Same contract as OpenAITranscribeSTT (one VAD-delimited segment in, one
+    final transcript out, never raises), on the local GPU with no network
+    round trip. The demo's quiet-segment floor and mishearing fixes apply."""
+
+    def __init__(self, model, *, language: str = "en", demo_fixes: bool = False, min_rms: float = 0.0) -> None:
+        super().__init__(capabilities=stt.STTCapabilities(streaming=False, interim_results=False))
+        self._model = model
+        self._language = language
+        self._demo_fixes = demo_fixes
+        self._min_rms = min_rms
+
+    async def _transcribe_segment(
+        self,
+        buffer,
+        *,
+        language: NotGivenOr[str] = NOT_GIVEN,
+        conn_options: APIConnectOptions,
+    ) -> stt.SpeechEvent:
+        audio = _to_mono_16k(buffer)
+        rms = _segment_rms(audio)
+        seconds = len(audio) / WHISPER_SAMPLE_RATE
+        text = ""
+        if rms < self._min_rms:
+            logger.info("janus.voice.speech: skipped a quiet segment (rms=%.4f < %.4f, %.2fs)", rms, self._min_rms, seconds)
+        else:
+            started = time.monotonic()
+            for attempt in (1, 2):
+                try:
+                    text = await asyncio.to_thread(_parakeet_transcribe, self._model, audio)
+                    if self._demo_fixes:
+                        text = fix_misheard_words(text)
+                    break
+                except Exception:  # noqa: BLE001 - same never-raise rule as FasterWhisperSTT
+                    logger.exception("janus.voice.speech: transcription attempt %d failed", attempt)
+                    if attempt == 1:
+                        await asyncio.sleep(0.2)
+            logger.info("janus.voice.speech: recognized text=%r (rms=%.4f, %.2fs, parakeet %.0f ms)",
+                        text, rms, seconds, (time.monotonic() - started) * 1000)
+        return stt.SpeechEvent(
+            type=stt.SpeechEventType.FINAL_TRANSCRIPT,
+            alternatives=[stt.SpeechData(language=self._language, text=text)],
+        )
+
+
 class KokoroEngine:
     def __init__(self, pipeline, voice_path: str, speed: float = 1.0) -> None:
         self._pipeline = pipeline
