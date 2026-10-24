@@ -152,7 +152,8 @@ export default function App() {
         style={{ flex: 1 }}
       >
         {/* First screen: the conversation fills what the current action card leaves */}
-        <View style={{ gap: 24, minHeight: viewportHeight > 0 ? viewportHeight - 32 : undefined }}>
+        {/* A fixed height, not a minimum: a long conversation scrolls inside its card and never pushes the action card off screen. */}
+        <View style={{ gap: 24, height: viewportHeight > 0 ? viewportHeight - 32 : undefined }}>
           {/* Area 1: Live Captions */}
           <CaptionsCard
             captions={state.captions}

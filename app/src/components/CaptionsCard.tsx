@@ -25,12 +25,13 @@ export const CaptionsCard: React.FC<CaptionsCardProps> = ({ captions, isDark, us
   }, [captions.length, userSpeaking]);
 
   return (
-    <View style={fill ? { flex: 1, minHeight: 200 } : undefined}>
+    <View style={fill ? { flex: 1, minHeight: 160 } : undefined}>
       <SectionHeader t={t} title="Conversation" />
       <View style={[{ backgroundColor: t.surface, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 12 }, fill ? { flex: 1 } : { maxHeight: 210 }]}>
         {/* nestedScrollEnabled: on Android an inner ScrollView inside the page's ScrollView only scrolls with it. */}
         <ScrollView
           ref={scrollViewRef}
+          style={fill ? { flex: 1 } : undefined}
           nestedScrollEnabled
           showsVerticalScrollIndicator={captions.length > 0}
           onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
