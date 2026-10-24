@@ -196,7 +196,7 @@ def at_eot(h, ts, text):
 def test_a_greeting_or_thanks_is_answered_at_once_without_the_model():
     # Answered in the step that closes the turn: no wait for an interpretation.
     h, mock = session()
-    assert at_eot(h, 100_000, "Hello Janus, good morning.") == ["Good morning! What can I do for you?"]
+    assert at_eot(h, 100_000, "Hello Janus, good morning.") == ["Good morning, what can I do for you?"]
     drain(h, 2_000_000, stop_on_final=False)
     assert at_eot(h, 2_100_000, "Thank you.") == ["You're welcome."]
     drain(h, 4_000_000, stop_on_final=False)
@@ -332,7 +332,7 @@ def test_what_can_you_do_says_what_janus_is_for():
 def test_whats_up_and_a_bare_hey_janus_get_a_greeting():
     from prism_rt.kernel.replies import social_reply
     assert social_reply("Hey Janus, what's up?").startswith("Not much")
-    assert social_reply("Hey Janus.") == "Hi! What can I do for you?"
+    assert social_reply("Hey Janus.") == "Hi, what can I do for you?"
     assert social_reply("What's up with my washer?") is None
 
 
@@ -355,3 +355,25 @@ def test_the_value_rule_is_in_the_demo_prompt_only():
             "action_plans_enabled": True}
     assert "change_by" not in build_prompt(base)
     assert "never unsupported, even if its value" in build_prompt({**base, "demo_speech_polish_enabled": True})
+
+
+def test_a_verbatim_tool_answer_is_said_word_for_word():
+    """Phone, 24 Oct: with the camera on a wall, the host's answer "can't make out the
+    display" came back from the composer with an invented sentence added. A result
+    marked verbatim is said as the host wrote it."""
+    look = {"name": "lookup_error_code", "mutability": "read_only",
+            "parameters": {"type": "object", "properties": {"device_type": {"type": "string"}}, "required": ["device_type"]}}
+    said = "I can't make out the washer's display on the camera. Point it at the display and ask me again."
+    provider = ScriptedProvider()
+    provider.register("interpret", "wrong with my washer", {
+        "act": "new_goal", "intent": "lookup_error_code", "slot_deltas": [], "commit_intent": True,
+        "actions": [{"tool": "lookup_error_code", "args": {"device_type": "washer"}}]})
+    provider.register("compose", "", {"text": "The display is not visible. I also read a bulleted paragraph.", "claims": []})
+    tools = {"lookup_error_code": {"latency_ms": 100, "response": {"found": True, "display_visible": False, "say": said, "verbatim": True}}}
+    h = SimHarness(demo_config(), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h.send(0, [manifest_event([look])])
+    h.send(100_000, [chunk_event("what's wrong with my washer")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + drain(h, 4_000_000, stop_on_final=False)
+    finals = [a.body.text for a in actions if a.action_type == ActionType.FINAL]
+    assert finals == [said]
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []

@@ -362,7 +362,10 @@ def social_reply(text: str) -> str | None:
         return "I'm doing well, thanks. What can I do for you?"
     if kind == "greeting":
         part = re.search(r"good (morning|afternoon|evening)", lower)
-        return f"Good {part.group(1)}! What can I do for you?" if part else "Hi! What can I do for you?"
+        # One sentence: on the phone, twice, the session's first "Hi! What can I
+        # do for you?" stopped playing in the pause Kokoro leaves after "Hi!"
+        # (24 Oct; the audio was synthesized in full, cause not found).
+        return f"Good {part.group(1)}, what can I do for you?" if part else "Hi, what can I do for you?"
     return "Anything else I can do?"
 
 
@@ -600,10 +603,15 @@ def said_result_final(store, goal_id: str) -> str | None:
     for step in plan.steps:
         spec = store.catalog.get(step.tool)
         call = store.call_ledger.latest_by_step(goal_id, step.step_key)
-        if spec is None or not spec.say_result or call is None or call.status != CallStatus.CONSUMED:
+        if spec is None or call is None or call.status != CallStatus.CONSUMED:
             return None
         fact = store.facts.get(f"result.{call.call_id}")
         result = fact.value if fact is not None and fact.status != FactStatus.RETRACTED else None
+        # A result marked `verbatim` (the host's own answer, e.g. "The camera
+        # can't make out the washer's display.") is said as is too: the
+        # composer once added an invented sentence to it (phone, 24 Oct).
+        if not spec.say_result and not (isinstance(result, dict) and result.get("verbatim") is True):
+            return None
         if not isinstance(result, dict) or not isinstance(result.get("say"), str) or not result["say"].strip():
             return None
         texts.append(result["say"].strip())

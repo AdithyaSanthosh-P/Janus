@@ -322,14 +322,17 @@ def demo_toolset() -> Toolset:
                 # the simulated washer's own 4C and 34 minutes would be a
                 # guess about what the user is pointing at (phone, 24 Oct).
                 return {"found": True, "device": care.kb["devices"]["washer"]["name"], "display_visible": False,
-                        "message": "The camera can't make out the washer's display. Point it at the display and ask again."}
+                        "message": "The camera can't make out the washer's display. Point it at the display and ask again.",
+                        "say": "I can't make out the washer's display on the camera. Point it at the display and ask me again.",
+                        "verbatim": True}
             if tool_name == "lookup_error_code" and not str(args.get("code") or "").strip():
                 # No code given ("is there an error now?"): the one on the
                 # display, as the camera reads it, else as the washer reports it.
                 code = value if seen and value != "clear" else None if seen else care.status.get("washer", {}).get("error_code")
                 if not code:
                     return {"found": True, "device": care.kb["devices"]["washer"]["name"], "code": None,
-                            "message": "The washer's display shows no error code right now."}
+                            "message": "The washer's display shows no error code right now.",
+                            "say": "Your washer's display shows no error code right now.", "verbatim": True}
                 args = {**args, "code": code}
             result = await execute(tool_name, args)
             if tool_name == "lookup_error_code" and seen and value == "clear" and isinstance(result, dict):
@@ -469,7 +472,11 @@ async def entrypoint(ctx: JobContext) -> None:
     async def say(text: str) -> None:
         # Queue only; never wait for playout, or a TOOL_CALL right behind an
         # acknowledgement would sit until the acknowledgement finished playing.
-        session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
+        handle = session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
+        # Whether each reply played to the end (a reply cut short with no user
+        # speech was seen twice on the phone, 24 Oct; see voice/speech.py's
+        # tts chunk log for what was synthesized).
+        handle.add_done_callback(lambda h, t=text: logger.info("speech %s: %s", "interrupted" if h.interrupted else "finished", t[:50]))
 
     filler_pcm: bytes = userdata.get("filler_pcm") or b""
     filler_pcms: dict = userdata.get("filler_pcms") or {}
