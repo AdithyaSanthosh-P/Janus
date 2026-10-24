@@ -816,7 +816,30 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
             )
         else:
             _flag_unclear_no_goal(txn, interp.turn_id, now_us, step_no, event_id=event_id)
+    elif (txn.store.config.demo_speech_polish_enabled and txn.store.config.conversational_replies_enabled
+          and interp.act == InterpretAct.SMALLTALK):
+        _answer_chat_while_asked(txn, interp, gid, now_us, step_no, event_id=event_id)
     return gid
+
+
+def _answer_chat_while_asked(txn: StoreTxn, interp, gid: str, now_us: int, step_no: int, *, event_id: str) -> None:
+    """Demo speech polish: a yes/no question is open and the user says something
+    else ("Hello Janus, are you there?"). Left alone, Janus stayed silent
+    (two unanswered turns in a scripted run, 24 Oct), which sounds like a
+    freeze: answer the chat and ask the open question again."""
+    awaiting = txn.store.facts.get(f"goal.{gid}.awaiting_confirmation")
+    if awaiting is None or awaiting.status == FactStatus.RETRACTED or not awaiting.value:
+        return
+    call = txn.store.call_ledger.get(awaiting.value)
+    phrase = replies.action_phrase(txn.store, call.tool, call.args) if call is not None else None
+    if not phrase:
+        return
+    turn = txn.store.turn_log.get(interp.turn_id)
+    said = " ".join(c.text for c in turn.chunks) if turn is not None else ""
+    base = replies.capability_reply(said) or replies.social_reply(said) or "I can't help with that here."
+    replies.set_honest_reply(
+        txn, interp.turn_id, f"{base.rstrip()} I'm still waiting for your answer: shall I {phrase}?",
+        now_us, step_no, event_id=event_id)
 
 
 _STATUS_WORDS = re.compile(

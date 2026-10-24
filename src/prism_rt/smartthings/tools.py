@@ -151,8 +151,9 @@ class SmartThingsToolset:
         if len(pool) == 1:
             other = (words & _OTHER_PLACE_WORDS) - set(_norm(pool[0].get("label")).split())
             if other and self._kind(pool[0]) in ("lock", "garage"):  # a wrong guess matters for a door, not for a lamp
+                noun = "door lock" if self._kind(pool[0]) == "lock" else "garage door"
                 raise SmartThingsError(
-                    f"I can't find a {spoken}. The only one I can see is called {pool[0].get('label')}.")
+                    f"I can't find a {spoken}. The only {noun} I can see is called {pool[0].get('label')}.")
             return pool[0]
         options = ", ".join(d["label"] for d in (named or pool)) or "none"
         raise SmartThingsError(f"I couldn't tell which device you mean by {spoken!r}. I can see: {options}.")

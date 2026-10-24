@@ -109,7 +109,7 @@ def test_a_place_the_home_does_not_have_is_not_guessed_as_the_only_device():
         assert call(ts, "st_lock", device=spoken)["device"] == "Janus Lock"
     mock.commands.clear()
     for spoken in ("back door", "the side door", "kitchen door"):
-        with pytest.raises(SmartThingsError, match="only one I can see is called Janus Lock"):
+        with pytest.raises(SmartThingsError, match="only door lock I can see is called Janus Lock"):
             call(ts, "st_unlock", device=spoken)
     assert mock.commands == []
     with pytest.raises(SmartThingsError, match="can't find"):

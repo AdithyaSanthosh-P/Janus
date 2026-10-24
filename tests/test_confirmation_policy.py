@@ -208,3 +208,25 @@ def test_demo_polish_asks_an_ordinary_question_in_words_too():
     # No "I'll book ..." before asking whether to book (phone, 24 Oct).
     assert not any(t.startswith("I'll") for t in speaks(actions))
     assert_clean(h)
+
+
+def test_demo_polish_answers_chat_while_a_question_is_open():
+    """A security question is open and the user says "are you there?": Janus answers
+    and asks the question again, instead of staying silent (scripted run, 24 Oct)."""
+    labelled = dict(UNLOCK, label="Unlock the {device}")
+    provider = ScriptedProvider()
+    provider.register("interpret", "are you there", {"act": "smalltalk", "slot_deltas": []})
+    provider.register("interpret", "unlock the front", new_goal("st_unlock", "front door"))
+    provider.register("compose", "a0", {"text": "Done.", "claims": []})
+    h = SimHarness(config(demo_speech_polish_enabled=True), seed=1, provider=provider,
+                   tools={"st_unlock": {"latency_ms": 200, "response": {"done": True}}}, worker_latency_us=FAST)
+    h.send(0, [manifest_event([labelled])])
+    h.send(100_000, [chunk_event("unlock the front door")])
+    drain(h, 150_000, stop_on_final=False)
+    h.send(150_000, [eot_event()])
+    drain(h, 3_000_000, stop_on_final=False)
+    actions = say(h, 3_100_000, "hello janus are you there", 7_000_000)
+    assert calls(actions) == []
+    assert "Hi! What can I do for you? I'm still waiting for your answer: shall I unlock the front door?" in speaks(actions) \
+        or any("still waiting for your answer: shall I unlock the front door?" in t for t in speaks(actions))
+    assert_clean(h)
