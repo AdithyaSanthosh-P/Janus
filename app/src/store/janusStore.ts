@@ -409,7 +409,10 @@ export class JanusEventReducer {
 
         this.state = {
           ...this.state,
-          backend: event.backend || this.state.backend,
+          // The header's backend is the session's (session_started); a device
+          // that is simulated beside real ones (the washer) must not flip it
+          // while the agent works (emulator run, 24 Oct: "Real" -> "Mock · Simulated" -> "Real").
+          backend: this.state.backend !== 'unknown' ? this.state.backend : event.backend || this.state.backend,
           devices: {
             ...this.state.devices,
             [event.device]: updatedDevice,

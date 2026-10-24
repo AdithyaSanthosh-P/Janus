@@ -188,6 +188,17 @@ describe('JanusStore Event Reducer & Validator', () => {
     expect(store.getState().lastActionId).toBe('c-1');
   });
 
+  it('a simulated device does not flip the session backend once it is known', () => {
+    const store = new JanusEventReducer();
+    store.processEvent({ v: 1, seq: 1, t_ms: 10, type: 'session_started', backend: 'real', packs: [] } as JanusEvent);
+    store.processEvent({
+      v: 1, seq: 2, t_ms: 20, type: 'device_state', device: 'dev-washer', label: 'Washer',
+      capability: 'washerOperatingState', attribute: 'machineState', value: 'pause', backend: 'mock',
+    } as JanusEvent);
+    expect(store.getState().backend).toBe('real');
+    expect(store.getState().devices['dev-washer'].backend).toBe('mock');
+  });
+
   it('agent_interrupted marks the last agent caption, never a user caption', () => {
     const store = new JanusEventReducer();
     store.processEvent({ v: 1, seq: 1, t_ms: 10, type: 'agent_said', text: 'The washer shows', kind: 'inform' } as JanusEvent);
