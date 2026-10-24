@@ -593,7 +593,11 @@ async def entrypoint(ctx: JobContext) -> None:
     if drills is not None:
         provider = DrilledProvider(provider, drills)
     if MODE == "demo":
-        config = demo_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 0))
+        # A write waits JANUS_SETTLE_MS after the user stops: "twenty-two ...
+        # actually, twenty-one" said right after the filler was too late at
+        # 1 s (the 22 went out in 4 of 4 scripted runs, 24 Oct).
+        config = demo_config(watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 0),
+                             settle_ms=_int_env("JANUS_SETTLE_MS", 2500))
     else:
         config = fdb_v3_config(
             watchdog_timeout_ms=_int_env("JANUS_WATCHDOG_MS", 105_000), fdb_relaxed_housing_schema=RELAXED_HOUSING
