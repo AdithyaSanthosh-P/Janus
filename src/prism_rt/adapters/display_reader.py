@@ -64,14 +64,23 @@ class DisplayReader:
         self._max_age_s = max_age_s
 
     async def read(self, device: str) -> str | None:
+        seen, value = await self.look(device)
+        if not seen and self._latest_frame(self._max_age_s) is None:
+            return self._fallback(device)
+        return value
+
+    async def look(self, device: str) -> tuple[bool, str | None]:
+        """What the camera alone shows, for the washer offer: (False, None)
+        without a fresh frame or when the read fails, else (True, reading):
+        the code, "clear", or None when no display can be made out."""
         frame = self._latest_frame(self._max_age_s)
         if frame is None:
-            return self._fallback(device)
+            return False, None
         try:
             answer = await asyncio.to_thread(self._complete_json, "display", PROMPT, SCHEMA, media=[frame])
         except Exception as exc:  # noqa: BLE001 - a failed read is no news
             log.info("display read failed: %s", exc)
-            return None
+            return False, None
         value = reading(answer)
         log.info("display read for %s: %s -> %s", device, answer, value)
-        return value
+        return True, value

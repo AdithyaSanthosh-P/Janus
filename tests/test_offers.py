@@ -397,3 +397,42 @@ def test_nothing_to_offer_is_said_with_the_reason():
         "Nothing to offer for the washer right now: a technician visit is already booked.")
     assert run(no_offer_text("garage_open", read_target)) == "The garage is already closed, so there's nothing to offer."
     assert run(no_offer_text("ac_hot", read_target)) == "The AC is already at 24 degrees or cooler, so there's nothing to offer."
+
+
+def test_washer_offer_believes_the_camera_first():
+    """With the camera on, the offer follows what it reads off the display; the
+    washer's own report decides only with the camera off (phone, 24 Oct: the
+    offer named 4C with the camera on a wall)."""
+    care = DeviceCareToolset()
+
+    def read_appliance(device):
+        return care._get_device_status({"device_type": device})
+
+    def look(seen, value):
+        async def _look(device):
+            return seen, value
+        return _look
+
+    on_4c = run(build_offer("washer_error", None, read_appliance, look=look(True, "4C")))
+    assert on_4c["text"].startswith("Your washer has stopped with code 4C: water is not being supplied")
+    wall = run(build_offer("washer_error", None, read_appliance, look=look(True, None)))
+    assert wall == {"notice": "I can't make out the washer's display. Point the camera at it and ask me again."}
+    clear = run(build_offer("washer_error", None, read_appliance, look=look(True, "clear")))
+    assert clear == {"notice": "The washer's display shows no error right now, so there's nothing to offer."}
+    camera_off = run(build_offer("washer_error", None, read_appliance, look=look(False, None)))
+    assert camera_off["text"] == on_4c["text"]
+    other = run(build_offer("washer_error", None, read_appliance, look=look(True, "5C")))
+    assert other["text"] == "Your washer has stopped with code 5C. Shall I book a technician for tomorrow morning?"
+
+
+def test_display_reader_look_says_whether_the_camera_saw_anything():
+    from prism_rt.adapters.display_reader import DisplayReader
+
+    def reader(frame, answer):
+        return DisplayReader(lambda *a, **k: answer, lambda age: frame, lambda device: "4C")
+
+    assert run(reader(None, {}).look("washer")) == (False, None)
+    assert run(reader(None, {}).read("washer")) == "4C"  # the watch still falls back
+    assert run(reader(object(), {"display_visible": False, "error_code": None}).look("washer")) == (True, None)
+    assert run(reader(object(), {"display_visible": True, "error_code": None}).look("washer")) == (True, "clear")
+    assert run(reader(object(), {"display_visible": True, "error_code": "4c"}).look("washer")) == (True, "4C")

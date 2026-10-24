@@ -8,7 +8,11 @@ Appliance offers (survey B1) read a device-care appliance instead:
 `read_appliance(device)` returns its status as `get_device_status` does
 (`DeviceCareToolset._get_device_status`), and the washer offer is made only
 while the washer shows an error code and no visit is booked for it ("Your washer has stopped
-with code 4C: ... Shall I book a technician for tomorrow morning?"). The visit's day
+with code 4C: ... Shall I book a technician for tomorrow morning?"). The camera
+comes first (`look(device)`, `DisplayReader.look`), the same rule the watch
+uses while the offer waits: with the camera on, the offer is made only for a
+code it reads, and a display that shows no code, or no display in view, is
+said instead; with the camera off, the washer's own report decides. The visit's day
 and slot are proposed in the question, so a "yes" books exactly what was
 said and a correction ("make it Friday afternoon") changes it before
 anything is booked."""
@@ -17,6 +21,8 @@ from __future__ import annotations
 
 import itertools
 from typing import Awaitable, Callable
+
+from prism_rt.adapters.display_reader import CLEAR
 
 # kind -> (write tool, device as spoken, value meaning "nothing to offer", question)
 OFFERS = {
@@ -39,15 +45,29 @@ APPLIANCE_OFFERS = {
 _ids = itertools.count(1)
 
 
-def _appliance_offer(kind: str, read_appliance: Callable[[str], dict] | None) -> dict | None:
+async def _appliance_offer(kind: str, read_appliance: Callable[[str], dict] | None,
+                           look: Callable[[str], Awaitable[tuple[bool, str | None]]] | None = None) -> dict | None:
     appliance, tool, args, when = APPLIANCE_OFFERS[kind]
     if read_appliance is None:
         return None
     status = read_appliance(appliance)
     code = status.get("error_code") if isinstance(status, dict) and status.get("found") else None
-    if not code or status.get("visit_booked"):
-        return None  # no fault, or a visit for it is already booked: nothing to offer
-    meaning = str(status.get("error_meaning") or "").strip().rstrip(".")
+    if not isinstance(status, dict) or not status.get("found") or status.get("visit_booked"):
+        return None  # no such appliance, or a visit is already booked: nothing to offer
+    reported = code
+    if look is not None:
+        # Janus believes what it sees (phone, 24 Oct: the offer named 4C with
+        # the camera on a wall, while the clearing was read off the camera).
+        seen, value = await look(appliance)
+        if seen and value is None:
+            return {"notice": f"I can't make out the {appliance}'s display. Point the camera at it and ask me again."}
+        if seen and value == CLEAR:
+            return {"notice": f"The {appliance}'s display shows no error right now, so there's nothing to offer."}
+        if seen:
+            code = value
+    if not code:
+        return None  # no fault: nothing to offer
+    meaning = str(status.get("error_meaning") or "").strip().rstrip(".") if code == reported else ""
     reason = f": {meaning[:1].lower()}{meaning[1:]}" if meaning else ""
     text = f"Your {appliance} has stopped with code {code}{reason}. Shall I book a technician for {when}?"
     return {"offer_id": f"{kind}-{next(_ids)}", "text": text, "tool": tool, "args": dict(args)}
@@ -74,12 +94,14 @@ async def _ac_offer(read_target, read_temperature) -> dict | None:
 
 async def build_offer(kind: str, read_target: Callable[[str, str], Awaitable[object]],
                       read_appliance: Callable[[str], dict] | None = None,
-                      read_temperature: Callable[[], Awaitable[object]] | None = None) -> dict | None:
+                      read_temperature: Callable[[], Awaitable[object]] | None = None,
+                      look: Callable[[str], Awaitable[tuple[bool, str | None]]] | None = None) -> dict | None:
     """The `offer` event payload for `kind`, or None when the device is already
     in the state the offer would put it in, the appliance shows no fault, or
-    `kind` is unknown."""
+    `kind` is unknown. {"notice": text} instead: no offer, and what the
+    camera showed is said."""
     if kind in APPLIANCE_OFFERS:
-        return _appliance_offer(kind, read_appliance)
+        return await _appliance_offer(kind, read_appliance, look)
     if kind == "ac_hot":
         return await _ac_offer(read_target, read_temperature)
     spec = OFFERS.get(kind)

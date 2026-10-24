@@ -188,6 +188,13 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "Thank you."),
         ("settle", 20),
     ],
+    "washer_offer_blank": [
+        ("note", "the camera shows the washer's display with no code; the offer says so and books nothing"),
+        ("video", ""),
+        ("pause", 3.0),
+        ("drill", "offer", True, {"kind": "washer_error"}),
+        ("settle", 20),
+    ],
     "washer_offer_clears": [
         ("note", "the camera shows 4C; Janus offers a technician; the display clears before the yes"),
         ("video", "4C"),

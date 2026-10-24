@@ -661,11 +661,14 @@ async def entrypoint(ctx: JobContext) -> None:
     async def _offer(kind: str) -> None:
         # Janus speaks first, only if the devices give it something to offer.
         try:
+            reader = display.get("reader")
             payload = await build_offer(kind, executor.read_target, getattr(executor, "read_appliance", None),
-                                        getattr(executor, "read_temperature", None))
-            if payload is None:
+                                        getattr(executor, "read_temperature", None),
+                                        reader.look if reader is not None else None)
+            if payload is None or "notice" in payload:
                 logger.info("offer %s: nothing to offer right now", kind)
-                text = await no_offer_text(kind, executor.read_target, getattr(executor, "read_appliance", None))
+                text = payload["notice"] if payload else await no_offer_text(
+                    kind, executor.read_target, getattr(executor, "read_appliance", None))
                 if feed is not None:
                     feed.agent_said(text, "inform")
                 await bridge.say(text)  # a notice to the presenter's button, not a decision
