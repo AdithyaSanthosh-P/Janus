@@ -2,7 +2,7 @@
 
     python benchmarks/run_report.py [--archive docs/runs/janus_fdbv3_voice_full100_2026-10-03.tgz]
                                     [--run-id cloud_20261002_182600] [--baseline cloud_20260929_232528]
-                                    [--out BENCHMARK_FULL100_2026-10-03.md]
+                                    [--out benchmarks/reports/BENCHMARK_FULL100_2026-10-03.md]
 
 Reads the run's own reports (pass_rate_report.json, tool_calls_report.json, manifest.json,
 SUMMARY.md, digest.md) from the archive, and `benchmarks/voice_recordings.csv` /
@@ -55,7 +55,7 @@ def main():
     ap.add_argument("--archive", default=os.path.join(REPO, "docs/runs/janus_fdbv3_voice_full100_2026-10-03.tgz"))
     ap.add_argument("--run-id", default="cloud_20261002_182600")
     ap.add_argument("--baseline", default="cloud_20260929_232528")
-    ap.add_argument("--out", default=os.path.join(REPO, "BENCHMARK_FULL100_2026-10-03.md"))
+    ap.add_argument("--out", default=os.path.join(REPO, "benchmarks", "reports", "BENCHMARK_FULL100_2026-10-03.md"))
     # Labels for a report on a later run (the defaults reproduce the 3 Oct report).
     ap.add_argument("--title", default="Full-100 voice run, judged: 3 Oct 2026")
     ap.add_argument("--label", default="3 Oct", help="short name of this run")

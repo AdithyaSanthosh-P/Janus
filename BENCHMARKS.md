@@ -170,7 +170,7 @@ On 30 Sep the gap was wide at every size: about 32 points for one-call scenarios
 | fail | fail | unchanged fail | 26 |
 | pass | fail | **regressed** | 1 |
 
-The 3 Oct run used hosted speech-to-text and the 30 Sep run local Whisper (which fell back to the CPU for its last quarter), so the comparison includes the speech-to-text change as well as the code fixes, as with the 2 Oct run in section 4. The full per-run report, with all 27 failures, is in [`BENCHMARK_FULL100_2026-10-03.md`](BENCHMARK_FULL100_2026-10-03.md).
+The 3 Oct run used hosted speech-to-text and the 30 Sep run local Whisper (which fell back to the CPU for its last quarter), so the comparison includes the speech-to-text change as well as the code fixes, as with the 2 Oct run in section 4. The full per-run report, with all 27 failures, is in [`BENCHMARK_FULL100_2026-10-03.md`](benchmarks/reports/BENCHMARK_FULL100_2026-10-03.md).
 
 ## 4. What changed on the voice path, and what it did
 
