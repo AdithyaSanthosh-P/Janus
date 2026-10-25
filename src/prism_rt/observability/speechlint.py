@@ -1,5 +1,4 @@
-"""SpeechLint (Q8, win_plan §6.2, `docs-personal/private-docs/
-competitor_comparison_2026-09-27.md`'s A5): a deterministic post-lint over
+"""SpeechLint (Q8, win_plan §6.2): a deterministic post-lint over
 already-constructed SPEAK/CLARIFY/FINAL text.
 
 Two independent checks, both real regressions this project has already
