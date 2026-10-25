@@ -1,5 +1,7 @@
 # currentStatus.md — Agent Operational Memory
 
+> **Current benchmark (read this, not older numbers in the blocks below).** Best latest full-100 voice run, judged: **82/100** (22 Oct, `cloud_20261021_185112`, Round 2 code, `./reproduce.sh`, RTX 3090 VM, relaxed housing contract on). Round 1 submission (published tool definitions): 74/100. Text replay of the current branch, 25 Oct, relaxed contract on: 82/100 (`run_output/textreplay_r2_1025`). Source for every figure: `BENCHMARKS.md` section 1. The handoff blocks, `docs-personal/` and the 3 Oct per-run reports quote older runs as history. **Pending (25–26 Oct):** two last full voice runs on the NeevCloud VM, relaxed housing contract on and off; the "on" run becomes the headline, with the contract called out in the README; update this box and `CLAUDE.md` first when they exist.
+
 ## What We Are Building
 
 **Project name: Janus** (`pyproject.toml` distribution name `janus`; the Python package import path stays `prism_rt` — renaming that across the whole codebase wasn't worth the risk this close to the deadline, so `import prism_rt` is correct and intentional, not a leftover).

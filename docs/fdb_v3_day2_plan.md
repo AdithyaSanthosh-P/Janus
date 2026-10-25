@@ -1,3 +1,5 @@
+> **Historical (26 Sep 2026).** Test counts, scores and branch names below describe that day. Current state: `currentStatus.md`; current benchmark numbers: `BENCHMARKS.md` section 1.
+
 # FDB-v3 Day 2 — Implementation Plan (for the implementing session)
 
 Written 2026-09-26 by the planning session. **Nothing in this document is implemented yet.**

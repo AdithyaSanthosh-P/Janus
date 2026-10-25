@@ -1,3 +1,5 @@
+> **Historical (24 Sep 2026).** Test counts, scores and branch names below describe that day. Current state: `currentStatus.md`; current benchmark numbers: `BENCHMARKS.md` section 1.
+
 # Janus — Initial Feature Plan vs. What's Actually Implemented
 
 This document has two parts: **what was originally proposed** (the full innovation catalog and the staged version plan, before any trimming) and **what the codebase actually has today**. It exists so the gap between "designed" and "built" is visible in one place, rather than scattered across `docs/prompt 3.txt`, `docs/prototype_version_plan.md`, `docs/post_v4_implementation_plan.md`, and `currentStatus.md`.

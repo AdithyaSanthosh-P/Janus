@@ -13,19 +13,21 @@ Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptib
 | **Benchmark** | Full-Duplex-Bench v3 (FDB-v3): 100 real spoken recordings across 4 domains, 12 tools, the official runner and LLM judge |
 | **Result** | **82 % strict pass on the full voice path** (82/100 judged, 79/100 exact match, 22 Oct), 77 % in text replay; **0.765 Pass@1 on self-correction**, the category that is hardest for every published system |
 | **Reasoning core** | Gemini 3.6 Flash via the Google AI Studio API (temperature 0, zero thinking budget); OpenAI GPT-4.1 as a switchable alternate |
-| **Speech and vision** | OpenAI `gpt-4o-mini-transcribe` (hosted, pinned snapshot) or local `faster-whisper`, Silero VAD, Kokoro-82M TTS, a 1 fps camera sampler feeding Gemini Vision |
-| **Core architecture** | A single-writer synchronous kernel (under 5 ms per step) with read-set invalidation, same-step cancellation, a G1–G11 `CommitGate` and an effect ledger |
-| **Use-case extension** | Camera-grounded appliance and device care with Samsung SmartThings-style error handling ([Extension](#extension-camera-grounded-device-care)) |
+| **Speech and vision** | Benchmark: OpenAI `gpt-4o-mini-transcribe` (hosted, pinned snapshot) or local `faster-whisper`. Live demo: NVIDIA Parakeet TDT 0.6B v2 on the GPU (default; hosted transcription optional). Silero VAD, Kokoro-82M TTS, a 1 fps camera sampler feeding Gemini Vision |
+| **Core architecture** | A single-writer synchronous kernel (under 5 ms per step) with read-set invalidation, same-step cancellation, a G1–G13 `CommitGate` and an effect ledger |
+| **Use-case extension** | Camera-grounded appliance care ([device care](#extension-camera-grounded-device-care)) and safe smart-home control on Samsung SmartThings with a companion app ([SmartThings](#extension-smart-home-control-on-samsung-smartthings), [live demo profile](#round-2-the-live-demo-profile)) |
 | **AI disclosure** | [`LangAI3.0_AI_Disclosure.docx`](LangAI3.0_AI_Disclosure.docx) |
 | **Reproduction** | One command, [`./reproduce.sh`](#reproduce-the-benchmark-one-command): a pinned Docker build with SHA-256-verified data, run through FDB's own runner and evaluators; **verified end to end on a clean VM: 74 / 100** |
-| **Verification** | 859 deterministic tests on a stepped clock, a trace checker over every decision log, byte-identical replay, and an adversarial explorer over 19 race scenarios |
+| **Verification** | 995 deterministic tests on a stepped clock, a trace checker over every decision log, byte-identical replay, and an adversarial explorer over 19 race scenarios |
+
+> **Benchmark configuration to note.** The reported voice runs use a *relaxed housing tool contract* (`JANUS_FDB_RELAXED_HOUSING=1`, on by default in `./reproduce.sh`): two housing tools are presented to the model with fewer required arguments, a `pets_allowed` flag and typed filter values, which is where the housing labels disagree with FDB's published definitions. Nothing else changes and no label values are used. It is documented, measured with and without, and switchable (`JANUS_FDB_RELAXED_HOUSING=0` runs the published definitions): see [Relaxed housing contract](#relaxed-housing-contract-a-deliberate-deviation-on-in-the-reported-runs). The Round 1 submission (74 / 100) used the published definitions only.
 
 **Highlights**
 - **82 % strict pass rate on the full voice path** (all 100 FDB-v3 recordings over LiveKit through `./reproduce.sh`, judged with gpt-4o; 22 Oct, Round 2 code), against 60 % for the best published system (GPT-Realtime); 77 % for the reasoning core in text replay. The same path scored 77 % on 19 Oct; five full voice runs on 3 and 4 Oct scored 73, 65, 74, 73 and (through Docker) 74; the 65 is explained and fixed (below), and single runs vary by a few points. Every run is recorded in [`BENCHMARKS.md`](BENCHMARKS.md).
 - **Self-correction ("…no wait, make it Friday"), the category FDB-v3 finds hardest for every system:** 0.765 Pass@1 on the final voice run, against 0.176 for the published cascaded pipeline (the same family as ours) and 0.588 for GPT-Realtime; 0.824 in text replay.
 - **No double actions, no false claims, by construction:** every write passes one commit gate and is recorded in an effect ledger before it is emitted; a correction cancels stale work in the same kernel step; a failed, skipped or withdrawn step is said aloud, never reported as done.
 - **It listens before it acts:** the kernel hears that the user is speaking, holds calls and speech until the floor is closed, merges a request split by a pause, and runs only the branch of an "if … otherwise …" request that the real tool result supports.
-- **Deterministic and replayable:** 859 tests on a stepped clock with a trace checker over every decision log, plus an adversarial explorer that perturbs timings around 19 race scenarios.
+- **Deterministic and replayable:** 995 tests on a stepped clock with a trace checker over every decision log, plus an adversarial explorer that perturbs timings around 19 race scenarios.
 - **Use-case extension:** camera-grounded device care over live voice: it reads the device from the camera, diagnoses it, and books exactly one technician visit.
 
 > **Provider declaration.** Custom LiveKit agent (Janus). Decisions: the Janus kernel with **Gemini 3.6 Flash** (hosted Gemini API, thinking budget 0, temperature 0). Speech-to-text: **OpenAI `gpt-4o-mini-transcribe-2025-12-15`** (hosted, pinned snapshot). Local on the GPU: **Kokoro-82M** (TTS), **Silero VAD**. Nothing else is called at evaluation time. Keys needed: LiveKit, `GEMINI_API_KEY`, `OPENAI_API_KEY` (see [Keys](#keys)). Two switches change the providers: `JANUS_STT=local` runs faster-whisper large-v3-turbo on the GPU instead, and `JANUS_LLM_PROVIDER=openai` moves decisions to OpenAI (see [Keys](#keys)); every run writes the providers it actually used to `PROVIDER.txt`.
@@ -33,7 +35,7 @@ Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptib
 
 ## Contents
 
-1. [Why Janus is built this way](#why-janus-is-built-this-way) · 2. [What is inside](#what-is-inside) · 3. [Reproduce the benchmark](#reproduce-the-benchmark-one-command) · 4. [How Janus works](#how-janus-works) · 5. [How an interruption flows](#how-an-interruption-flows) · 6. [Deep dive](#deep-dive) · 7. [Extension: device care](#extension-camera-grounded-device-care) · 8. [Extension: SmartThings](#extension-smart-home-control-on-samsung-smartthings) · 9. [Results](#results) · 10. [Benchmark labels](#benchmark-labels-and-the-published-tools) · 11. [Keys](#keys) · 12. [Tests](#tests) · 13. [Limitations](#limitations) · 14. [Repo map](#repo-map) · 15. [Citations](#citations)
+1. [Why Janus is built this way](#why-janus-is-built-this-way) · 2. [What is inside](#what-is-inside) · 3. [Reproduce the benchmark](#reproduce-the-benchmark-one-command) · 4. [How Janus works](#how-janus-works) · 5. [How an interruption flows](#how-an-interruption-flows) · 6. [Deep dive](#deep-dive) · 7. [Extension: device care](#extension-camera-grounded-device-care) · 8. [Extension: SmartThings](#extension-smart-home-control-on-samsung-smartthings) · 9. [Live demo profile](#round-2-the-live-demo-profile) · 10. [Results](#results) · 11. [Benchmark labels](#benchmark-labels-and-the-published-tools) · 12. [Keys](#keys) · 13. [Tests](#tests) · 14. [Limitations](#limitations) · 15. [Repo map](#repo-map) · 16. [Citations](#citations)
 
 ## Why Janus is built this way
 
@@ -76,7 +78,7 @@ sequenceDiagram
 **Why this is not a benchmark trick.** The same kernel runs the Full-Duplex-Bench voice benchmark and the camera-grounded device-care extension; only a configuration profile differs (`fdb_v3_config`, `demo_config` in `src/prism_rt/profiles.py`). New kernel behaviour is added behind a `Config` flag and covered by tests; the tagged versions V0–V4 and six post-V4 phases each stayed runnable.
 
 **Evidence, not claims**
-- **859 deterministic tests** on a stepped clock with a scripted model, and a trace checker that audits every decision log (no event reordering, floor rule, no stale consumption, no false completion claim, one confirmed write per lineage).
+- **995 deterministic tests** on a stepped clock with a scripted model, and a trace checker that audits every decision log (no event reordering, floor rule, no stale consumption, no false completion claim, one confirmed write per lineage).
 - **A bounded adversarial explorer** perturbs tool and worker latencies and user timing around 19 race scenarios, with oracles re-derived from state; its first run found three real kernel bugs, all fixed with regression tests.
 - **Independent reviews are logged, not trusted:** every round's findings were reproduced before a fix shipped, and the ones that did not hold up are recorded too ([`reviews/index.md`](reviews/index.md), [`reviews/audit-2026-10-01.md`](reviews/audit-2026-10-01.md)).
 - **On the hardest benchmark category** (self-correction), 0.765 Pass@1 on the full voice path, against 0.176 for the published cascaded pipeline of the same family. See [Results](#results).
@@ -91,7 +93,7 @@ Everything below is implemented and tested, and active in the benchmark profile 
 - **Optimistic concurrency with read sets:** `(fact, version, digest)` on every proposal, call and utterance, so a correction invalidates exactly the work that read the old value, and a value that reverts redoes nothing.
 - **Same-step cancellation** with a fixed emission order (CANCEL before SPEAK, TOOL_CALL, CLARIFY, FINAL).
 - **Chunk-anchored cancellation:** a high-confidence corrected value cancels the stale call mid-utterance, before the turn ends.
-- **`CommitGate` G1–G11** and an append-only **effect ledger** written before emission: duplicate fingerprints, plan-step lineage, unknown-outcome writes, the settle window and the open-floor rule.
+- **`CommitGate` G1–G13** and an append-only **effect ledger** written before emission: duplicate fingerprints, plan-step lineage, unknown-outcome writes, the settle window and the open-floor rule.
 - **Call deadlines and a retry table:** a lost tool result cancels and asks or fails honestly instead of hanging; a write is never re-sent blindly.
 - **Honest failure and partial failure:** a failed step is reported, steps that do not depend on it still run, and the completion flag is false.
 
@@ -208,7 +210,7 @@ flowchart TB
 
     subgraph SAFETY["4. Admission & Tools"]
         direction TB
-        GATE{"CommitGate · G1–G11"}
+        GATE{"CommitGate · G1–G13"}
         TOOLS[("Tool Backend<br/>FDB-v3 APIs & device-care tools")]
         GATE ==>|admitted| TOOLS
     end
@@ -306,7 +308,7 @@ stateDiagram-v2
     NotRetried --> [*]
 ```
 
-Every call passes the same ordered rules (`kernel/commit.py`, `kernel/emission.py`):
+Every call passes the same ordered rules (`kernel/commit.py`, `kernel/emission.py`); G12 and G13 apply in the live demo profile (a tool must declare them), the others in both profiles:
 
 | Gate | Rule | If it fails |
 |---|---|---|
@@ -321,16 +323,18 @@ Every call passes the same ordered rules (`kernel/commit.py`, `kernel/emission.p
 | G9 | the read set is still valid *at emission* (checked by the emission gate) | withdrawn before it is sent |
 | G10 | the settle window has elapsed (1 s in the benchmark profile, 2.5 s while the user is mid-sentence) | held, so a late correction can still cancel it |
 | G11 | no new user turn is open | held |
+| G12 | a tool that declares `requires_confirmation` (unlock, open the garage) has the user's yes to a question that names that very call | asked: "That's a security action. Shall I unlock the front door?" |
+| G13 | the world the question was asked about has not changed (a watched device's state, or what the camera showed) | held; the user hears what changed and is asked again |
 
 | Mechanism | What it guarantees |
 |---|---|
 | **Single writer** | One synchronous kernel step owns all state. Workers, models and tools can only *propose*; nothing changes without the kernel's admission. No awaiting, no locks, no races. |
 | **Read sets** | Every proposal records `(fact, version, digest)`. If any fact changed, the work is stale and is cancelled *in the same step*. If a value reverts (Pune → Mumbai → Pune), the digest matches and nothing is redone. |
-| **CommitGate (G1–G11)** | A write runs only after the floor closes, the user has been quiet for the settle window (longer when they are revising or mid-sentence), there is no duplicate fingerprint or lineage, and the read set is still valid at emission. |
+| **CommitGate (G1–G13)** | A write runs only after the floor closes, the user has been quiet for the settle window (longer when they are revising or mid-sentence), there is no duplicate fingerprint or lineage, and the read set is still valid at emission. |
 | **Effect ledger** | Every admitted write is recorded *before* it is emitted. A state-changing action never executes twice, even if the user barges in mid-call. |
 | **Failure policy** | Reads have a bounded retry; a failed or timed-out write is never blindly re-sent. The user is told what happened, and an ambiguous outcome is asked about, not guessed. |
 | **Keep listening** | When the words are cut off mid-sentence or announce a detail still coming ("the order number is…"), the kernel extends the settle window to 2.5 s: nothing is said or done until the user has been quiet that long. |
-| **Deterministic replay** | All timing goes through a clock port. The kernel is replayable byte for byte on a stepped clock; 859 tests verify this with a trace checker over every decision log. |
+| **Deterministic replay** | All timing goes through a clock port. The kernel is replayable byte for byte on a stepped clock; 995 tests verify this with a trace checker over every decision log. |
 
 The full architecture specification is in `docs/prompt 2.txt`, and a guided tour of the code is [`docs/architecture_walkthrough.md`](docs/architecture_walkthrough.md).
 
@@ -421,7 +425,7 @@ Each row is a situation that breaks a loop-based agent, what Janus does, and the
 
 ### Two profiles, one kernel
 
-| Setting | `fdb_v3_config` (benchmark) | `demo_config` (device care) |
+| Setting | `fdb_v3_config` (benchmark) | `demo_config` (device care and live demo) |
 |---|---|---|
 | Action plans, split-turn merge, speculative interpretation | on | on |
 | `vad_floor_enabled` (the kernel hears that the user is speaking) | on | off (no echo cancellation in a live room) |
@@ -430,6 +434,7 @@ Each row is a situation that breaks a loop-based agent, what Janus does, and the
 | `fill_unstated_required_enabled` (assume a count or budget, say it aloud) | on | off: a missing date or slot is asked |
 | Write needs the user's explicit go-ahead | exempt (the benchmark's tools declare no mutability) | required |
 | Whole-session watchdog | 105 s | none |
+| Round 2 flags: `confirmation_policy_enabled`, `unconfirmed_outcomes_enabled`, `evidence_bound_confirmation_enabled`, `proactive_offers_enabled`, `demo_speech_polish_enabled`, `interpret_failure_notice_enabled` | off | on ([live demo profile](#round-2-the-live-demo-profile)) |
 
 ### What we found by looking at real audio
 
@@ -442,7 +447,7 @@ The kernel's correction machinery had been proven on deterministic tests and had
 
 Design directions, not shipped or tested on a device:
 - **On-device hybrid.** The kernel is small, deterministic and runs in well under a millisecond per step, so it could sit next to voice-activity detection on a phone or a TV while heavy vision and reasoning stay in the cloud. Nothing here has been run on a Samsung device.
-- **Real device backends.** The extension's device adapter is replaced through the tool manifest; the coordination layer above it (corrections, commit gate, effect ledger) is unchanged. A SmartThings integration is the natural first step.
+- **Real device backends.** The extension's device adapter is replaced through the tool manifest; the coordination layer above it (corrections, commit gate, effect ledger) is unchanged. The SmartThings pack already runs against cloud virtual devices; physical devices and the full Samsung catalogue are the next step.
 - **Streaming transcription** so prefix speculation and mid-utterance cancellation engage on real audio, not only in the deterministic tests. This is the largest latency and accuracy lever left.
 - **A faster first-step model** for interpretation, and a build that picks its CUDA version from the GPU.
 
@@ -570,6 +575,41 @@ JANUS_ST_MODE=real ST_PAT=... PYTHONPATH=src:. python demo/run_smartthings_demo.
 
 Tested without a network in `tests/test_smartthings_pack.py`, `tests/test_confirmation_policy.py`, `tests/test_unconfirmed_outcome.py` and `tests/test_app_events.py`.
 
+## Round 2: the live demo profile
+
+Round 2 is a live demonstration, so the same kernel also runs as a voice assistant for a home: `JANUS_MODE=demo` (the worker registers as `janus-demo`) selects `demo_config()` and a set of host-side behaviours, with a phone app beside it. **Every behaviour below sits behind a `Config` flag that only `demo_config` sets, or behind `JANUS_MODE=demo`; the benchmark profile is unchanged** (checked by reading every voice-path change, and by a full-100 text replay on the current code).
+
+**What the kernel adds in this profile**, each flag-gated and covered by tests:
+
+| Behaviour | What the user hears or sees |
+|---|---|
+| **Confirmation policy** (G12) and **unconfirmed outcomes** | A security action (unlock, open the garage) waits for a yes to a question that names it; a command SmartThings accepted but the device never confirmed is "sent, not confirmed", never "done" |
+| **Evidence-bound confirmation** (G13) and the **world watch** | While Janus waits for a yes, the device is watched. If someone else already did it, the request is withdrawn unsent ("Never mind: the garage is already closed"); if something else changed, the user is told and asked again |
+| **Offers** | Janus can speak first ("The garage is open. Shall I close it?") and the answer goes through the same gate |
+| **Camera-first washer** | The error code on the washer's display is read off the camera while a technician visit offered for it waits; if the code clears, the offer is withdrawn |
+| **Hedge check** | "…at 6:30, I think" is checked before anything is sent ("Just to check, set an alarm for 6:30, right?") |
+| **Honest failures** | A refused write is said as refused with `task_completed=false`; a failed read is said in the tool's own words; a device the home does not have ("the back door") is never asked about, and nothing is sent |
+| **A new request replaces an open question** | The unanswered question is dropped unsent and said so, so a later "yes" cannot release the old one |
+| **Recap from the ledger** | "What did you do?" is answered from the effect ledger: what was done, what was sent but not confirmed, what was never sent |
+| **Phone actions** | Alarms and timers on the user's phone through the companion app (LiveKit data topic `janus.phone`); the phone's own alarms cannot be read, so a repeated alarm is asked about first |
+| **Failure drills** | From the app, on purpose: SmartThings unreachable, never confirming or slow; the model slow or down; "someone else" changing a device |
+
+**Speech and turn-taking.** The worker's default recognizer is NVIDIA Parakeet TDT 0.6B v2 on the GPU (hosted transcription with `JANUS_STT=openai`). Quiet segments below an RMS floor are not transcribed, a transcript that repeats the recognizer's own prompt is dropped, and Janus's own voice coming back through a loudspeaker is not taken as the user's. Reply openers vary with the turn ("Let me check." for a question, "Okay." for a request), a reply is not cut off when LiveKit closes the user's turn, and talking over Janus stops it. A write is held 2.5 s after the user stops (`JANUS_SETTLE_MS`) so a late correction ("…actually, twenty-one") can still cancel it; the first sound comes about 2 s after the user stops in scripted runs.
+
+**The companion app** (`app/`, React Native; built and tested on Android): live captions, one card per action with its state (planned, held and why, waiting for your yes, sent, confirmed, sent but not confirmed, never sent), device tiles, a ledger summary, a "why" panel that shows the read set a call was built on and what changed, a thinking orb, and the failure-drill drawer. It talks to the worker only through LiveKit data topics; the contract is [`app/INTEGRATION.md`](app/INTEGRATION.md).
+
+**Run and test it** (a GPU host without Docker; Python 3.11, about 12 minutes to set up):
+
+```bash
+scripts/demo_pod/setup.sh                        # once: venv, pinned packages, model weights
+scripts/demo_pod/run_worker.sh                   # the demo worker (Parakeet; JANUS_STT=openai for hosted)
+scripts/demo_pod/drive.sh correction --room janus-sim-room --fake-phone ok   # a scripted spoken user
+python scripts/demo_check.py batch.log           # pass/fail table over a batch of scenes
+python scripts/demo_reset_devices.py             # put the SmartThings devices in their starting state
+```
+
+`scripts/demo_driver.py` is a scripted spoken user: it joins a room, speaks a scene in a synthetic voice (speaker, speed, volume, background noise and a second talker are options), sends drills, plays a camera image, and prints the event timeline and the time to the agent's first sound. About 90 scenes cover corrections, offers, withdrawals, drills, barge-in, noise, long mixed sessions and attempts to talk Janus into an unsafe action. Real SmartThings needs `ST_PAT`; without it the mock backend runs the same scenes.
+
 ## Results
 
 All numbers below are FDB-v3's own runner and evaluators, unmodified, at the pinned commit, with `gpt-4o` as the LLM judge. **Run logs, reports, configuration and seeds of the voice runs are in [`docs/runs/`](docs/runs/)** (audio left out); the headline numbers are summarised in `docs/measurements.md`.
@@ -613,7 +653,7 @@ Notes on the table:
 
 ## Benchmark labels and the published tools
 
-FDB-v3 scores each tool call against a gold label. In some recordings the label disagrees with the published tool definitions (the function signatures FDB's own agent exposes, `v3/lk_agent_tool.py` at the pinned commit), with the recording itself, or with the condition the user stated. **Janus follows the published tool contract and what the user actually said; it does not fit the labels.** Organizer guidance (4 Oct 2026): conforming to the open dataset's labels is not required, and such issues are to be documented. This section is that record. On the final voice run (74 / 100), 17 of the 26 failures are in this table.
+FDB-v3 scores each tool call against a gold label. In some recordings the label disagrees with the published tool definitions (the function signatures FDB's own agent exposes, `v3/lk_agent_tool.py` at the pinned commit), with the recording itself, or with the condition the user stated. **By default Janus follows the published tool contract and what the user actually said; it does not fit the labels.** Organizer guidance (4 Oct 2026): conforming to the open dataset's labels is not required, and such issues are to be documented. This section is that record, and the table describes the published-definition behaviour (the Round 1 submission, 74 / 100; 17 of its 26 failures are in this table). One deliberate, documented exception, used in the reported Round 2 runs, follows the table.
 
 | Issue | The label expects | The published tool / the recording | What Janus does | Recordings (final voice run) |
 |---|---|---|---|---|
@@ -628,9 +668,9 @@ FDB-v3 scores each tool call against a gold label. In some recordings the label 
 
 Matching these labels would mean sending arguments the tool does not declare, typing values against the declared type, inventing values the user did not say, or carrying out an action the user ruled out. The other nine misses on the final run are ours: a request to change a saved filter ("raise my max price to 3000") answered with a search instead of `update_search_filter` (4: housing_13, housing_24 on both speakers, housing_25; fixed on 4 Oct, after the voice run: in text replay all four now call `update_search_filter`, and still miss labels that type the value as a boolean or number or leave out required arguments), speech-to-text errors (3: "ZAT" for "CAT", "Mulan" for "Milan", a garbled product id) and value wording the model chose (2: `travel card`, fixed since, and `drivers_license`).
 
-### Relaxed housing contract (Round 2 setting, a deliberate deviation)
+### Relaxed housing contract (a deliberate deviation, on in the reported runs)
 
-The table above is how Janus behaves with the published tool definitions (`JANUS_FDB_RELAXED_HOUSING=0`). The reported benchmark runs use a setting, on by default in `./reproduce.sh`, `fdb_relaxed_housing_schema` (environment `JANUS_FDB_RELAXED_HOUSING=1`), that presents two housing tools differently to the model: `search_apartments` requires only the city and accepts a `pets_allowed` flag, and `update_search_filter.value` accepts a number, a boolean or a string. FDB's mock backend still requires bedrooms and a budget, so the adapter sends neutral stand-in values to the backend **only**: the logged call contains exactly what the user said, and result fields computed from a stand-in are removed before the agent sees them. No other tool is affected, and nothing in the override is taken from the benchmark's labelled values (a test checks this). **This departs from "follow the published contract" and is listed here as such.** Measured on 19 Oct in text replay (the 26 housing recordings, `gpt-4o` judge, same settings): 8/26 with the published contract, 18/26 with the relaxed one, no recording worse (`run_output/housing_wp5_*_1019`). The four recordings that still miss repeat a filter inside the search that the label leaves out, and one expects `min_bedrooms` for `bedrooms`.
+The table above is how Janus behaves with the published tool definitions (`JANUS_FDB_RELAXED_HOUSING=0`). The reported benchmark runs use a setting, on by default in `./reproduce.sh`, `fdb_relaxed_housing_schema` (environment `JANUS_FDB_RELAXED_HOUSING=1`), that presents two housing tools differently to the model: `search_apartments` requires only the city and accepts a `pets_allowed` flag, and `update_search_filter.value` accepts a number, a boolean or a string. FDB's mock backend still requires bedrooms and a budget, so the adapter sends neutral stand-in values to the backend **only**: the logged call contains exactly what the user said, and result fields computed from a stand-in are removed before the agent sees them. No other tool is affected, and nothing in the override is taken from the benchmark's labelled values (a test checks this). **This departs from "follow the published contract", it brings the housing tools closer to what the labels expect, and it is listed here as such.** The reason it exists: the published signature cannot express what users ask for ("somewhere that allows pets"), so an agent that follows it must either refuse or invent a value. Anyone who prefers the published definitions can run `JANUS_FDB_RELAXED_HOUSING=0 ./reproduce.sh`. Measured on 19 Oct in text replay (the 26 housing recordings, `gpt-4o` judge, same settings): 8/26 with the published contract, 18/26 with the relaxed one, no recording worse (`run_output/housing_wp5_*_1019`). The four recordings that still miss repeat a filter inside the search that the label leaves out, and one expects `min_bedrooms` for `bedrooms`.
 
 ## Keys
 
@@ -640,14 +680,15 @@ Copy `.env.example` to `.env`. It is git-ignored; keys are never in the repo.
 |---|---|
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Any LiveKit Cloud project; FDB's client and the Janus worker meet in a room there. |
 | `GEMINI_API_KEY` | The hosted model behind Interpret / Plan / Compose / Vision (Google AI Studio). About 500 calls per full run. |
-| `OPENAI_API_KEY` | Speech-to-text (`gpt-4o-mini-transcribe-2025-12-15`, the default) and FDB's LLM judge (semantic argument matching, response quality). Also used by `JANUS_LLM_PROVIDER=openai`. |
+| `OPENAI_API_KEY` | Speech-to-text (`gpt-4o-mini-transcribe-2025-12-15`, the benchmark default) and FDB's LLM judge (semantic argument matching, response quality). Also used by `JANUS_LLM_PROVIDER=openai`. |
+| `ST_PAT` | Live demo only: a SmartThings personal access token (24-hour lifetime) for `JANUS_ST_MODE=real`; without it the SmartThings tools use the in-memory mock. |
 
 Two optional switches choose the hosted services (set them in `.env` or the shell):
 
 | Variable | Values | Effect |
 |---|---|---|
 | `JANUS_LLM_PROVIDER` | `gemini` (default) · `openai` | The model behind the kernel's decisions (`openai` = gpt-4.1, equal to Gemini 3.6 Flash on our judged 15-recording comparison). |
-| `JANUS_STT` | `openai` (default) · `local` | Speech-to-text: OpenAI's `gpt-4o-mini-transcribe-2025-12-15` (pinned snapshot), or faster-whisper large-v3-turbo on the GPU (no OpenAI key needed for it; pass `--no-judge` too). |
+| `JANUS_STT` | `openai` (benchmark default) · `local` · `parakeet` (live demo default) | Speech-to-text: OpenAI's `gpt-4o-mini-transcribe-2025-12-15` (pinned snapshot); faster-whisper large-v3-turbo on the GPU (no OpenAI key needed for it; pass `--no-judge` too); or NVIDIA Parakeet TDT 0.6B v2 on the GPU through NeMo (the demo worker's default; its weights come with `scripts/demo_pod/setup.sh`). |
 
 With both set to `openai`, a run needs only LiveKit and OpenAI keys: the same OpenAI key the judge already uses. (`scripts/fdb_v3/openai_stt_relay.py` is a development-only helper for keeping a key off a rented machine. It is not part of `reproduce.sh` or of any evaluation run; nothing at evaluation time calls a server of ours.)
 
@@ -655,7 +696,7 @@ With both set to `openai`, a run needs only LiveKit and OpenAI keys: the same Op
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-python -m pytest tests/ -q          # 859 tests, deterministic: stepped clock, scripted model, mock tools
+python -m pytest tests/ -q          # 995 tests, deterministic: stepped clock, scripted model, mock tools
 docker build -t janus . && docker run --rm janus     # the same suite on Python 3.11
 ```
 
@@ -673,6 +714,7 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 - **No cancel or modify tool.** A booking that went through cannot be changed; the agent says so and will not make a second one without an explicit yes, but it cannot undo the first.
 - **Camera:** one frame per second, one still image per question. It cannot tell a *blinking* light from a solid one, so the user says that part.
 - **The extension's tools and the Samsung-style device backend are simulations** over a small knowledge base of two devices; it demonstrates the safe-action pattern, not a live Samsung integration or a product catalogue.
+- **Live demo profile.** Known gaps, all found by scripted and phone sessions: a whisper below the quiet-segment floor is ignored without a reply (by design); speech at 1.5x speed is misheard; "unlock and lock the front door" in one sentence asks only about the unlock; the hosted model sometimes takes about 10 s for a reply, which Janus covers with "Still working on it."; the phone's own alarms cannot be read or cancelled, so Janus asks before repeating one; the SmartThings devices are cloud virtual devices, and a status read can pass on a device's own raw attributes. Nothing in this profile has run on a Samsung physical device.
 - Python 3.10/3.12 are supported by construction only; the tested targets are 3.11 (Docker) and the 3.14 dev venv.
 
 ## Repo map
@@ -685,7 +727,9 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 | `src/prism_rt/voice/` | The LiveKit worker (`agent.py`), local speech (`speech.py`), camera sampling (`camera.py`) |
 | `src/prism_rt/devicecare/` | The device-care extension's tools and knowledge base |
 | `src/prism_rt/smartthings/` | The SmartThings extension: cloud client, in-memory mock, tools, backend factory |
-| `app/`, `src/prism_rt/adapters/event_feed.py` | The companion-app event contract (`INTEGRATION.md`, sample events) and the feed that produces it |
+| `app/`, `src/prism_rt/adapters/event_feed.py` | The React Native companion app, its event contract (`INTEGRATION.md`, sample events) and the feed that produces it |
+| `src/prism_rt/adapters/`, `src/prism_rt/phone.py`, `src/prism_rt/recap.py` | Live-demo host pieces: voice bridge, offers, failure drills, world watch, display reader; phone alarms and timers; the ledger recap |
+| `scripts/demo_pod/`, `scripts/demo_driver.py`, `scripts/demo_check.py` | Run the demo worker on a GPU host without Docker; a scripted spoken user (about 90 scenes) and a pass/fail check over its logs |
 | `src/prism_rt/observability/` | Decision log, watchdog, metrics, kernel X-ray |
 | `src/prism_rt/sim/` | Deterministic harness, `TraceChecker`, adversarial explorer |
 | `docs/` | [Architecture walkthrough](docs/architecture_walkthrough.md), design rationale (`prompt 2.txt`), measurements, integration notes, [demo guide](docs/demo_guide.md), [version history](docs/history.md) |
@@ -697,5 +741,5 @@ Tests use no real sleeps and no live model. Every scenario also runs `TraceCheck
 
 - **Full-Duplex-Bench v3** — Lin, Chen, Chen, Lee (NTU, NVIDIA), arXiv 2604.04847; code at github.com/DanielLin94144/Full-Duplex-Bench (pinned commit `3e799c45`).
 - **LiveKit Agents** 1.8.3 and the LiveKit Cloud media server.
-- **faster-whisper** (CTranslate2) with OpenAI Whisper large-v3-turbo weights; **Kokoro-82M** (hexgrad); **Silero VAD**; **NVIDIA Parakeet-TDT 0.6B v2** and NeMo (FDB's own scorer).
+- **faster-whisper** (CTranslate2) with OpenAI Whisper large-v3-turbo weights; **Kokoro-82M** (hexgrad); **Silero VAD**; **NVIDIA Parakeet-TDT 0.6B v2** and NeMo (FDB's own scorer, and the live demo's speech-to-text).
 - **Gemini** (Google) as the hosted decision model; **GPT-4o** as FDB's judge.

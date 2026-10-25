@@ -12,7 +12,7 @@ The extension: a voice agent that reads a device from the camera, diagnoses it, 
 
 ## 1. Install (once, about 10–15 minutes)
 ```bash
-git clone -b fdb-v3-integration https://github.com/AdithyaSanthosh-P/Janus.git
+git clone https://github.com/AdithyaSanthosh-P/Janus.git
 cd Janus
 python3.11 -m venv .venv && source .venv/bin/activate
 # NVIDIA GPU (any recent card with 4 GB or more is enough):
@@ -37,7 +37,7 @@ JANUS_MODE=demo JANUS_STT=openai JANUS_DECISION_LOG_DIR=run_output/demo \
 # Terminal 2: a join token
 PYTHONPATH=src:. python scripts/make_demo_token.py
 ```
-`JANUS_STT=openai` matters: the agent's default is local Whisper, which needs a GPU.
+`JANUS_STT=openai` matters on a laptop: in demo mode the agent's default speech-to-text is NVIDIA Parakeet (`JANUS_STT=parakeet`), which needs an NVIDIA GPU and its NeMo weights (see the README's live demo profile).
 
 Open <https://agents-playground.livekit.io>, choose manual connect, paste the URL and token, allow the microphone and camera, and put headphones on. Keep the token and `.env` off any screen recording.
 
@@ -64,4 +64,7 @@ The full 3-minute script is `docs/extension_research/09_demo_script_3min.md`.
 | You want a clean start (washer back to "paused, 4C", nothing booked) | Make a token for a new room: `python scripts/make_demo_token.py --room take2`; each room starts fresh |
 | The Playground will not connect | The token expired (12 hours by default): make a new one |
 
-Replies take a few seconds: the turn closes after 1.5 s of silence, transcription is hosted, and writes wait a short settle window so a late correction can still cancel them. Do not start the benchmark worker (without `JANUS_MODE=demo`) on a laptop; it is meant for a GPU machine.
+Replies take a few seconds on this laptop path: the turn closes after a short silence, transcription is hosted, and writes wait a short settle window so a late correction can still cancel them. Do not start the benchmark worker (without `JANUS_MODE=demo`) on a laptop; it is meant for a GPU machine.
+
+## Beyond this guide
+The live demo profile (SmartThings smart-home control, the companion app, offers, failure drills, phone alarms and timers, a local Parakeet recognizer, and a scripted spoken user for testing) is described in the README under "Round 2: the live demo profile"; the GPU-host scripts are in `scripts/demo_pod/`, and the scenes the scripted user plays are in `scripts/demo_driver.py`.

@@ -1,3 +1,5 @@
+> **Historical (24 Sep 2026).** Test counts, scores and branch names below describe that day. Current state: `currentStatus.md`; current benchmark numbers: `BENCHMARKS.md` section 1.
+
 # Session Report — 24 September 2026
 
 A record of one long working session on Janus: what was asked, what was found, what

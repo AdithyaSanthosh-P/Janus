@@ -106,15 +106,23 @@ Important property: **everything in the middle (kernel, store, model) is transpo
 
 **Acting**
 - `kernel/executor.py` `PlanExecutor` — turns ready plan steps into PROPOSED calls (dependencies via `after`, bindings resolved from facts), handles retries and call-deadline expiry. Does *not* emit; it only creates call records.
-- `kernel/commit.py` `CommitGate` — admission control for every call. Rules: G1 tool usable, G2 read set valid, G8 args match schema, TRIAGE hold (no new call while a fresh user turn awaits interpretation), watchdog guard, G3 floor closed, G4 explicit commit intent (when required), G5 no duplicate fingerprint, G6 no existing PENDING/CONFIRMED effect for the same plan-step lineage, G7 no UNKNOWN effect, G10/G11 settle barrier (wait out the settle window; no new turn open). G9 is enforced by `EmissionGate`. Writes are recorded in the effect ledger before emission.
+- `kernel/commit.py` `CommitGate` — admission control for every call. Rules: G1 tool usable, G2 read set valid, G8 args match schema, TRIAGE hold (no new call while a fresh user turn awaits interpretation), watchdog guard, G3 floor closed, G4 explicit commit intent (when required), G5 no duplicate fingerprint, G6 no existing PENDING/CONFIRMED effect for the same plan-step lineage, G7 no UNKNOWN effect, G10/G11 settle barrier (wait out the settle window; no new turn open), and, in the live demo profile, G12 (a `requires_confirmation` tool needs the user's yes to a question that names that call) and G13 (`kernel/evidence.py`: the world the question was asked about changed, so the write is held and the user asked again). G9 is enforced by `EmissionGate`. Writes are recorded in the effect ledger before emission.
 - `kernel/results.py` `ResultRouter` — seven-branch decision for an incoming tool result (still relevant? stale? duplicate? post-cancel reconcile?).
 - `kernel/emission.py` `EmissionGate` — the only exit. Validates, orders, stamps, writes; nothing is buffered.
 
 **Speaking**
 - `kernel/responder.py` `FastResponder` — templated ACK (once per plan dispatch), CLARIFY (once per distinct target), INFORM (duplicate-write / unknown-outcome notices, reconcile notices), FINAL, claim-graded (an INTENDED-grade "booking now" while a write waits on the settle barrier). Honest failure FINALs (`task_completed=False`).
 - `kernel/frames.py` (C2 response frames) — as soon as the plan's last call is emitted, a FRAME worker writes a template with typed holes (`field`, `count`, `min/max`, `first_k`, `exists`) bound to result paths; when the real result lands, the kernel fills the holes itself and emits a FINAL grounded in real data with **no COMPOSE round-trip**. The model can invent wording, never values.
-- `kernel/replies.py` — honest replies when there is no active goal ("thank you", "has it been booked?", a request no tool covers) built from the call ledger, never from model text.
+- `kernel/replies.py` — honest replies when there is no active goal ("thank you", "has it been booked?", a request no tool covers) built from the call ledger, never from model text. With `demo_speech_polish_enabled` it also words failed and refused writes in the tool's own words, answers a greeting, thanks or goodbye in the step that closes the turn (no model call), and renders the session recap ("Done: … Sent but not confirmed: … Never sent: …").
 - `observability/speechlint.py` — post-lint on SPEAK/CLARIFY/FINAL: humanises raw identifiers, rejects ACKs that claim completion.
+
+**Live demo profile (Round 2; every item behind a `demo_config` flag or `JANUS_MODE=demo`, see the README's "Round 2: the live demo profile")**
+- `kernel/evidence.py` + `reducers._apply_world_fact` — **evidence-bound confirmation.** When a write is held for a yes, the question's evidence (the device's state and what the camera showed) is recorded; a `world_fact` event that reaches the requested state withdraws the write unsent, any other change is G13 and a spoken re-ask; a report that the device does not exist withdraws it with the tool's reason.
+- `adapters/world_watch.py` — reads the device a held write targets while the question waits (and the washer's display off the camera through `adapters/display_reader.py`), staying inside SmartThings' per-device read allowance, and reports `world_fact`s to the kernel.
+- `adapters/offers.py` — Janus speaks first: an `offer` event becomes an ordinary goal whose write waits for a yes.
+- `adapters/drills.py` — failure drills from the app (SmartThings unreachable, never confirming, slow; model slow or down; "someone else" changed it).
+- `adapters/event_feed.py` — the JSON feed for the companion app (`app/INTEGRATION.md`), including each call's read set (`based_on`, `changed`) for the app's "why" panel.
+- `phone.py` — alarm and timer tools executed on the user's phone over the LiveKit data topic `janus.phone`; `recap.py` — a read-only tool that answers "what did you do?" from the effect ledger.
 
 **Recovery details worth knowing**: transitive invalidation, settle barrier, absence read sets, claim grades, rebinder (V2); post-cancel "reconcile INFORM" if a cancelled write went through anyway; `v10-3` honest-failure when a corrected write's lineage is blocked by a confirmed original.
 
@@ -148,8 +156,8 @@ All workers are `run_*`/`build_prompt` pairs that talk **only** to `ModelGateway
 - `adapters/fdb_manifest.py` — builds the Janus tool manifest by **AST-parsing FDB's own `lk_agent_tool.py`** (never hand-typed, no per-tool special cases).
 - `adapters/fdb_tool_adapter.py` — executes admitted TOOL_CALLs against FDB's unmodified `MockAPIRegistry`, including the default-filling FDB's own pipeline does.
 - `adapters/voice_bridge.py` — translates speech-transport events ↔ kernel events/actions. Owns the end-of-turn timer and barge-in detection. The turn closes after 1.5 s of VAD silence, and only once every transcription still running has delivered its text (the transcriber reports each one's start and finish, `on_recognition`); the kernel is told when the user is speaking (`user_speech`) so it holds calls and speech meanwhile. Used identically by offline audio replay and the live worker.
-- `voice/agent.py` — the LiveKit worker (`python -m prism_rt.voice.agent start`): Silero VAD + STT + Kokoro TTS, **no LLM in the session** — every utterance/tool call comes from the kernel. One job = one room = one fresh `Runtime`. Mode `fdb` (benchmark toolset/profile) or `demo` (device care + camera). Env knobs documented in its docstring.
-- `voice/speech.py` — the speech plugins: hosted `gpt-4o-mini-transcribe` (default, `JANUS_STT=openai`) or pinned faster-whisper large-v3-turbo on the GPU (`JANUS_STT=local`), plus Kokoro-82M; `voice/camera.py` — `FrameStore` (blob resolver) and `FrameSampler` (~1 fps JPEGs).
+- `voice/agent.py` — the LiveKit worker (`python -m prism_rt.voice.agent start`): Silero VAD + STT + Kokoro TTS, **no LLM in the session** — every utterance/tool call comes from the kernel. One job = one room = one fresh `Runtime`. Mode `fdb` (benchmark toolset/profile) or `demo` (device care, SmartThings, phone actions, camera, the app feed, offers, drills). Env knobs documented in its docstring.
+- `voice/speech.py` — the speech plugins: hosted `gpt-4o-mini-transcribe` (the benchmark default, `JANUS_STT=openai`), pinned faster-whisper large-v3-turbo on the GPU (`JANUS_STT=local`), or NVIDIA Parakeet TDT 0.6B v2 through NeMo (`JANUS_STT=parakeet`, the demo default), plus Kokoro-82M; `voice/camera.py` — `FrameStore` (blob resolver) and `FrameSampler` (~1 fps JPEGs).
 - `entry.py` — composition root: `setup()`, async `run_scenario` over two `asyncio.Queue`s (the official contract), 50 ms poll for worker results, watchdog salvage.
 - `profiles.py` — `fdb_v3_config()` and `demo_config()`: named combinations of `Config` flags. `config.py` — the frozen `Config`, every post-V1 behaviour behind a flag (e.g. `action_plans_enabled`, `speculative_interpretation_enabled`, `vision_enabled`, `commit_last_ordering`, `reference_bound_identifiers`, `conversational_replies_enabled`).
 
@@ -161,9 +169,13 @@ All workers are `run_*`/`build_prompt` pairs that talk **only** to `ModelGateway
 
 **Extension — device care (`devicecare/tools.py`, `DeviceCareToolset`):**
 - Reads: `identify_indicator`, `lookup_error_code`, `get_fix_steps`, `check_warranty`
-- Writes: `book_technician`, `open_support_ticket`
+- Writes: `book_technician`, `open_support_ticket`, `control_appliance`
 - Two mock devices over a local knowledge base: Wi-Fi router (LED patterns) and washing machine (error codes, audio-only works). Mutability is declared in the manifest. State lives on the toolset instance (one per session).
 - Flow: camera frame → VISION worker → perception claim (`led_color=orange`) → planner/compiled action → `identify_indicator`; a booking waits for explicit go-ahead + settle window; a correction after the booking went through is never re-run as a second booking.
+
+**Extension — SmartThings (`smartthings/`):** `st_list_devices`, `st_get_status` (reads); `st_lock`, `st_unlock`, `st_open_garage`, `st_close_garage`, `st_set_cooling_setpoint`, `st_switch`, `st_set_location_mode`, `st_execute_scene` (writes; unlock and open-garage declare `requires_confirmation`). A stdlib HTTP client with a per-device request budget, an in-memory mock with the same response shapes, and read-back confirmation after every write (`unconfirmed` is a real outcome). `JANUS_ST_MODE=real` targets SmartThings cloud virtual devices.
+
+**Also in the demo profile:** `phone_set_alarm`, `phone_set_timer` (`phone.py`) and `session_recap` (`recap.py`).
 
 ---
 
@@ -186,7 +198,7 @@ User: "Look up the orange light… sorry, actually red."
 - `sim/checker.py` `TraceChecker` — runs after every test: static no-wall-clock scan, P1 structure, CS-03/05/08/09/13/14/17/27/33, replay identity. It has had false positives; verify the checker's assumption before blaming the kernel.
 - `sim/explorer.py` + `minimize.py` — bounded adversarial schedule exploration over perturbed timings; oracles checked after each run; minimiser shrinks a failing schedule to the race.
 - `observability/` — `decision_log` (JSONL per step), `metrics` (TTFS, tool latency, cancel latency), `xray` (HTML swimlane timeline per session, `scripts/make_xray.py`), `watchdog`.
-- Tests: 635 (`tests/`), per version/phase/review round; `reviews/index.md` logs every independent review round and which findings were disproven.
+- Tests: 995 (`tests/`), per version/phase/review round; `reviews/index.md` logs every independent review round and which findings were disproven.
 
 ---
 
@@ -198,6 +210,7 @@ User: "Look up the orange light… sorry, actually red."
 | Text-only accuracy loop (safe on laptop) | `PYTHONPATH=src:. python scripts/fdb_v3/run_text_replay.py --profile fdb --model gemini-3.5-flash-lite` |
 | Extension, text + image | `PYTHONPATH=src:. python demo/run_device_care_demo.py` |
 | Extension, voice + camera | `JANUS_MODE=demo python -m prism_rt.voice.agent start` + Playground client (`scripts/make_demo_token.py`) |
+| Live demo worker on a GPU host without Docker | `scripts/demo_pod/setup.sh` once, then `scripts/demo_pod/run_worker.sh`; a scripted spoken user: `scripts/demo_pod/drive.sh <scene> --room janus-sim-room`, checked with `scripts/demo_check.py` |
 | One-command FDB-v3 reproduction (scored) | `./reproduce.sh [--ids "travel_01 …"] [--no-judge]` — builds pinned Docker image, clones FDB at commit `3e799c4…`, sha256-checks data, starts worker, runs FDB runner + 3 evaluators, writes `results/<ts>/` |
 | No-Docker fallback | `scripts/fdb_v3/native_setup.sh` then `native_run.sh` |
 
@@ -207,11 +220,11 @@ User: "Look up the orange light… sorry, actually red."
 
 ## 12. Where the project stands
 
-- **Submission tag** `PRISM_GENAI_HACKATHON_Y2026` marks the 30 Sep submission; development continued on `fdb-v3-integration` until the 4 Oct deadline.
-- **Measured (3 Oct, all 100 recordings, judged):** voice over LiveKit 74 % strict pass (run-to-run range 65–74 % that day), text replay 77 %. Self-correction 0.765 on voice. `BENCHMARKS.md` has every run, the failures behind the misses and which comparisons are like for like.
+- **Submission tag** `PRISM_GENAI_HACKATHON_Y2026` marks the Round 1 submission (published tool definitions only); Round 2 work is on `feat/r2-extras`.
+- **Measured:** `BENCHMARKS.md` section 1 is the only source for current numbers, with every run, the failures behind the misses and which comparisons are like for like; the README's Results section summarises them.
 - **The 26 remaining voice misses:** 17 are labels that disagree with the published tool definitions, the recording, or the condition the user set (README, "Benchmark labels and the published tools"); the rest are speech-to-text errors and value wording.
-- **Not yet run end to end:** `./reproduce.sh` with a GPU (every measured run used the native path, `scripts/fdb_v3/native_run.sh`).
-- **Known limits:** speech-to-text is not streaming (each segment is transcribed after a pause), so the first word arrives about 8.5 s after the user stops (part of that is deliberate: a 1.5 s turn-end wait and a settle window before writes); the model is a hosted API and not bit-reproducible; the extension's device backend is a simulation.
+- **Reproduction:** `./reproduce.sh` has been run end to end in Docker on clean VMs (RTX 3090); the native path (`scripts/fdb_v3/native_run.sh`) is the fallback.
+- **Known limits:** speech-to-text is not streaming (each segment is transcribed after a pause), so in the benchmark profile the first word arrives about 6 to 8 s after the user stops (part of that is deliberate: a 1.5 s turn-end wait and a settle window before writes; the demo profile covers the wait with a short filler and a 1 s turn end); the model is a hosted API and not bit-reproducible; the device-care backend is a simulation and the SmartThings devices are cloud virtual devices.
 
 ---
 

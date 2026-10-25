@@ -22,3 +22,13 @@ Built in strict, independently-submittable stages — each frozen with a git tag
 | `v10-3-write-lineage-fix` | — (bugfix, no release branch) | Fixes a third real bug found while independently verifying a follow-up review's own (ultimately disproven) findings: a corrected WRITE could get stuck `PROPOSED` forever once its cancelled original still confirmed on the same plan-step lineage (`CommitGate` G6 doesn't distinguish a same-fingerprint retry from a different-fingerprint correction). Fixed with an honest failure naming what already went through, per `docs/prompt 2.txt` §8.8's own worked example. See `currentStatus.md` and `tests/test_write_lineage_regression.py`. |
 
 Every later version's new behavior is gated behind an explicit `Config` flag defaulting to the prior version's behavior — disabling V2's/V3's/V4's flags reproduces the earlier version exactly, and every frozen tag's own tests still pass unmodified on `main`.
+
+## After the tags
+
+Work after `v10-3-write-lineage-fix` is not tagged by phase; it is recorded in `currentStatus.md` and `BENCHMARKS.md`.
+
+| Date | Branch / tag | What |
+|---|---|---|
+| 30 Sep | `PRISM_GENAI_HACKATHON_Y2026` (`f911a19`) | The Round 1 submission: FDB-v3 voice agent through `./reproduce.sh`, the device-care extension, README, deck. |
+| 1–4 Oct | `fdb-v3-integration` | The voice-path audit and its fixes (turn ending follows VAD silence, the kernel hears the floor), conditional requests, value rules, the benchmark record. |
+| 18–25 Oct | `feat/r2-extras` | Round 2: the live demo profile (confirmation policy, unconfirmed outcomes, evidence-bound confirmation, offers, camera-first washer, hedge check, phone alarms and timers, ledger recap, failure drills), the SmartThings pack, the companion app, local Parakeet speech-to-text, and review-driven fixes, all behind `demo_config` flags or `JANUS_MODE=demo`. Not merged into `main` until the team confirms. |
