@@ -65,7 +65,7 @@ Python project (`pyproject.toml`, deps: pydantic, PyYAML, pytest, pytest-asyncio
 
 ```bash
 source .venv/bin/activate                     # venv already has all deps installed
-python -m pytest tests/ -v                    # full suite (859 tests as of 2026-10-22)
+python -m pytest tests/ -v                    # full suite (980 tests as of 2026-10-24)
 python -m pytest tests/test_v3.py -v           # single version's scenario tests
 PYTHONPATH=src:. python demo/run_v1_demo.py    # interactive demo with real spoken output (scripted)
 PYTHONPATH=src:. python demo/run_v1_live_demo.py  # same demo against the real Gemini API (GEMINI_API_KEY in .env)
@@ -82,6 +82,8 @@ scripts/fdb_v3/native_run.sh [--judge] [--ids "…"]                         # t
 python benchmarks/collect.py && python benchmarks/curated.py && python benchmarks/build_report.py   # regenerate BENCHMARKS.md from the runs
 PYTHONPATH=src:. python demo/run_device_care_demo.py                       # the extension (device care), live Gemini, text + image
 JANUS_MODE=demo python -m prism_rt.voice.agent start                       # the extension over LiveKit voice + camera (Playground client)
+scripts/demo_pod/setup.sh && scripts/demo_pod/run_worker.sh JANUS_STT=parakeet HF_HUB_OFFLINE=1   # demo worker on a GPU host without Docker (venv + weights under /workspace)
+scripts/demo_pod/drive.sh <scene> --room janus-sim-room --fake-phone ok     # scripted spoken user (scenes in scripts/demo_driver.py); score a batch log with scripts/demo_check.py
 PYTHONPATH=src:. python scripts/fdb_v3/run_text_replay.py --profile fdb --model gemini-3.5-flash-lite   # fast text-only accuracy loop (T3), no LiveKit
 ```
 
