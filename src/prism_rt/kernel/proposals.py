@@ -163,6 +163,9 @@ def plain_slot_name(name: str) -> str:
     return match.group(2) if match else name
 
 
+_UNSCOPED_SLOT = re.compile(r"^slot\.(\w+)$")
+
+
 def _normalize_fact_key(raw_key: str | None) -> str | None:
     """Day 1 (docs/fdb_v3_implementation_plan.md, found live: a real
     PLAN response from gemini-3.6-flash with thinking off): the schema's
@@ -184,9 +187,17 @@ def _normalize_fact_key(raw_key: str | None) -> str | None:
     uses. A key that already has a "." (even if malformed some other
     way) is left untouched rather than guessed at -- except S3's per-action
     slot name ("a0.city", `kernel/action_plans.py`), which a fallback PLAN
-    job sees in its `facts` view and may bind by that bare name."""
+    job sees in its `facts` view and may bind by that bare name.
+
+    "slot.<name>" with the goal left out is read the same way (25 Oct voice
+    run, housing_04: the interpreter returned no actions, the fallback PLAN
+    bound `city` to "slot.city", and Janus asked for the city the user had
+    just said)."""
     if raw_key is None:
         return raw_key
+    unscoped = _UNSCOPED_SLOT.match(raw_key)
+    if unscoped:
+        return f"slot.$G.{unscoped.group(1)}"
     if "." in raw_key and not ACTION_SLOT_NAME.match(raw_key):
         return raw_key
     return f"slot.$G.{raw_key}"

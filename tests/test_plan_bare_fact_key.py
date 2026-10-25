@@ -98,3 +98,37 @@ def test_normalize_fact_key_unit():
     assert _normalize_fact_key("derived.$G.selected_flight") == "derived.$G.selected_flight"
     assert _normalize_fact_key("claim.$Q.top_half_color") == "claim.$Q.top_half_color"
     assert _normalize_fact_key(None) is None
+    # 25 Oct voice run (housing_04): the goal left out of a slot key.
+    assert _normalize_fact_key("slot.city") == "slot.$G.city"
+    assert _normalize_fact_key("slot.$G.city") == "slot.$G.city"
+    assert _normalize_fact_key("slot.g-0001.city") == "slot.g-0001.city"
+
+
+def test_slot_key_without_the_goal_still_binds(config):
+    """25 Oct voice run, housing_04: the PLAN fallback bound the city as
+    "slot.city"; Janus asked "what should city be?" right after the user said
+    Denver."""
+    provider = ScriptedProvider()
+    provider.register(
+        "interpret",
+        "Find flights to Delhi",
+        {"act": "new_goal", "intent": "search_flights", "slot_deltas": [{"name": "destination", "scope": "goal", "op": "set", "value": "Delhi"}]},
+    )
+    provider.register(
+        "plan",
+        "search_flights",
+        {"steps": [{"local_id": "s1", "tool": "search_flights", "kind": "read", "bindings": {"destination": {"type": "fact", "key": "slot.destination"}}, "after": []}]},
+    )
+    provider.register("compose", "s1", {"text": "Found a flight to Delhi.", "claims": ["result:s1"]})
+
+    h = new_harness(config, tools={"search_flights": {"latency_ms": 100, "response": {"flight_id": "AI-1"}}}, provider=provider)
+    h.send(0, [manifest_event([SEARCH_FLIGHTS_TOOL])])
+    h.send(100_000, [chunk_event("Find flights to Delhi")])
+    h.send(150_000, [eot_event()])
+
+    actions = drain(h, 2_000_000)
+    types = [a.action_type for a in actions]
+    assert ActionType.CLARIFY not in types
+    assert ActionType.TOOL_CALL in types
+    assert h.store.goals.all()[0].status == GoalStatus.COMPLETED
+    assert_clean(h)
