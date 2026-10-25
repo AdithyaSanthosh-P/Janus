@@ -95,6 +95,20 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("drill", "external_command", True, {"device": "Janus Garage", "capability": "doorControl", "command": "close"}),
         ("settle", 20),
     ],
+    "offer_close_it": [
+        ("note", "the user answers the garage offer with its own words, \"Close it.\", right after it: not Janus's echo"),
+        ("drill", "external_command", True, {"device": "Janus Garage", "capability": "doorControl", "command": "open"}),
+        ("settle", 15),
+        ("drill", "offer", True, {"kind": "garage_open"}),
+        ("settle", 6, 1),
+        ("say", "Close it."),
+        ("settle", 40),
+    ],
+    "social_then_request": [
+        ("note", "a social phrase and a request in one turn: the request is not swallowed"),
+        ("say", "Hey Janus, are you there? Turn off the switch."),
+        ("settle", 30, 8),
+    ],
     "offer_yes": [
         ("note", "Janus offers to close the garage; the user accepts"),
         ("drill", "external_command", True, {"device": "Janus Garage", "capability": "doorControl", "command": "open"}),

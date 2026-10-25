@@ -252,13 +252,17 @@ class DeviceCareToolset:
             return
         st = self.status[dev]
         if value == "clear":
-            if st.get("error_code") is None and st["machine_state"] == "run":
-                return
-            # The time left is on the display, not in this reading: unknown
-            # rather than the stale simulated 34 minutes.
-            st.update(error_code=None, machine_state="run", job_state=st.get("job_state") or "washing", remaining_min=None)
+            if st.get("error_code") is None:
+                return  # nothing to clear: a pause or stop the user asked for stays (review finding, 25 Oct)
+            st["error_code"] = None
+            if st["machine_state"] == "pause":
+                # The error had paused it. The time left is on the display, not
+                # in this reading: unknown rather than the stale simulated 34 minutes.
+                st.update(machine_state="run", job_state=st.get("job_state") or "washing", remaining_min=None)
         else:
             code = value.upper()
+            if code not in self.kb["devices"][dev].get("error_codes", {}):
+                return  # a code the knowledge base does not know (a misread): the simulation stays as it is
             if st.get("error_code") == code:
                 return
             st.update(error_code=code, machine_state="pause")

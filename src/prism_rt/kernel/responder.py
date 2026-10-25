@@ -891,6 +891,7 @@ class FastResponder:
         count_fact = store.facts.get(f"confirm.{call.call_id}.reasks")
         count = (count_fact.value if count_fact is not None and count_fact.status != FactStatus.RETRACTED else 0) + 1
         store.facts.set(f"confirm.{call.call_id}.reasks", count, FactStatus.COMMITTED, prov, rule="responder.evidence_changed")
+        store.facts.set(f"confirm.{call.call_id}.asked_again", True, FactStatus.COMMITTED, prov, rule="responder.evidence_changed")
         if store.facts.get(f"confirm.{call.call_id}.granted") is not None:
             store.facts.retract(f"confirm.{call.call_id}.granted", rule="responder.evidence_changed")
         store.facts.set(f"goal.{goal_id}.commit_intent", False, FactStatus.COMMITTED, prov, rule="responder.evidence_changed")

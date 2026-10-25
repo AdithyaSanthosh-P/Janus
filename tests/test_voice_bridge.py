@@ -824,6 +824,26 @@ async def test_janus_own_voice_coming_back_is_dropped_but_a_user_repeat_is_not()
     assert [e["payload"]["text"] for e in await _drain_nowait(events) if e and e["type"] == "text_chunk"] == ["what would you like me to do"]
 
 
+async def test_an_answer_that_repeats_the_question_is_not_echo():
+    """Review finding, 25 Oct: "Lock it." said right after "Shall I lock it?"
+    was dropped as Janus's own voice (it landed within 3 s of Janus stopping)."""
+    bridge, events, _actions, _said = _make_bridge()
+    bridge.drop_self_echo = True
+    bridge._remember_said("The front door is unlocked. Shall I lock it?")
+    bridge.on_agent_speaking_changed(True)
+    await bridge.on_speech_start()  # echo starting while Janus speaks
+    await bridge.on_segment_final("Shall I lock it?")
+    bridge.on_agent_speaking_changed(False)
+    await bridge.on_speech_end()
+    assert [e for e in await _drain_nowait(events) if e and e["type"] == "text_chunk"] == []
+    await asyncio.sleep(0.45)
+    await bridge.on_speech_start()  # the user, after Janus finished
+    await bridge.on_speech_end()
+    await bridge.on_segment_final("Lock it.")
+    assert [e["payload"]["text"] for e in await _drain_nowait(events) if e and e["type"] == "text_chunk"] == ["Lock it."]
+    await bridge.stop()
+
+
 async def test_self_echo_filter_is_off_by_default():
     bridge, events, _actions, _said = _make_bridge()
     bridge._remember_said("Okay, one moment.")

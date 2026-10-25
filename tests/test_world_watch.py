@@ -204,3 +204,31 @@ def test_the_kernel_drops_the_question_about_a_missing_device():
     # A late yes hears the real reason, not "it changed while I was waiting".
     assert said(later) == ["Nothing is waiting for a yes right now: I didn't unlock the back door. " + missing]
     clean(h)
+
+
+def test_a_tool_can_have_a_shorter_watch():
+    """Review finding, 25 Oct: the camera watch (a vision call per read, every
+    second) ran for up to an hour while a booking offer waited."""
+    async def scenario():
+        reads = []
+
+        async def read(tool, spoken):
+            reads.append(tool)
+            return "4C"
+
+        async def report(key, value, missing=None):
+            pass
+
+        async def sleep(_s):
+            await asyncio.sleep(0)
+
+        w = WorldWatcher(MANIFEST, read, report, interval_s=10, intervals={"st_unlock": 1}, max_s=3600,
+                         max_s_by_tool={"st_unlock": 5}, sleep=sleep)
+        w.on_event(planned())
+        w.on_event({"type": "confirmation_asked", "call_id": "c-0001", "question": "?"})
+        for _ in range(50):
+            await asyncio.sleep(0)
+        return reads, w.watching()
+
+    reads, watching = asyncio.run(scenario())
+    assert len(reads) == 6 and watching == []

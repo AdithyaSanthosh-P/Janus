@@ -85,6 +85,10 @@ def is_foreign_segment(text: str) -> bool:
 _WORDS = re.compile(r"[a-z0-9']+")
 
 
+# Room reverberation and network delay: speech starting this soon after Janus
+# stopped may still be its own voice coming back.
+_ECHO_TAIL_S = 0.4
+
 @dataclass
 class VoiceBridge:
     events: "asyncio.Queue[dict | None]"
@@ -193,6 +197,7 @@ class VoiceBridge:
     _filler_active: bool = field(default=False, init=False, repr=False)  # only the filler can be audible
     _recent_said: list = field(default_factory=list, init=False, repr=False)  # (loop time, text) Janus said
     _agent_stopped_at: "float | None" = field(default=None, init=False, repr=False)
+    _speech_started_at: "float | None" = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._start_wall = self.clock()
@@ -248,6 +253,7 @@ class VoiceBridge:
         real voice call will."""
         self._user_speaking = True
         self._vad_seen = True
+        self._speech_started_at = self._loop_now()
         self._cancel_eot_timer()
         await self._report_activity()
         if self._agent_speaking and not self._filler_active:
@@ -353,13 +359,18 @@ class VoiceBridge:
     def _is_self_echo(self, text: str) -> bool:
         """Whether `text` (two words or more) is a run of what Janus said in the
         last minute, heard while it speaks or just after. A user repeating Janus's
-        words after it has finished ("Unlock the front door.") is not dropped."""
+        words after it has finished ("Unlock the front door.") is not dropped.
+        With VAD, a transcript landing after Janus stopped counts only when its
+        speech started while Janus was still audible: "Lock it." said right after
+        "Shall I lock it?" is the user's answer (review finding, 25 Oct)."""
         words = _WORDS.findall(str(text or "").lower())
         if len(words) < 2 or not self._recent_said:
             return False
         now = self._loop_now()
         stopped = self._agent_stopped_at
         if not (self._agent_speaking or (stopped is not None and now - stopped < self.self_echo_window_s)):
+            return False
+        if not self._agent_speaking and self._speech_started_at is not None and self._speech_started_at > stopped + _ECHO_TAIL_S:
             return False
         said = " " + " ".join(w for _, t in self._recent_said for w in _WORDS.findall(t.lower())) + " "
         return " " + " ".join(words) + " " in said

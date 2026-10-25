@@ -833,6 +833,23 @@ def test_a_camera_reading_moves_the_simulated_washer():
     assert status["error_code"] == "4C" and status["machine_state"] == "paused"
 
 
+def test_a_camera_reading_never_overrides_the_user_or_invents_a_code():
+    """Review findings, 25 Oct: a "clear" reading set a washer the user had
+    paused back to running; a code outside the knowledge base ("OE") was stored
+    and made "resume the washer" raise KeyError."""
+    from prism_rt.devicecare import DeviceCareToolset
+
+    care = DeviceCareToolset()
+    care.observe_display("washer", "clear")
+    care._control_appliance({"device_type": "washer", "command": "pause"})
+    care.observe_display("washer", "clear")
+    assert care._get_device_status({"device_type": "washer"})["machine_state"] == "paused"
+    care.observe_display("washer", "OE")
+    assert care._get_device_status({"device_type": "washer"})["error_code"] is None
+    care._control_appliance({"device_type": "washer", "command": "resume"})  # no KeyError
+    assert care._get_device_status({"device_type": "washer"})["machine_state"] == "running"
+
+
 def test_a_booking_needs_a_real_day():
     """"How about Nope?" (a misheard "No, how about ...") was booked for the date "Nope" (24 Oct)."""
     from prism_rt.devicecare import DeviceCareToolset

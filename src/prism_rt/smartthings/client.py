@@ -21,6 +21,12 @@ BUDGET_PER_MINUTE = 12  # commands (and account-level calls) per device per minu
 # a device every few seconds while a question is open. Sharing the command budget
 # refused the 4th switch command within a minute (scripted run, 24 Oct).
 READ_BUDGET_PER_MINUTE = 60
+# SmartThings itself limits status reads per device, separately from commands
+# (X-RateLimit-Remaining fell from 10 to 1 on the lock while a security question
+# waited 99 s with the watch reading every 6 s; phone, 24 Oct). The watch skips
+# its read when this few are left, keeping them for the write's pre-read and
+# confirmation reads (review finding, 25 Oct).
+WATCH_READ_RESERVE = 4
 log = logging.getLogger("prism_rt.smartthings")
 
 
@@ -51,6 +57,7 @@ class SmartThingsClient:
         self._clock = clock
         self._location_id = location_id
         self._sent: dict[str, deque] = defaultdict(deque)
+        self._server_left: dict[str, tuple[int, float]] = {}  # key -> (X-RateLimit-Remaining, when)
 
     def _spend(self, key: str) -> None:
         now = self._clock()
@@ -74,6 +81,10 @@ class SmartThingsClient:
         remaining = {k.lower(): v for k, v in resp_headers.items()}.get("x-ratelimit-remaining")
         if remaining is not None:
             log.info("smartthings %s %s -> %s (rate remaining %s)", method, path, status, remaining)
+            try:
+                self._server_left[key] = (int(remaining), self._clock())
+            except (TypeError, ValueError):
+                pass
         return json.loads(raw) if raw else {}
 
     async def default_location(self) -> str:
@@ -86,6 +97,14 @@ class SmartThingsClient:
 
     async def list_devices(self) -> list[dict]:
         return (await self._request("GET", "/devices")).get("items", [])
+
+    def reads_left(self, device_id: str) -> int | None:
+        """Status reads SmartThings last said were left for this device, or None
+        (not known, or reported over a minute ago: its window has moved on)."""
+        seen = self._server_left.get(f"{device_id}:read")
+        if seen is None or self._clock() - seen[1] >= 60.0:
+            return None
+        return seen[0]
 
     async def status(self, device_id: str) -> dict:
         return await self._request("GET", f"/devices/{device_id}/status", key=f"{device_id}:read")

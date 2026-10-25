@@ -44,6 +44,7 @@ class WorldWatcher:
         interval_s: float = 10.0,
         intervals: dict[str, float] | None = None,
         max_s: float = 3600.0,
+        max_s_by_tool: dict[str, float] | None = None,
         sleep: Callable[[float], Awaitable] = asyncio.sleep,
     ) -> None:
         self._watch_arg = {t["name"]: t["watch"] for t in manifest if isinstance(t.get("watch"), str)}
@@ -52,6 +53,8 @@ class WorldWatcher:
         self._interval_s = interval_s
         self._intervals = dict(intervals or {})  # per tool: a camera reading can be polled faster than SmartThings
         self._max_s = max_s
+        # Per tool: a camera read is a model call, so its fast polling is kept short.
+        self._max_s_by_tool = dict(max_s_by_tool or {})
         self._sleep = sleep
         self._planned: dict[str, tuple[str, dict]] = {}
         self._tasks: dict[str, asyncio.Task] = {}
@@ -86,7 +89,7 @@ class WorldWatcher:
     async def _watch(self, call_id: str, tool: str, spoken: str) -> None:
         waited = 0.0
         try:
-            while waited <= self._max_s:
+            while waited <= self._max_s_by_tool.get(tool, self._max_s):
                 if not await self._read_and_report(tool, spoken):
                     break
                 interval = self._intervals.get(tool, self._interval_s)

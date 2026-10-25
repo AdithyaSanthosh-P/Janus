@@ -300,3 +300,29 @@ def test_a_failed_status_read_is_said_in_the_tools_words(error):
     assert finals == [missing]
     assert finals and "kept failing" not in finals[0]
     clean(h)
+
+
+def test_answering_a_question_after_one_action_went_through_sends_nothing_twice():
+    """Review finding, 25 Oct: with one device command of a two-action request
+    already confirmed, the answer to the other action's question was replayed as
+    a new request with every action, so the confirmed command was sent again."""
+    mock = MockSmartThings()
+    execute = SmartThingsToolset(mock, sleep=_no_sleep).make_executor()
+    provider = ScriptedProvider()
+    provider.register("interpret", "lock the front door and", {
+        "act": "new_goal", "intent": "st_lock", "slot_deltas": [], "commit_intent": True,
+        "actions": [{"tool": "st_lock", "args": {"device": "front door"}},
+                    {"tool": "st_switch", "args": {"device": "switch"}}]})
+    provider.register("interpret", "off", {"act": "answer_clarification",
+                                           "slot_deltas": [{"name": "state", "scope": "goal", "op": "set", "value": "off"}]})
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    tools = {m["name"]: {"latency_ms": 200, "handler": (lambda args, n=m["name"]: run(execute(n, args)))} for m in MANIFEST}
+    h = SimHarness(demo_config(), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h.send(0, [manifest_event(MANIFEST)])
+    h.send(100_000, [chunk_event("lock the front door and the switch")])
+    first = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + drain(h, 4_000_000, stop_on_final=False)
+    assert tool_calls(first) == ["st_lock"]
+    later = say(h, 4_100_000, "off", 9_000_000)
+    assert tool_calls(later) == ["st_switch"]
+    assert [c[1:3] for c in mock.commands].count(("lock", "lock")) == 1
+    clean(h)

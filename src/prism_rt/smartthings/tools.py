@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable
 
-from prism_rt.smartthings.client import SmartThingsError, UnknownDeviceError
+from prism_rt.smartthings.client import WATCH_READ_RESERVE, SmartThingsError, UnknownDeviceError
 from prism_rt.smartthings.confirm import WAITS, attribute_value, confirm_state, confirm_until, same
 
 GARAGE_CAPABILITIES = ("garageDoorControl", "doorControl")
@@ -182,7 +182,7 @@ class SmartThingsToolset:
             if primary is not None:
                 self._report(device, *primary, attribute_value(await self.backend.status(device["deviceId"]), *primary))
 
-    async def read_target(self, tool: str, spoken) -> object:
+    async def read_target(self, tool: str, spoken, *, watch: bool = False) -> object:
         """The current value of what `tool` would change on the device the
         user named -- resolved exactly as the write resolves it. None for a
         tool that targets no single device attribute."""
@@ -192,6 +192,13 @@ class SmartThingsToolset:
         capabilities, kind, attribute = target
         device = await self._resolve(spoken, capabilities, kind)
         capability = next(c for c in capabilities if c in self._caps(device))
+        if watch:
+            # The evidence watch's read: skipped when SmartThings has few reads
+            # left for this device (client.WATCH_READ_RESERVE).
+            reads_left = getattr(self.backend, "reads_left", None)
+            left = reads_left(device["deviceId"]) if callable(reads_left) else None
+            if isinstance(left, int) and left <= WATCH_READ_RESERVE:
+                raise SmartThingsError(f"holding the watch read: {left} SmartThings reads left for this device")
         value = attribute_value(await self.backend.status(device["deviceId"]), capability, attribute)
         self._report(device, capability, attribute, value)
         return value

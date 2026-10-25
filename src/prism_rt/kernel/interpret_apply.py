@@ -658,12 +658,16 @@ def apply_interpretation(interp: TurnInterpretation, txn: StoreTxn, now_us: int,
         # is mapped onto the one action's own slot ("a1.destination"); an
         # ADDITION appends its new actions to the compiled plan.
         compiled_goal = action_plans.is_compiled(txn.store, gid)
-        if compiled_goal and interp.act != InterpretAct.ADDITION and _device_write_went_through(txn.store, gid):
+        if (compiled_goal and interp.act not in (InterpretAct.ADDITION, InterpretAct.ANSWER_CLARIFICATION)
+                and _single_step(txn.store, gid) and _device_write_went_through(txn.store, gid)):
             # Demo: "No, make it 23" just after 22 went through. The step's
             # lineage is spent (CommitGate G6), so the correction used to end
             # the request "a previous … already went through" (found on a
             # phone, 23 Oct). A device command is repeatable: the corrected
-            # one runs as a new request, as after a finished task.
+            # one runs as a new request, as after a finished task. Only for a
+            # one-action request: redo_actions rebuilds every action, so in a
+            # longer one the others (a timer already set) would be sent again
+            # (review finding, 25 Oct).
             actions = action_plans.redo_actions(txn.store, gid, interp.slot_deltas) if interp.slot_deltas else None
             if actions:
                 return apply_interpretation(
@@ -865,6 +869,9 @@ def _answer_chat_while_asked(txn: StoreTxn, interp, gid: str, now_us: int, step_
     replies.set_honest_reply(
         txn, interp.turn_id, f"{base.rstrip()} I'm still waiting for your answer: shall I {phrase}?",
         now_us, step_no, event_id=event_id)
+    txn.facts.set(f"confirm.{call.call_id}.asked_again", True, FactStatus.COMMITTED,
+                  Provenance(source="system", event_id=event_id, turn_id=interp.turn_id, step_no=step_no, ts_us=now_us),
+                  rule="interpret_apply.chat_while_asked")
 
 
 _STATUS_WORDS = re.compile(
@@ -1014,7 +1021,11 @@ def _security_question_expired(store, call_id: str, now_us: int) -> bool:
     asked = store.facts.get(f"confirm.{call_id}.asked")
     if spec is None or not spec.requires_confirmation or not _active(asked):
         return False
-    return now_us - asked.provenance.ts_us > SECURITY_QUESTION_TTL_US
+    # From the last time the question was said: a re-ask (the chat reply, an
+    # evidence re-ask) restarts the minute (review finding, 25 Oct).
+    again = store.facts.get(f"confirm.{call_id}.asked_again")
+    last = max(asked.provenance.ts_us, again.provenance.ts_us if _active(again) else 0)
+    return now_us - last > SECURITY_QUESTION_TTL_US
 
 
 def _awaiting_confirmation(store, goal_id: str) -> bool:
@@ -1085,9 +1096,14 @@ def _clarify_not_answered(interp: TurnInterpretation, txn: StoreTxn, now_us: int
         return False
     prov = Provenance(source="system", event_id=event_id, turn_id=interp.turn_id, step_no=step_no, ts_us=now_us)
     if interp.act != InterpretAct.BACKCHANNEL:
+        # Counted per question ([target, misses]): a miss on an earlier question
+        # of the same request does not count against the next one (review
+        # finding, 25 Oct: one miss on the date, then one on the time slot,
+        # dropped the booking).
         misses_fact = store.facts.get(f"clarify.{gid}.misses")
-        misses = (misses_fact.value if _active(misses_fact) else 0) + 1
-        txn.facts.set(f"clarify.{gid}.misses", misses, FactStatus.COMMITTED, prov, rule="interpret_apply.clarify_miss")
+        held = misses_fact.value if _active(misses_fact) and isinstance(misses_fact.value, list) else None
+        misses = (held[1] if held and held[0] == target.value else 0) + 1
+        txn.facts.set(f"clarify.{gid}.misses", [target.value, misses], FactStatus.COMMITTED, prov, rule="interpret_apply.clarify_miss")
         if misses >= CLARIFY_MAX_MISSES:
             what = target.value.rsplit(".", 1)[-1].replace("_", " ")
             _abandon_goal(txn, gid, now_us, step_no, event_id=event_id,
@@ -1121,6 +1137,11 @@ def _hedged(interp: TurnInterpretation, store) -> bool:
     turn = store.turn_log.get(interp.turn_id)
     text = " ".join(chunk.text for chunk in turn.chunks) if turn is not None else ""
     return _HEDGE.search(text) is not None
+
+
+def _single_step(store, gid: str) -> bool:
+    plan = store.plans.current(gid)
+    return plan is not None and len(plan.steps) == 1
 
 
 def _device_write_went_through(store, gid: str) -> bool:

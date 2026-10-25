@@ -189,7 +189,7 @@ class TurnManager:
         config = txn.store.config
         if (config.demo_speech_polish_enabled and config.conversational_replies_enabled and gid is None
                 and not interpretation_busy(txn.store)):
-            social = replies.social_reply(full_text)
+            social = replies.social_reply(full_text, whole_turn=True)
             if social is not None:
                 replies.set_honest_reply(txn, turn.turn_id, social, now_us, step_no, event_id=event_id)
                 return

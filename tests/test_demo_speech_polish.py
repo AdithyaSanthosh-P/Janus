@@ -268,6 +268,27 @@ def test_noise_does_not_re_ask_and_two_non_answers_drop_the_request():
     assert TraceChecker().check(h.run_log.reports, store=h.store) == []
 
 
+def test_a_miss_on_one_question_does_not_count_against_the_next():
+    """Review finding, 25 Oct: the miss counter was per request, so one unclear
+    turn on the date and one on the time slot dropped the booking."""
+    from prism_rt.devicecare.tools import MANIFEST as CARE, DeviceCareToolset
+
+    care = DeviceCareToolset().make_executor()
+    book = {"act": "new_goal", "intent": "book_technician", "slot_deltas": [], "commit_intent": True,
+            "actions": [{"tool": "book_technician", "args": {"device": "washer"}}]}
+    friday = {"act": "answer_clarification", "slot_deltas": [{"name": "date", "scope": "goal", "op": "set", "value": "Friday"}]}
+    extra_tools = {m["name"]: {"latency_ms": 200, "handler": (lambda a, n=m["name"]: asyncio.run(care(n, a)))} for m in CARE}
+    h, _mock = session(tools_override=extra_tools,
+                       extra=[("book a technician", book), ("what now then", HUH), ("on friday", friday), ("hello there friend", HI)])
+    h.send(10, [manifest_event(CARE + MANIFEST)])
+    assert len(clarifies(say(h, 100_000, "book a technician", 4_000_000))) == 1
+    assert len(clarifies(say(h, 4_100_000, "what now then", 7_000_000))) == 1  # one miss: asked again
+    assert len(clarifies(say(h, 7_100_000, "on friday", 10_000_000))) == 1  # the next question
+    again = say(h, 10_100_000, "hello there friend", 13_000_000)
+    assert len(clarifies(again)) == 1 and not any("dropped" in t for t in spoken(again))
+    assert TraceChecker().check(h.run_log.reports, store=h.store) == []
+
+
 def test_a_new_request_is_not_queued_behind_an_unanswered_question():
     """Found live, 22 Oct: "Should the thermal start again?" (a misheard
     request) became a washer status check waiting for its device type; two

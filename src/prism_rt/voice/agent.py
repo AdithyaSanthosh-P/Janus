@@ -76,7 +76,7 @@ Environment:
                           Janus waits for the user's yes (adapters/world_watch.py; default 10, 0 = off)
   JANUS_CAMERA_WATCH_S    demo mode: seconds between camera reads of the washer's display while a
                           technician visit offered for its error waits for a yes (default 1;
-                          adapters/display_reader.py)
+                          adapters/display_reader.py; stops after JANUS_CAMERA_WATCH_MAX_S, default 180)
   JANUS_DRILLS            1 = demo mode only: accept failure drills from the companion app on the
                           data topic `janus.control` (adapters/drills.py; default off, never in fdb mode)
   GEMINI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
@@ -532,14 +532,18 @@ async def entrypoint(ctx: JobContext) -> None:
         async def _read_device(tool: str, spoken: str):
             if tool == "book_technician" and "reader" in display:
                 return await display["reader"].read(spoken)  # the washer's code, off the camera
-            return await executor.read_target(tool, spoken)
+            return await executor.read_target(tool, spoken, watch=True)
 
         async def _report_world(key: str, value, missing: str | None = None) -> None:
             if "fn" in world_sink:
                 await world_sink["fn"](key, value, missing)
 
+        # The camera watch is one vision call per read: at 1 s it stops after
+        # JANUS_CAMERA_WATCH_MAX_S (default 180 s), so an offer left unanswered
+        # cannot spend the model quota for an hour (review finding, 25 Oct).
         watcher = WorldWatcher(toolset.manifest, _read_device, _report_world, interval_s=poll_s,
-                               intervals={"book_technician": float(os.environ.get("JANUS_CAMERA_WATCH_S") or 1.0)})
+                               intervals={"book_technician": float(os.environ.get("JANUS_CAMERA_WATCH_S") or 1.0)},
+                               max_s_by_tool={"book_technician": float(os.environ.get("JANUS_CAMERA_WATCH_MAX_S") or 180.0)})
 
     def _feed_out(event: dict) -> None:
         event_queue.put_nowait(event)

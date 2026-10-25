@@ -386,3 +386,34 @@ def test_a_setpoint_without_a_value_says_what_it_needs():
     _mock, ts = toolset()
     with pytest.raises(SmartThingsError, match="Tell me the temperature you want, between 16 and 30"):
         call(ts, "st_set_cooling_setpoint", device="thermostat")
+
+
+def test_the_watch_leaves_the_last_status_reads_to_the_write():
+    """Review finding, 25 Oct (and the phone log of 24 Oct: X-RateLimit-Remaining
+    for the lock's reads fell to 1 while a security question waited): the watch
+    skips its read when SmartThings reports few reads left; other reads go on."""
+    from prism_rt.smartthings.tools import SmartThingsToolset
+
+    lock = {"deviceId": "d1", "label": "Janus Lock",
+            "components": [{"id": "main", "capabilities": [{"id": "lock"}]}]}
+    status = {"components": {"main": {"lock": {"lock": {"value": "locked"}}}}}
+    left = iter(["9", "3", "2"])
+    clock = [0.0]
+
+    def http(method, url, headers, body):
+        payload = {"items": [lock]} if url.endswith("/devices") else status
+        return 200, {"X-RateLimit-Remaining": next(left)}, json.dumps(payload).encode()
+
+    backend = SmartThingsClient("tok", http=http, clock=lambda: clock[0])
+
+    async def _no_sleep(_s):
+        return None
+
+    ts = SmartThingsToolset(backend, sleep=_no_sleep)
+    assert asyncio.run(ts.read_target("st_unlock", "front door", watch=True)) == "locked"  # list (9 left), then status
+    assert backend.reads_left("d1") == 3
+    with pytest.raises(SmartThingsError, match="holding the watch read"):
+        asyncio.run(ts.read_target("st_unlock", "front door", watch=True))
+    assert asyncio.run(ts.read_target("st_unlock", "front door")) == "locked"  # a write's own read is not held
+    clock[0] = 61.0  # SmartThings' window has moved on
+    assert backend.reads_left("d1") is None

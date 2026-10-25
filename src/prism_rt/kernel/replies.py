@@ -342,17 +342,37 @@ _JOKE = re.compile(r"\b(?:tell|know)\b.{0,12}\bjokes?\b|\bmake me laugh\b", re.I
 _ARE_YOU_THERE = re.compile(r"\b(?:are you (?:still )?(?:there|here|listening|with me)|can you hear me)\b", re.IGNORECASE)
 
 
-def social_reply(text: str) -> str | None:
+# Words around a social phrase that leave the turn social ("Hey Janus, uh,
+# who made you?"); anything else may be a request.
+_SOCIAL_FILLER = re.compile(r"\b(?:(?:can|could|will|would)\s+you|what(?:'s|\s+is)|hey|hi|hello|ok(?:ay)?|so|uh+|um+|hmm+|now|please"
+                            r"|janus|well|and|then)\b|[^\w\s]", re.IGNORECASE)
+
+
+def _matches(pattern: re.Pattern, text: str, whole_turn: bool) -> bool:
+    found = pattern.search(text)
+    if found is None or not whole_turn:
+        return found is not None
+    rest = text[:found.start()] + " " + text[found.end():]
+    return _SOCIAL_FILLER.sub(" ", rest).strip() == ""
+
+
+def social_reply(text: str, *, whole_turn: bool = False) -> str | None:
     """Demo speech polish: a reply that fits a greeting, thanks or goodbye
     (canonical.social_kind) -- "You're welcome." to "Thank you.", not an
-    invitation to make a request. None for anything else."""
-    if _WHATS_UP.fullmatch(str(text or "").strip()):
+    invitation to make a request. None for anything else.
+
+    `whole_turn=True` (the turn has not been interpreted yet): "are you
+    there", "who are you" and "tell me a joke" count only when nothing else
+    is in the turn, so "Are you there? Lock the front door." still reaches
+    the interpreter (review finding, 25 Oct)."""
+    text = str(text or "")
+    if _WHATS_UP.fullmatch(text.strip()):
         return "Not much — I'm here and ready. What can I do for you?"
-    if _ARE_YOU_THERE.search(str(text or "")):
+    if _matches(_ARE_YOU_THERE, text, whole_turn):
         return "Yes, I'm here."
-    if _WHO_ARE_YOU.search(str(text or "")):
+    if _matches(_WHO_ARE_YOU, text, whole_turn):
         return f"I'm Janus, a voice assistant for your home. {DEMO_CAPABILITIES.strip()}"
-    if _JOKE.search(str(text or "")):
+    if _matches(_JOKE, text, whole_turn):
         return "I'm better with thermostats than jokes. Want me to set a timer or check on the washer instead?"
     kind = social_kind(text)
     if kind is None:

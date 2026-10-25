@@ -287,6 +287,30 @@ def test_demo_polish_a_yes_long_after_the_security_question_asks_again():
     assert_clean(h)
 
 
+def test_demo_polish_a_re_ask_restarts_the_security_minute():
+    """Review finding, 25 Oct: the minute was counted from the first ask, so a
+    yes 12 s after "I'm still waiting for your answer: shall I unlock ...?" (said
+    50 s in) was voided and the question asked a third time."""
+    labelled = dict(UNLOCK, label="Unlock the {device}")
+    provider = ScriptedProvider()
+    provider.register("interpret", "yes please", {"act": "confirm", "slot_deltas": []})
+    provider.register("interpret", "are you there", {"act": "smalltalk", "slot_deltas": []})
+    provider.register("interpret", "unlock the front", new_goal("st_unlock", "front door"))
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    h = SimHarness(config(demo_speech_polish_enabled=True), seed=1, provider=provider,
+                   tools={"st_unlock": {"latency_ms": 200, "response": {"done": True}}}, worker_latency_us=FAST)
+    h.send(0, [manifest_event([labelled])])
+    h.send(100_000, [chunk_event("unlock the front door")])
+    drain(h, 150_000, stop_on_final=False)
+    h.send(150_000, [eot_event()])
+    drain(h, 3_000_000, stop_on_final=False)
+    actions = say(h, 50_000_000, "hello janus are you there", 52_000_000)
+    assert any("I'm still waiting for your answer: shall I unlock the front door?" in t for t in speaks(actions))
+    actions = say(h, 62_000_000, "yes please", 67_000_000)
+    assert calls(actions) == [("st_unlock", {"device": "front door"})]
+    assert_clean(h)
+
+
 def test_demo_polish_what_can_you_do_is_not_a_recap():
     """F36 (scripted long session, 24 Oct): "What can you do?" became the session recap."""
     provider = ScriptedProvider()
