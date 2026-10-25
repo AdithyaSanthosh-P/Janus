@@ -22,3 +22,6 @@ node_modules/
 *.keystore
 local.properties
 .gradle/
+
+# Claude Code local settings
+.claude/
