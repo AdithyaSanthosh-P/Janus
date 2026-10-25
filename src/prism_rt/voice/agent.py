@@ -34,9 +34,9 @@ Environment:
                           saves VRAM, but was flaky over long runs -- see _SHARED)
   JANUS_AGENT_NAME        LiveKit agent name (demo mode default "janus-demo": explicit dispatch
                           only, so a demo worker never takes benchmark rooms; "" = automatic)
-  JANUS_STT               "openai" (hosted transcription, the default; needs OPENAI_API_KEY;
+  JANUS_STT               "openai" (hosted transcription, the fdb-mode default; needs OPENAI_API_KEY;
                           OPENAI_BASE_URL is honoured), "local" (faster-whisper on the GPU) or
-                          "parakeet" (NVIDIA Parakeet TDT 0.6B v2 on the GPU, via NeMo)
+                          "parakeet" (NVIDIA Parakeet TDT 0.6B v2 on the GPU, via NeMo; the demo-mode default)
   JANUS_STT_MODEL         override the hosted transcription model (default: speech.OPENAI_STT_MODEL)
   JANUS_STT_MIN_RMS       demo mode: segments quieter than this RMS are not transcribed (default 0.025; 0 = off)
   JANUS_WHISPER_HOTWORDS  1 = prime the recognizer with the tool vocabulary (off by default;
@@ -227,7 +227,7 @@ MODE = os.environ.get("JANUS_MODE", "fdb").strip().lower()
 # speech.OPENAI_STT_MODEL; needs OPENAI_API_KEY, and honours OPENAI_BASE_URL so
 # the key can sit behind a relay), "local" (faster-whisper on the GPU) or
 # "parakeet" (speech.PARAKEET_REPO on the GPU).
-STT_BACKEND = os.environ.get("JANUS_STT", "openai").strip().lower()
+STT_BACKEND = (os.environ.get("JANUS_STT") or ("parakeet" if MODE == "demo" else "openai")).strip().lower()
 if STT_BACKEND not in ("local", "openai", "parakeet"):
     raise SystemExit(f"JANUS_STT must be 'local', 'openai' or 'parakeet', not {STT_BACKEND!r}")
 if MODE not in ("fdb", "demo"):

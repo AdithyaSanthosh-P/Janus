@@ -82,7 +82,7 @@ scripts/fdb_v3/native_run.sh [--judge] [--ids "…"]                         # t
 python benchmarks/collect.py && python benchmarks/curated.py && python benchmarks/build_report.py   # regenerate BENCHMARKS.md from the runs
 PYTHONPATH=src:. python demo/run_device_care_demo.py                       # the extension (device care), live Gemini, text + image
 JANUS_MODE=demo python -m prism_rt.voice.agent start                       # the extension over LiveKit voice + camera (Playground client)
-scripts/demo_pod/setup.sh && scripts/demo_pod/run_worker.sh JANUS_STT=parakeet HF_HUB_OFFLINE=1   # demo worker on a GPU host without Docker (venv + weights under /workspace)
+scripts/demo_pod/setup.sh && scripts/demo_pod/run_worker.sh   # demo worker on a GPU host without Docker (venv + weights under /workspace; Parakeet speech-to-text)
 scripts/demo_pod/drive.sh <scene> --room janus-sim-room --fake-phone ok     # scripted spoken user (scenes in scripts/demo_driver.py); score a batch log with scripts/demo_check.py
 PYTHONPATH=src:. python scripts/fdb_v3/run_text_replay.py --profile fdb --model gemini-3.5-flash-lite   # fast text-only accuracy loop (T3), no LiveKit
 ```
