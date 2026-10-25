@@ -594,6 +594,10 @@ Round 2 is a live demonstration, so the same kernel also runs as a voice assista
 | **Phone actions** | Alarms and timers on the user's phone through the companion app (LiveKit data topic `janus.phone`); the phone's own alarms cannot be read, so a repeated alarm is asked about first |
 | **Failure drills** | From the app, on purpose: SmartThings unreachable, never confirming or slow; the model slow or down; "someone else" changing a device |
 
+![Someone else unlocks the door while Janus waits for a yes: the write is withdrawn unsent](docs/xray/withdrawn_by_outside_change.png)
+
+*The kernel's X-ray of one such moment: an unlock waits for the user's yes, the watch sees the door unlocked by someone else, and the write is withdrawn before it is sent (`scripts/make_xray.py` draws it from a replayable run).*
+
 **Speech and turn-taking.** The worker's default recognizer is NVIDIA Parakeet TDT 0.6B v2 on the GPU (hosted transcription with `JANUS_STT=openai`). Quiet segments below an RMS floor are not transcribed, a transcript that repeats the recognizer's own prompt is dropped, and Janus's own voice coming back through a loudspeaker is not taken as the user's. Reply openers vary with the turn ("Let me check." for a question, "Okay." for a request), a reply is not cut off when LiveKit closes the user's turn, and talking over Janus stops it. A write is held 2.5 s after the user stops (`JANUS_SETTLE_MS`) so a late correction ("…actually, twenty-one") can still cancel it; the first sound comes about 2 s after the user stops in scripted runs.
 
 **The companion app** (`app/`, React Native; built and tested on Android): live captions, one card per action with its state (planned, held and why, waiting for your yes, sent, confirmed, sent but not confirmed, never sent), device tiles, a ledger summary, a "why" panel that shows the read set a call was built on and what changed, a thinking orb, and the failure-drill drawer. It talks to the worker only through LiveKit data topics; the contract is [`app/INTEGRATION.md`](app/INTEGRATION.md).

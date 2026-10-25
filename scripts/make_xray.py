@@ -17,6 +17,10 @@ with `prism_rt.observability.xray`:
      "wait, don't stop it, just pause it": the pending stop is withdrawn
      before it is sent, the booking goes through once (simulated SmartThings
      washer; the effect-ledger summary is the subtitle).
+  4. withdrawn_by_outside_change -- "unlock the front door" waits for the
+     user's yes (a security action); while it waits, someone else unlocks the
+     door. The host's watch reports it, the write is withdrawn unsent and the
+     user is told (simulated SmartThings lock).
 """
 
 from __future__ import annotations
@@ -33,6 +37,9 @@ from prism_rt.model.types import ActionType, JobKind  # noqa: E402
 from prism_rt.observability.effects import effect_summary, format_effect_summary  # noqa: E402
 from prism_rt.observability.xray import build_rows, render  # noqa: E402
 from prism_rt.profiles import demo_config  # noqa: E402
+from prism_rt.canonical import world_target_key  # noqa: E402
+from prism_rt.smartthings.mock import MockSmartThings  # noqa: E402
+from prism_rt.smartthings.tools import SmartThingsToolset  # noqa: E402
 from prism_rt.sim.harness import SimHarness  # noqa: E402
 from prism_rt.workers.gateway import ScriptedProvider  # noqa: E402
 
@@ -154,10 +161,38 @@ def withdraw_one_of_two_writes() -> str:
     return s.html("Withdrawing one of two pending writes", format_effect_summary(summary) + " (simulated SmartThings washer).")
 
 
+def withdrawn_by_outside_change() -> str:
+    async def _no_sleep(_s):
+        return None
+
+    mock = MockSmartThings()
+    asyncio.run(mock.command("lock-1", "lock", "lock"))
+    mock.commands.clear()
+    p = ScriptedProvider()
+    p.register("interpret", "unlock the front", {
+        "act": "new_goal", "intent": "st_unlock", "slot_deltas": [], "commit_intent": True,
+        "actions": [{"tool": "st_unlock", "args": {"device": "front door"}}]})
+    p.register("compose", "", {"text": "Done.", "claims": []})
+    s = Session(p, SmartThingsToolset(mock, sleep=_no_sleep))
+    s.send(100_000, [{"type": "text_chunk", "payload": {"text": "unlock the front door"}}])
+    s.send(200_000, [{"type": "end_of_turn", "payload": {}}])
+    s.run(3_000_000)  # "That's a security action. Shall I unlock the front door?"
+    key = world_target_key("front door")
+    s.send(3_100_000, [{"type": "world_fact", "payload": {"key": key, "value": "locked"}}])  # the watch's baseline
+    s.run(4_500_000)
+    s.send(4_600_000, [{"type": "world_fact", "payload": {"key": key, "value": "unlocked"}}])  # someone else unlocked it
+    s.run(8_000_000)
+    assert mock.commands == [], mock.commands
+    summary = effect_summary(s.h.store)
+    assert summary["withdrawn_before_sending"] == 1 and summary["duplicates"] == 0, summary
+    return s.html("Someone else already did it", format_effect_summary(summary) + " (simulated SmartThings lock).")
+
+
 if __name__ == "__main__":
     out = ROOT / "docs" / "xray"
     out.mkdir(parents=True, exist_ok=True)
     for name, fn in (("correct_before_booking", correct_before_booking), ("correct_a_running_lookup", correct_a_running_lookup),
-                     ("withdraw_one_of_two_writes", withdraw_one_of_two_writes)):
+                     ("withdraw_one_of_two_writes", withdraw_one_of_two_writes),
+                     ("withdrawn_by_outside_change", withdrawn_by_outside_change)):
         (out / f"{name}.html").write_text(fn(), encoding="utf-8")
         print("wrote", out / f"{name}.html")

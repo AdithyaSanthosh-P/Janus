@@ -1,10 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="960" viewBox="0 0 1600 960" font-family="Inter, 'Segoe UI', 'DejaVu Sans', Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" font-family="Inter, 'Segoe UI', 'DejaVu Sans', Arial, sans-serif">
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
     </marker>
     <marker id="arrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#1428A0"/>
+    </marker>
+    <marker id="arrT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0F766E"/>
     </marker>
     <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#15803D"/>
@@ -14,7 +17,7 @@
     </filter>
   </defs>
 
-  <rect width="1600" height="960" fill="#FFFFFF"/>
+  <rect width="1600" height="980" fill="#FFFFFF"/>
 
   <!-- Title -->
   <text x="60" y="62" font-size="32" font-weight="700" fill="#0F172A">Janus — architecture</text>
@@ -42,7 +45,7 @@
     <text x="325" y="331" fill="#475569" font-size="13">speech start / end-of-turn</text>
     <rect x="310" y="352" width="240" height="52" rx="9" fill="#FFFFFF" stroke="#BFDBFE"/>
     <text x="325" y="374" font-weight="600">Speech-to-text</text>
-    <text x="325" y="393" fill="#475569" font-size="13">gpt-4o-mini-transcribe · or Whisper</text>
+    <text x="325" y="393" fill="#475569" font-size="13">hosted · Parakeet (demo) · Whisper</text>
     <rect x="310" y="414" width="240" height="52" rx="9" fill="#FFFFFF" stroke="#BFDBFE"/>
     <text x="325" y="436" font-weight="600">Kokoro-82M TTS</text>
     <text x="325" y="455" fill="#475569" font-size="13">stops queued speech on barge-in</text>
@@ -98,11 +101,12 @@
   </g>
 
   <!-- commit gate -->
-  <rect x="664" y="532" width="512" height="112" rx="12" fill="#1428A0"/>
-  <text x="684" y="562" font-size="17" font-weight="700" fill="#FFFFFF">CommitGate — every write passes here (G1–G11)</text>
+  <rect x="664" y="532" width="512" height="122" rx="12" fill="#1428A0"/>
+  <text x="684" y="562" font-size="17" font-weight="700" fill="#FFFFFF">CommitGate — every write passes here (G1–G13)</text>
   <g font-size="13.5" fill="#DBEAFE">
     <text x="684" y="590">user has finished speaking · explicit go-ahead · no duplicate fingerprint</text>
     <text x="684" y="612">or lineage · settle window elapsed · recorded in the ledger before it is sent</text>
+    <text x="684" y="636" fill="#BFDBFE">G12 security yes · G13 world unchanged since asked</text>
   </g>
 
   <!-- task machine -->
@@ -142,8 +146,26 @@
     <rect x="1290" y="650" width="240" height="52" rx="8" fill="#FFFFFF" stroke="#BBF7D0"/>
     <text x="1305" y="672" font-weight="600">Writes</text>
     <text x="1305" y="691" fill="#475569" font-size="12.5">via CommitGate, exactly once</text>
-    <text x="1305" y="728" font-size="13" fill="#334155">FDB-v3 domain tools</text>
-    <text x="1305" y="750" font-size="13" fill="#334155">Device-care extension tools</text>
+    <text x="1305" y="725" font-size="13" fill="#334155">FDB-v3 domain tools</text>
+    <text x="1305" y="745" font-size="13" fill="#334155">Device-care extension tools</text>
+    <text x="1305" y="765" font-size="13" fill="#334155">SmartThings · phone actions (demo)</text>
+  </g>
+
+  <!-- ============ 6. Live demo host (Round 2) ============ -->
+  <g filter="url(#sh)">
+    <rect x="60" y="630" width="510" height="160" rx="14" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1.5" stroke-dasharray="7 4"/>
+  </g>
+  <text x="80" y="652" font-size="13" font-weight="700" fill="#0F766E" letter-spacing="1.2">LIVE DEMO HOST · ROUND 2 · DEMO MODE ONLY</text>
+  <g fill="#0F172A">
+    <rect x="80" y="660" width="470" height="36" rx="8" fill="#FFFFFF" stroke="#99F6E4"/>
+    <text x="94" y="676" font-size="13" font-weight="600">Companion app (Android)</text>
+    <text x="94" y="690" font-size="11.5" fill="#475569">captions · action cards · why panel · failure drills, over LiveKit data</text>
+    <rect x="80" y="702" width="470" height="36" rx="8" fill="#FFFFFF" stroke="#99F6E4"/>
+    <text x="94" y="718" font-size="13" font-weight="600">World watch + display reader</text>
+    <text x="94" y="732" font-size="11.5" fill="#475569">device and camera are read while a yes is pending</text>
+    <rect x="80" y="744" width="470" height="36" rx="8" fill="#FFFFFF" stroke="#99F6E4"/>
+    <text x="94" y="760" font-size="13" font-weight="600">Offers · phone alarms and timers · recap</text>
+    <text x="94" y="774" font-size="11.5" fill="#475569">Janus can speak first; the answer passes the same gate</text>
   </g>
 
   <!-- ============ Arrows ============ -->
@@ -169,12 +191,20 @@
   <line x1="1266" y1="700" x2="1202" y2="700" stroke="#15803D" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#arrG)"/>
   <text x="1234" y="722" font-size="12" fill="#15803D" text-anchor="middle">results</text>
 
+  <!-- demo host <-> kernel -->
+  <line x1="636" y1="680" x2="574" y2="680" stroke="#0F766E" stroke-width="2.5" marker-end="url(#arrT)"/>
+  <text x="606" y="666" font-size="11" fill="#0F766E" text-anchor="middle">feed</text>
+  <line x1="574" y1="730" x2="636" y2="730" stroke="#0F766E" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#arrT)"/>
+  <text x="606" y="716" font-size="11" fill="#0F766E" text-anchor="middle">facts</text>
+
   <!-- ============ Footer: principles ============ -->
   <g font-size="14.5" fill="#0F172A">
-    <rect x="60" y="822" width="1490" height="96" rx="14" fill="#F8FAFC" stroke="#E2E8F0"/>
+    <rect x="60" y="822" width="1490" height="124" rx="14" fill="#F8FAFC" stroke="#E2E8F0"/>
     <circle cx="92" cy="856" r="6" fill="#1428A0"/>
     <text x="108" y="861"><tspan font-weight="700">No model acts on its own.</tspan> Workers return proposals; only the kernel changes state or talks to the user.</text>
     <circle cx="92" cy="890" r="6" fill="#DC2626"/>
     <text x="108" y="895"><tspan font-weight="700">Corrections are safe.</tspan> Every result records the facts it read; if one changes, that work is cancelled in the same step (a value that changes back, Pune, Mumbai, Pune, redoes nothing).</text>
+    <circle cx="92" cy="924" r="6" fill="#0F766E"/>
+    <text x="108" y="929"><tspan font-weight="700">A yes counts only for what it was asked about.</tspan> Security actions wait for it; if the world changes while Janus waits, the write is withdrawn unsent and the user is told.</text>
   </g>
 </svg>

@@ -111,6 +111,11 @@ def build_rows(decisions: Iterable[dict], wire: Iterable[dict] = ()) -> list[dic
                 rows.append({"t": t, "lane": "USER", "cls": "user", "text": "interrupts the agent"})
             elif kind == "video_frame":
                 rows.append({"t": t, "lane": "USER", "cls": "quiet", "text": f"camera frame {body.get('frame_id', '')}"})
+            elif kind == "world_fact":
+                # The host's watch of a device a held write targets (live demo profile).
+                name = str(body.get("key", "")).removeprefix("target.")
+                what = f"{name}: not found" if body.get("missing") else f"{name} = {body.get('value')}"
+                rows.append({"t": t, "lane": "TOOLS", "cls": "quiet", "text": f"watch: {what}", "first": True})
             elif kind == "tool_result":
                 status = body.get("status", "ok")
                 text = f"result {status}: {_short(body.get('result'))}"
@@ -180,7 +185,7 @@ def build_rows(decisions: Iterable[dict], wire: Iterable[dict] = ()) -> list[dic
         if h:
             span = (h["until"] - h["t"]) / 1e6
             row["text"] = f"held: {h['label']}" + (f" ({span:.1f}s)" if span >= 0.05 else "")
-    rows.sort(key=lambda r: (r["t"], LANES.index(r["lane"])))
+    rows.sort(key=lambda r: (r["t"], 0 if r.get("first") else 1, LANES.index(r["lane"])))  # a cause before its effect in one step
     return rows
 
 
