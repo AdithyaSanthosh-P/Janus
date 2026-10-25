@@ -755,6 +755,24 @@ async def test_a_withdrawal_while_speaking_cuts_the_current_sentence():
     await bridge.stop()
 
 
+async def test_a_withdrawal_also_drops_janus_queued_speech():
+    """25 Oct: with the protected filler playing, the host's interrupt stopped at
+    the filler and the queued "Shall I unlock the back door?" was still said
+    before "Never mind: I can't find a back door"."""
+    dropped = []
+    bridge, _events, actions, said = _make_bridge()
+    bridge.drop_queued_speech = lambda: dropped.append(True)
+    bridge.interrupt_prefixes = ("Never mind:",)
+    bridge.start()  # nothing playing yet: the question is only queued
+    await actions.put({"action_type": "speak", "body": {"text": "That's a security action. Shall I unlock the back door?", "kind": "inform"}})
+    await asyncio.sleep(0.01)
+    assert dropped == []
+    await actions.put({"action_type": "final", "body": {"text": "Never mind: I can't find a back door."}})
+    await asyncio.sleep(0.01)
+    assert dropped == [True] and said[-1] == "Never mind: I can't find a back door."
+    await bridge.stop()
+
+
 async def test_a_withdrawal_while_silent_or_without_the_setting_cuts_nothing():
     stops = []
     bridge, _events, actions, said = _make_bridge()

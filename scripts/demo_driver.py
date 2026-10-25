@@ -365,6 +365,13 @@ SCENARIOS: dict[str, list[tuple]] = {
         ("say", "Yes."),
         ("settle", 40, 8),
     ],
+    "twist_back_door_status": [
+        ("note", "a status question about a device that does not exist: the toolset's own words, not the generic failure"),
+        ("say", "Can you tell me if you're connected to the back door?"),
+        ("settle", 30, 8),
+        ("say", "Is the back door locked?"),
+        ("settle", 30, 8),
+    ],
     "twist_chat_while_asked": [
         ("note", "a yes/no question is open; the user asks something unrelated, then says no"),
         ("say", "Unlock the front door."),

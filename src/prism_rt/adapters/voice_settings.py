@@ -82,3 +82,30 @@ def choose_filler(said: str, last: str | None = None, rng=None) -> str:
     question = not _REQUEST_START.match(text) and (bool(_QUESTION_START.match(text)) or text.endswith("?"))
     pool = [f for f in (FILLERS_FOR_QUESTION if question else FILLERS_FOR_REQUEST) if f != last]
     return (rng or random).choice(pool)
+
+
+def keep_speech_at_turn_end(activity_cls) -> None:
+    """Patch LiveKit's `AgentActivity.on_end_of_turn` so a closed user turn no
+    longer cuts the speech already playing.
+
+    With no LLM, LiveKit still runs its reply path when a user turn closes, and
+    that path first interrupts the current speech (agent_activity.
+    _user_turn_completed_impl: `current_speech.interrupt(source="user_turn")`)
+    and only then finds nothing to reply with. Its turn closes about 1.9 s after
+    the user stops, so a Janus answer that started sooner was cut a moment into
+    it: "Hi, what can I do for you?" stopped after "Hi," (phone, 24 Oct; four
+    cuts in one session, each 1.93 s after the user's last word, with no user
+    speech). The turn is now committed with `skip_reply`, which skips that
+    interrupt. Speech LiveKit has paused because the user talked over it keeps
+    the normal path, so a real barge-in still stops it. Idempotent."""
+    original = activity_cls.on_end_of_turn
+    if getattr(original, "_janus_keeps_speech", False):
+        return
+
+    def on_end_of_turn(self, info):
+        if getattr(self, "_paused_speech", None) is None:
+            info.skip_reply = True
+        return original(self, info)
+
+    on_end_of_turn._janus_keeps_speech = True
+    activity_cls.on_end_of_turn = on_end_of_turn

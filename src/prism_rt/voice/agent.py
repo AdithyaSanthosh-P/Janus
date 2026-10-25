@@ -61,6 +61,8 @@ Environment:
                           handling runs (agent_activity._user_turn_completed_impl), which races the
                           filler started on the same transcript; when it lost, the filler was dropped
                           and the first sound came about 3 s later (found live, 21 Oct)
+  JANUS_KEEP_SPEECH_AT_TURN_END  1 = LiveKit's end-of-turn handling no longer cuts the speech playing
+                          (default on in demo mode, off in fdb mode; voice_settings.keep_speech_at_turn_end)
   JANUS_TTS_CHUNKED       1 = synthesize and play each sentence as soon as it is ready
                           (default on in demo mode, off in fdb mode; the repro scripts set it)
   JANUS_AEC_WARMUP_S      seconds of LiveKit's AEC warm-up, during which the agent's first
@@ -110,7 +112,13 @@ from prism_rt.adapters.fdb_manifest import introspect_file, to_catalog_manifest
 from prism_rt.adapters.fdb_schema_overrides import BACKEND_FILLS, maybe_apply
 from prism_rt.adapters.fdb_tool_adapter import FdbToolAdapter
 from prism_rt.adapters.voice_bridge import VoiceBridge, is_social_turn
-from prism_rt.adapters.voice_settings import FILLERS_FOR_QUESTION, FILLERS_FOR_REQUEST, aec_warmup_duration, choose_filler
+from prism_rt.adapters.voice_settings import (
+    FILLERS_FOR_QUESTION,
+    FILLERS_FOR_REQUEST,
+    aec_warmup_duration,
+    choose_filler,
+    keep_speech_at_turn_end,
+)
 from prism_rt.adapters.offers import build_offer, no_offer_text
 from prism_rt.adapters.world_watch import WorldWatcher
 from prism_rt.devicecare import DeviceCareToolset
@@ -247,6 +255,12 @@ FILLER_PROTECTED = _flag_env("JANUS_FILLER_PROTECTED", MODE == "demo")
 FILLER_MIN_WORDS = _int_env("JANUS_FILLER_MIN_WORDS", 1 if MODE == "demo" else 3)
 FILLER_MIN_GAP_S = float(os.environ.get("JANUS_FILLER_MIN_GAP_S") or (12 if MODE == "demo" else 0))
 AEC_WARMUP_S = aec_warmup_duration(MODE, os.environ.get("JANUS_AEC_WARMUP_S"))
+# Demo mode: a closed user turn no longer cuts Janus's speech (voice_settings.keep_speech_at_turn_end).
+KEEP_SPEECH_AT_TURN_END = _flag_env("JANUS_KEEP_SPEECH_AT_TURN_END", MODE == "demo")
+if KEEP_SPEECH_AT_TURN_END:
+    from livekit.agents.voice.agent_activity import AgentActivity
+
+    keep_speech_at_turn_end(AgentActivity)
 DRILLS_ENABLED = MODE == "demo" and os.environ.get("JANUS_DRILLS") == "1"
 # Demo mode: how long a closed session waits for a rejoining phone before it
 # deletes the room (see _end_for_rejoin).
@@ -469,10 +483,20 @@ async def entrypoint(ctx: JobContext) -> None:
         except Exception:  # noqa: BLE001 - nothing playing / not interruptible
             logger.debug("interrupt: nothing to stop", exc_info=True)
 
+    kernel_speech: list = []  # handles of Janus's own speech not yet done (not the filler)
+
+    def drop_queued_speech() -> None:
+        for handle in list(kernel_speech):
+            if not handle.done():
+                with contextlib.suppress(Exception):  # already finishing
+                    handle.interrupt()
+
     async def say(text: str) -> None:
         # Queue only; never wait for playout, or a TOOL_CALL right behind an
         # acknowledgement would sit until the acknowledgement finished playing.
         handle = session.say(text, allow_interruptions=True, add_to_chat_ctx=False)
+        kernel_speech.append(handle)
+        handle.add_done_callback(lambda h: kernel_speech.remove(h) if h in kernel_speech else None)
         # Whether each reply played to the end (a reply cut short with no user
         # speech was seen twice on the phone, 24 Oct; see voice/speech.py's
         # tts chunk log for what was synthesized).
@@ -510,9 +534,9 @@ async def entrypoint(ctx: JobContext) -> None:
                 return await display["reader"].read(spoken)  # the washer's code, off the camera
             return await executor.read_target(tool, spoken)
 
-        async def _report_world(key: str, value) -> None:
+        async def _report_world(key: str, value, missing: str | None = None) -> None:
             if "fn" in world_sink:
-                await world_sink["fn"](key, value)
+                await world_sink["fn"](key, value, missing)
 
         watcher = WorldWatcher(toolset.manifest, _read_device, _report_world, interval_s=poll_s,
                                intervals={"book_technician": float(os.environ.get("JANUS_CAMERA_WATCH_S") or 1.0)})
@@ -574,6 +598,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # their words are still being transcribed.
         report_user_activity=True,
         stop_speaking=stop_speaking,
+        drop_queued_speech=drop_queued_speech,
         play_filler=play_filler if FILLER_ENABLED else None,
         filler_min_words=FILLER_MIN_WORDS,
         filler_min_gap_s=FILLER_MIN_GAP_S,

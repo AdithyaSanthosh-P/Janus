@@ -91,6 +91,9 @@ class WorldFactPayload:
 
     key: str
     value: Any = None
+    # The host found no such device (the user named one the home does not
+    # have): the reason, fit to be spoken. `value` is then None.
+    missing: str | None = None
 
 
 @dataclass(frozen=True)

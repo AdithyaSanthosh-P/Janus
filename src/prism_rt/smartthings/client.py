@@ -28,6 +28,14 @@ class SmartThingsError(Exception):
     """A failure whose message is fit to be spoken."""
 
 
+class UnknownDeviceError(SmartThingsError):
+    """The device the user named is not in the home (or not one device):
+    nothing can be done to it, so a question about it must not be asked
+    (adapters/world_watch.py reports it as a missing target)."""
+
+    missing_target = True
+
+
 def _urllib_http(method: str, url: str, headers: dict, body: bytes | None):
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 - fixed https base

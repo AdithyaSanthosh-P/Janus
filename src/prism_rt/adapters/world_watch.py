@@ -11,7 +11,10 @@ so a slow read that started before a newer one can never report an older
 value after it. Each new value is
 reported to the kernel as a `world_fact` under the key both sides build with
 `prism_rt.canonical.world_target_key`. `nudge()` re-reads every watched
-device at once (after the "someone else" drill).
+device at once (after the "someone else" drill). A read that finds no such
+device (an error marked `missing_target`, e.g. "unlock the back door" in a
+home with one lock) is reported once as missing, with the error's words, and
+the watch stops: the kernel drops the question.
 
 The interval is kept long on purpose: SmartThings allows about 12 requests a
 minute per device, and the write itself needs up to six (a pre-read, the
@@ -36,7 +39,7 @@ class WorldWatcher:
         self,
         manifest: list[dict],
         read_state: Callable[[str, str], Awaitable[object]],
-        report: Callable[[str, object], Awaitable[None]],
+        report: Callable[..., Awaitable[None]],
         *,
         interval_s: float = 10.0,
         intervals: dict[str, float] | None = None,
@@ -84,7 +87,8 @@ class WorldWatcher:
         waited = 0.0
         try:
             while waited <= self._max_s:
-                await self._read_and_report(tool, spoken)
+                if not await self._read_and_report(tool, spoken):
+                    break
                 interval = self._intervals.get(tool, self._interval_s)
                 await self._sleep(interval)
                 waited += interval
@@ -93,15 +97,20 @@ class WorldWatcher:
         finally:
             self._tasks.pop(call_id, None)
 
-    async def _read_and_report(self, tool: str, spoken: str) -> None:
+    async def _read_and_report(self, tool: str, spoken: str) -> bool:
+        """False when the device does not exist (reported; stop watching)."""
         key = world_target_key(spoken)
         async with self._locks.setdefault(key, asyncio.Lock()):
             try:
                 value = await self._read_state(tool, spoken)
             except Exception as exc:  # noqa: BLE001 - a failed read is just no news
                 log.info("world watch: could not read %r: %s", spoken, exc)
-                return
+                if getattr(exc, "missing_target", False):
+                    await self._report(key, None, missing=str(exc))
+                    return False
+                return True
             if value is None or self._last.get(key) == value:
-                return
+                return True
             self._last[key] = value
             await self._report(key, value)
+            return True

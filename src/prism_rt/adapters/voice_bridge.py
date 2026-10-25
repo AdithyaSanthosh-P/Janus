@@ -129,6 +129,12 @@ class VoiceBridge:
     # speaking, the current sentence is cut before it is said -- the world
     # changed mid-sentence, so the rest of that sentence is stale. Empty = never.
     interrupt_prefixes: tuple[str, ...] = ()
+    # Drops Janus's own speech still queued (not the filler), on every such
+    # withdrawal: the host's interrupt runs only while Janus is speaking and
+    # stops at a protected filler, so the question being withdrawn, queued a
+    # moment earlier, was still said ("Shall I unlock the back door?" right
+    # before "Never mind: I can't find a back door", 25 Oct).
+    drop_queued_speech: Callable[[], None] = field(default=lambda: None)
     # End-of-turn filler (host-side, JANUS_FILLER=1): a short pre-synthesized
     # phrase played the moment a worded turn closes, so the user hears a
     # response while the kernel interprets. None = no filler (the default).
@@ -221,10 +227,14 @@ class VoiceBridge:
         frame is analysed only when a question about it opens."""
         await self.events.put({"type": "video_frame", "ts_us": self.now_us(), "payload": {"frame_id": frame_id}})
 
-    async def on_world_fact(self, key: str, value) -> None:
+    async def on_world_fact(self, key: str, value, missing: str | None = None) -> None:
         """A watched device's state (adapters/world_watch.py), for
-        evidence-bound confirmation (kernel/evidence.py)."""
-        await self.events.put({"type": "world_fact", "ts_us": self.now_us(), "payload": {"key": key, "value": value}})
+        evidence-bound confirmation (kernel/evidence.py); `missing`: no such
+        device, and why."""
+        payload = {"key": key, "value": value}
+        if missing:
+            payload["missing"] = missing
+        await self.events.put({"type": "world_fact", "ts_us": self.now_us(), "payload": payload})
 
     async def on_offer(self, payload: dict) -> None:
         """Janus speaks first with an offer (Config.proactive_offers_enabled;
@@ -492,9 +502,13 @@ class VoiceBridge:
                 if text:
                     self._filler_turn = False
                     self._filler_active = False  # kernel speech queued: speech over it is a barge-in
-                    if self.interrupt_prefixes and self._agent_speaking and text.startswith(self.interrupt_prefixes):
-                        self.stop_speaking()
-                        self.on_interruption_logged("agent cut its own sentence: " + text[:40])
+                    if self.interrupt_prefixes and text.startswith(self.interrupt_prefixes):
+                        if self._agent_speaking:
+                            self.stop_speaking()
+                            self.on_interruption_logged("agent cut its own sentence: " + text[:40])
+                        # Also when nothing plays yet: the question it withdraws
+                        # can arrive in the same moment, still queued (25 Oct).
+                        self.drop_queued_speech()
                     self._remember_said(text)
                     await self.say(text)
                 if action_type == "final":

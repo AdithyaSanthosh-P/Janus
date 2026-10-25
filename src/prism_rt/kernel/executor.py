@@ -164,6 +164,21 @@ def _spoken_write_failure(store, call) -> str | None:
     return f"{message} So I couldn't {action}." if action else message
 
 
+def _spoken_read_failure(store, call) -> str | None:
+    """Config.demo_speech_polish_enabled: a failed read said in the tool's own
+    words ("I can't find a back door. The only door lock I can see is called
+    Janus Lock.") instead of "I couldn't complete this — st get status kept
+    failing." (phone, 24 Oct: it had failed once, with that reason). None
+    (the generic wording) when the tool gave no message."""
+    if call is None or not store.config.demo_speech_polish_enabled:
+        return None
+    fact = store.facts.get(f"error.{call.call_id}")
+    message = fact.value.strip() if fact is not None and fact.status != FactStatus.RETRACTED and fact.value else ""
+    if not message:
+        return None
+    return message if message[-1] in ".!?" else message + "."
+
+
 class PlanExecutor:
     def expire_deadlines(self, store, now_us: int) -> list[IntendedAction]:
         """P0.4 (call deadlines, docs/original_design_audit.md D4,
@@ -332,11 +347,12 @@ class PlanExecutor:
                     max_retries = store.config.max_write_retries
                 else:
                     if latest.retryable is False:
-                        self._fail_goal(store, gid, step, now_us, step_no)
+                        self._fail_goal(store, gid, step, now_us, step_no, spoken=_spoken_read_failure(store, latest))
                         continue
                     max_retries = store.config.max_read_retries
                 if latest.attempt > max_retries:
-                    self._fail_goal(store, gid, step, now_us, step_no)
+                    spoken = _spoken_read_failure(store, latest) if step.kind != StepKind.WRITE else None
+                    self._fail_goal(store, gid, step, now_us, step_no, spoken=spoken)
                     continue
                 attempt = latest.attempt + 1
             elif latest is not None and latest.status == CallStatus.CANCEL_REQUESTED and latest.cancel_reason == "deadline_expired":

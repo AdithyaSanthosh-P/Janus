@@ -151,3 +151,56 @@ def test_the_watch_reads_the_device_the_write_targets():
     assert asyncio.run(ts.read_target("st_switch", "front porch light")) == "off"
     status = asyncio.run(ts.make_executor()("st_get_status", {"device": "garage door"}))
     assert status["device"] == "Janus Garage"
+
+
+def test_a_device_the_home_does_not_have_is_reported_missing_once():
+    """Phone, 24 Oct: "Unlock the back door" in a home with one lock was asked
+    about ("Shall I unlock the back door?") although the watch's first read had
+    already failed with "I can't find a back door"."""
+    from prism_rt.smartthings.mock import MockSmartThings
+    from prism_rt.smartthings.tools import SmartThingsToolset
+
+    async def _no_sleep(_s):
+        return None
+
+    ts = SmartThingsToolset(MockSmartThings(), sleep=_no_sleep)
+
+    async def scenario():
+        reports = []
+
+        async def report(key, value, missing=None):
+            reports.append((key, value, missing))
+
+        async def sleep(_s):
+            await asyncio.sleep(0)
+
+        w = WorldWatcher(MANIFEST, ts.read_target, report, interval_s=10, max_s=30, sleep=sleep)
+        w.on_event(planned(device="back door"))
+        w.on_event({"type": "confirmation_asked", "call_id": "c-0001", "question": "?"})
+        for _ in range(10):
+            await asyncio.sleep(0)
+        return reports, w.watching()
+
+    reports, watching = asyncio.run(scenario())
+    assert len(reports) == 1 and watching == []  # reported once, and the watch stopped
+    key, value, missing = reports[0]
+    assert key == world_target_key("back door") and value is None
+    assert missing.startswith("I can't find a back door.")
+
+
+def test_the_kernel_drops_the_question_about_a_missing_device():
+    h, mock, _ = unlock_asked(device="back door")
+    missing = "I can't find a back door. The only door lock I can see is called Janus Lock."
+    event = {"type": "world_fact", "payload": {"key": world_target_key("back door"), "value": None, "missing": missing}}
+    actions = push(h, 3_100_000, [event], 3_600_000)
+    from test_evidence_confirmation import clean, said, say, tool_calls
+    from prism_rt.model.types import CallStatus
+
+    assert said(actions) == ["Never mind: " + missing]
+    call = next(c for c in h.store.call_ledger.all() if c.tool == "st_unlock")
+    assert call.status == CallStatus.DISCARDED
+    later = say(h, 3_700_000, "yes please", 7_000_000)
+    assert tool_calls(actions + later) == [] and mock.commands == []
+    # A late yes hears the real reason, not "it changed while I was waiting".
+    assert said(later) == ["Nothing is waiting for a yes right now: I didn't unlock the back door. " + missing]
+    clean(h)

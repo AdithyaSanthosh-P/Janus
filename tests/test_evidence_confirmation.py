@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from conftest import chunk_event, drain, eot_event, frame_event, manifest_event
 
 from config.templates import EVIDENCE_WITHDRAWN
@@ -271,4 +273,30 @@ def test_the_device_is_named_once_with_its_article():
     push(h, 3_100_000, [world_event("the front door", "locked")], 3_500_000)
     actions = push(h, 4_000_000, [world_event("the front door", "jammed")], 5_000_000)
     assert [t for t in said(actions) if t.startswith("Heads up")][0].startswith("Heads up: The front door changed")
+    clean(h)
+
+
+@pytest.mark.parametrize("error", [
+    {"code": "tool_error", "retryable": False},  # message added below
+    {"code": "tool_error"},  # retryable unstated: retried until max_read_retries
+])
+def test_a_failed_status_read_is_said_in_the_tools_words(error):
+    """Phone, 24 Oct: "Are you connected to the back door?" got "I couldn't
+    complete this — st get status kept failing." after one read that failed
+    with "I can't find a back door ..."."""
+    missing = "I can't find a back door. The only door lock I can see is called Janus Lock."
+    provider = ScriptedProvider()
+    provider.register("interpret", "is the back door", {
+        "act": "new_goal", "intent": "st_get_status", "slot_deltas": [], "commit_intent": True,
+        "actions": [{"tool": "st_get_status", "args": {"device": "back door"}}]})
+    provider.register("compose", "", {"text": "Done.", "claims": []})
+    # As the voice bridge reports the toolset's UnknownDeviceError.
+    tools = {"st_get_status": {"latency_ms": 200, "error": {**error, "message": missing}}}
+    h = SimHarness(demo_config(), seed=1, provider=provider, tools=tools, worker_latency_us=FAST)
+    h.send(0, [manifest_event(MANIFEST)])
+    h.send(100_000, [chunk_event("is the back door locked")])
+    actions = [er.action for er in h.send(150_000, [eot_event()]).emit_report.emitted] + drain(h, 5_000_000)
+    finals = [a.body.text for a in actions if a.action_type == ActionType.FINAL]
+    assert finals == [missing]
+    assert finals and "kept failing" not in finals[0]
     clean(h)

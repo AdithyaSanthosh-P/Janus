@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable
 
-from prism_rt.smartthings.client import SmartThingsError
+from prism_rt.smartthings.client import SmartThingsError, UnknownDeviceError
 from prism_rt.smartthings.confirm import WAITS, attribute_value, confirm_state, confirm_until, same
 
 GARAGE_CAPABILITIES = ("garageDoorControl", "doorControl")
@@ -157,11 +157,11 @@ class SmartThingsToolset:
             other = (words & _OTHER_PLACE_WORDS) - set(_norm(pool[0].get("label")).split())
             if other and self._kind(pool[0]) in ("lock", "garage"):  # a wrong guess matters for a door, not for a lamp
                 noun = "door lock" if self._kind(pool[0]) == "lock" else "garage door"
-                raise SmartThingsError(
+                raise UnknownDeviceError(
                     f"I can't find a {spoken}. The only {noun} I can see is called {pool[0].get('label')}.")
             return pool[0]
         options = ", ".join(d["label"] for d in (named or pool)) or "none"
-        raise SmartThingsError(f"I couldn't tell which device you mean by {spoken!r}. I can see: {options}.")
+        raise UnknownDeviceError(f"I couldn't tell which device you mean by {spoken!r}. I can see: {options}.")
 
     def _report(self, device: dict, capability: str, attribute: str, value) -> None:
         if self._on_device_state is None or value is None:

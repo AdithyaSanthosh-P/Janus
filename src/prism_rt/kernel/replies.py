@@ -107,6 +107,10 @@ def stale_yes_text(store, call) -> str:
     """A yes that arrives after the offer it answers was withdrawn (the world
     changed while Janus waited, kernel/evidence.py): nothing is sent."""
     phrase = action_phrase(store, call.tool, call.args) or "do that"
+    missing = store.facts.get(f"withdrawn.{call.call_id}.missing")
+    if missing is not None and missing.status != FactStatus.RETRACTED and missing.value:
+        # The device does not exist (reducers._withdraw_missing_target): asking again would not help.
+        return f"Nothing is waiting for a yes right now: I didn't {phrase}. {missing.value}"
     return (f"Nothing is waiting for a yes right now: I didn't {phrase}, because it changed while I was waiting. "
             "If you still want it, just ask.")
 

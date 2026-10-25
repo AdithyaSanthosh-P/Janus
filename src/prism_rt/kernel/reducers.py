@@ -368,12 +368,19 @@ def _apply_world_fact(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -
     For a write held for the user's yes on that device: the first value
     reported is the question's baseline; a later different value that is the
     state the write asked for withdraws it unsent (someone else did it); any
-    other change is left to CommitGate G13 and the responder's re-ask."""
+    other change is left to CommitGate G13 and the responder's re-ask.
+    A report that the device does not exist (`missing`) withdraws the held
+    write unsent with the host's words: the question about it was asked
+    before anything had resolved the name ("Shall I unlock the back door?" in
+    a home with one lock, phone, 24 Oct)."""
     if not txn.store.config.evidence_bound_confirmation_enabled:
         return
     payload: WorldFactPayload = env.payload
     key = "world." + str(payload.key)
     prov = Provenance(source="world", event_id=env.event_id, step_no=step_no, ts_us=now_us)
+    if payload.missing:
+        _withdraw_missing_target(txn, key, str(payload.missing), prov, now_us, step_no, env.event_id)
+        return
     txn.facts.set(key, payload.value, FactStatus.COMMITTED, prov, rule="reducers.world_fact")
     new = evidence.same_form(payload.value)
     for call in list(txn.store.call_ledger.proposed()):
@@ -400,6 +407,19 @@ def _apply_world_fact(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -
         txn.facts.retract(f"goal.{call.goal_id}.awaiting_confirmation", rule="evidence.withdrawn")
         _abandon_goal(txn, call.goal_id, now_us, step_no, event_id=env.event_id,
                       text=text.format(device=device, value=payload.value))
+
+
+def _withdraw_missing_target(txn: StoreTxn, key: str, missing: str, prov: Provenance, now_us: int, step_no: int, event_id: str) -> None:
+    for call in list(txn.store.call_ledger.proposed()):
+        if evidence.world_key(txn.store, call) != key or not evidence.held_for_yes(txn.store, call):
+            continue
+        others = [c for c in txn.store.call_ledger.non_terminal() if c.goal_id == call.goal_id and c.call_id != call.call_id]
+        if others:
+            continue  # other actions of this request still pending: a yes sends this one, which then fails honestly
+        txn.facts.set(f"withdrawn.{call.call_id}.reason", missing, FactStatus.COMMITTED, prov, rule="evidence.missing_target")
+        txn.facts.set(f"withdrawn.{call.call_id}.missing", missing, FactStatus.COMMITTED, prov, rule="evidence.missing_target")
+        txn.facts.retract(f"goal.{call.goal_id}.awaiting_confirmation", rule="evidence.missing_target")
+        _abandon_goal(txn, call.goal_id, now_us, step_no, event_id=event_id, text=f"Never mind: {missing}")
 
 
 def _apply_video_frame(env: Envelope, txn: StoreTxn, now_us: int, step_no: int) -> None:

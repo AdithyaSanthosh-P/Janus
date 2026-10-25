@@ -8,7 +8,7 @@ user who paused mid-sentence, and their words were lost (finance_04, finance_16)
 
 import pytest
 
-from prism_rt.adapters.voice_settings import aec_warmup_duration
+from prism_rt.adapters.voice_settings import aec_warmup_duration, keep_speech_at_turn_end
 
 
 def test_fdb_mode_defaults_to_off():
@@ -54,3 +54,48 @@ def test_the_filler_fits_the_turn_and_never_repeats():
         now = choose_filler("Turn off the switch.", last, rng=rng)
         assert now != last
         last = now
+
+
+class _Info:
+    skip_reply = False
+
+
+class _Activity:
+    """Stand-in for LiveKit's AgentActivity: its reply path cuts the current
+    speech unless the turn is committed with skip_reply."""
+
+    def __init__(self, paused=None):
+        self._paused_speech = paused
+        self.cut = False
+
+    def on_end_of_turn(self, info):
+        if not info.skip_reply:
+            self.cut = True
+        return True
+
+
+def test_turn_end_no_longer_cuts_playing_speech():
+    # Phone, 24 Oct: "Hi, what can I do for you?" stopped 1.93 s after the user's
+    # last word, when LiveKit closed the turn, with no user speech in between.
+    cls = type("A", (_Activity,), {})
+    keep_speech_at_turn_end(cls)
+    activity, info = cls(), _Info()
+    assert activity.on_end_of_turn(info) is True
+    assert info.skip_reply and not activity.cut
+
+
+def test_turn_end_still_cuts_speech_the_user_talked_over():
+    # LiveKit pauses speech the user talks over; its normal path then stops it.
+    cls = type("A", (_Activity,), {})
+    keep_speech_at_turn_end(cls)
+    activity, info = cls(paused=object()), _Info()
+    activity.on_end_of_turn(info)
+    assert not info.skip_reply and activity.cut
+
+
+def test_patch_is_idempotent():
+    cls = type("A", (_Activity,), {})
+    keep_speech_at_turn_end(cls)
+    patched = cls.on_end_of_turn
+    keep_speech_at_turn_end(cls)
+    assert cls.on_end_of_turn is patched
