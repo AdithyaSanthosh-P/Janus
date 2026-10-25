@@ -14,23 +14,42 @@ the same Hugging Face cache, so `snapshot_download` populates it.
 
 from __future__ import annotations
 
-import importlib.util
+import ast
 import os
-import sys
 import time
+from types import SimpleNamespace
 
 from huggingface_hub import snapshot_download
 
-# Loaded by file path (speech.py imports nothing from prism_rt), so the image
-# build can COPY just that file and keep the weights layer cached across
-# ordinary code changes.
+
+def load_pins(path: str) -> SimpleNamespace:
+    """The module-level constants of speech.py (the pinned repos and revisions),
+    read by parsing the file, never by importing it. The image build COPYs just
+    that file ahead of the rest of the source, so the weights layer stays cached
+    across ordinary code changes; importing it there failed once speech.py began
+    importing prism_rt (a fresh `docker build` broke on 25 Oct), and parsing cannot
+    break on any import it gains. Only literal assignments are read."""
+    with open(path, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read(), filename=path)
+    pins: dict = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name, value = node.targets[0].id, node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            name, value = node.target.id, node.value
+        else:
+            continue
+        try:
+            pins[name] = ast.literal_eval(value)
+        except ValueError:
+            continue  # computed at import time: not a pin
+    return SimpleNamespace(**pins)
+
+
 _SPEECH = os.path.join(
     os.environ.get("JANUS_SPEECH_PY", os.path.join(os.path.dirname(__file__), "..", "..", "src", "prism_rt", "voice", "speech.py"))
 )
-_spec = importlib.util.spec_from_file_location("janus_speech_pins", _SPEECH)
-speech = importlib.util.module_from_spec(_spec)
-sys.modules["janus_speech_pins"] = speech
-_spec.loader.exec_module(speech)
+speech = load_pins(_SPEECH)
 
 PARAKEET_REPO = "nvidia/parakeet-tdt-0.6b-v2"
 
