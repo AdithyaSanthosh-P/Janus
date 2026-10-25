@@ -2,7 +2,7 @@
 
 > **Benchmark runs** (FDB-v3 text replay and voice, the failures behind the misses, and the data as CSV) are recorded in [`BENCHMARKS.md`](../BENCHMARKS.md). This page keeps the kernel-level measurements (tests, per-step latency, adversarial exploration, simulator numbers); its FDB-v3 section below is the 30 Sep snapshot.
 
-*Kernel-level measurements as of 2 Oct 2026; the suite has since grown to 995 tests with the Round 2 work. Current benchmark numbers: `BENCHMARKS.md` section 1.*
+*Kernel-level measurements as of 2 Oct 2026; the suite has since grown to 998 tests with the Round 2 work. Current benchmark numbers: `BENCHMARKS.md` section 1.*
 
 All numbers on this page were produced by actually running this repository's own test suite and a small benchmark script against `SimHarness` — none are estimated or asserted from design intent. Where the project's guiding rule ("never claim untested work is verified") would be violated by a number we don't actually have (e.g. scoring against the hidden evaluation kit, which is unreleased), that's stated explicitly rather than approximated.
 

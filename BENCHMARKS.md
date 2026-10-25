@@ -6,8 +6,8 @@ This file is generated: `python benchmarks/collect.py` refreshes the CSVs from t
 
 | File | One row per | Use it for |
 |---|---|---|
-| `runs.csv` | scored run (96) | score vs time, configuration comparisons |
-| `recordings.csv` | scenario in each text-replay run (2,671) | per-scenario and per-domain pass rates, text-replay latency |
+| `runs.csv` | scored run (98) | score vs time, configuration comparisons |
+| `recordings.csv` | scenario in each text-replay run (2,774) | per-scenario and per-domain pass rates, text-replay latency |
 | `voice_recordings.csv` | recording in each voice run (1117) | per-speaker before/after, turn-ending evidence, latency |
 | `failures.csv` | failing recording in an analysed failure set (155) | cause analysis; joins to `voice_recordings.csv` on scenario + speaker |
 | `failure_classes.csv` | failure class in a taxonomy | class definitions, counts, status |
@@ -22,7 +22,8 @@ Dates are 2026. Reports, logs and per-room decision logs of the six cloud voice 
 | **Voice over LiveKit, all 100, judged, current code** | **82%** (82/100) | `cloud_20261021_185112` | 21-22 Oct, Round 2 code through `./reproduce.sh` on an RTX 3090 VM; tool selection 0.970, argument accuracy 0.883, response quality 0.740; turn-taking 100/100; average latency 6.3 s; exact-match scoring gives 79/100 |
 | Voice over LiveKit, all 100, judged, Round 2 code | **77%** (77/100) | `cloud_20261019_142138` | 19 Oct, same path; exact-match scoring gives 75/100. Of the five recordings gained since, finance_04 and finance_16 are the AEC warm-up fix (`cloud_20261019_175544`); travel_18 was lost to a transcription slip ("Casey Li") |
 | Voice over LiveKit, all 100, judged, 3 Oct code | **73%** (73/100) | `cloud_20261002_182600` | 3 Oct, first full run after the turn-ending fixes; hosted speech-to-text; tool selection 0.947, argument accuracy 0.768, response quality 0.626; turn-taking 99/100; average latency 8.1 s; no FDB client aborts; exact-match scoring gives 68/100 |
-| Text replay, all 100, judged | **77%** (77/100) | `text_text_replay_0930_final` | Tool selection 0.949, argument accuracy 0.803; configuration of the 30 Sep submission |
+| Text replay, all 100, judged, current code | **82%** (82/100) | `text_textreplay_r2_1025` | 25 Oct, Round 2 code, relaxed housing contract; tool selection 0.969, argument accuracy 0.904, response quality 0.856 |
+| Text replay, all 100, judged, 30 Sep submission | **77%** (77/100) | `text_text_replay_0930_final` | Tool selection 0.949, argument accuracy 0.803; configuration of the 30 Sep submission |
 | Voice over LiveKit, all 100, exact | **41%** (41/100) | `cloud_20260929_232528` | 29-30 Sep, before the voice fixes below; local Whisper |
 | Voice over LiveKit, all 100, judged | **42%** (42/100) | `cloud_20260929_232528.judged` | Same run, scored with FDB's judge |
 | Voice, 41 recordings the full run mostly failed, judged | **17/41** (41.5%) | `cloud_20260930_174502` | Re-run of the same recordings with fixes and hosted speech-to-text; the full run had 6/41 on them |
@@ -68,6 +69,7 @@ These are reference numbers only: different hardware, models and run dates, and 
 | 2026-10-03 | `text_textreplay_review_1003` | judged | 77/100 | 77.0% | 0.914 | 0.798 | Full 100 on the code after the review pass (ae03f71), judged: gate before the second voice run. The model alternates "travel" and "travel card" for card_type between runs (finance_06/10 flip) |
 | 2026-10-03 | `text_textreplay_fix_1003` | judged | 79/100 | 79.0% | 0.924 | 0.802 | Full 100 after the kernel fixes of the 3 Oct fix pass (clarify livelock, null slot delta), judged |
 | 2026-10-04 | `text_textreplay_cond_rule_1004` | judged | 76/100 | 76.0% | 0.970 | 0.813 | Full 100 with the conditional-branch fix and the filter-update rule (4be3f70), stall salvage 45 s, judged: 76/100. Against review_1003: finance_06/10 pass, finance_20/travel_20 differ from their labels (conditional), housing_18 variance; housing_13/20/24/25 now call update_search_filter |
+| 2026-10-25 | `text_textreplay_r2_1025` | judged | 82/100 | 82.0% | 0.969 | 0.904 | Round 2 code, relaxed housing contract, gpt-4o judge |
 
 What moved the score, in order:
 
@@ -507,3 +509,5 @@ The commit column is the code the run used (`-dirty` means uncommitted changes a
 | 2026-10-19 | `text_housing_wp5_on_1019` | text_replay | subset | judged | 18/26 | 69.2% | 0.923 | 0.814 | gemini-3.6-flash | f911a19-dirty |
 | 2026-10-20 | `text_housing_savedfilter_1020` | text_replay | subset | judged | 17/26 | 65.4% | 0.923 | 0.756 | gemini-3.6-flash | f911a19-dirty |
 | 2026-10-21 | `cloud_20261021_185112` | voice_cloud | full100 | judged | 82/100 | 82.0% | 0.970 | 0.883 | gemini-3.6-flash | f911a194 |
+| 2026-10-25 | `text_textreplay_r2_1025` | text_replay | full100 | judged | 82/100 | 82.0% | 0.969 | 0.904 | gemini-3.6-flash | 9cc2af6-dirty |
+| 2026-10-25 | `text_textreplay_r2_1025_travel_rerun` | text_replay | subset | exact | 3/3 | 100.0% | 1.000 | 1.000 | gemini-3.6-flash | 9cb2494-dirty |

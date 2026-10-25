@@ -10,7 +10,7 @@ This project is called **Janus** (`pyproject.toml` distribution name `janus`; th
 
 **Round 2 (shortlisted, jury demo 26 Oct 2026, 11:10; rescheduled from 23 Oct):** the format is 7 minutes of slides with a demo video under 2 minutes, then 3 minutes of Q&A. The Round 2 work (demo profile only, every behaviour behind a `Config` flag or `JANUS_MODE=demo`; the benchmark profile unchanged) and its handoff are in `currentStatus.md` → Next Task, newest block first.
 
-> **Current benchmark (read this, not older numbers anywhere else).** Best latest full-100 voice run, judged: **82/100** (22 Oct, `cloud_20261021_185112`, Round 2 code, `./reproduce.sh`, RTX 3090 VM; the relaxed housing contract was on). The Round 1 submission (tag `PRISM_GENAI_HACKATHON_Y2026`) scored 74/100 with the published tool definitions. `BENCHMARKS.md` section 1 is the only source for current figures; scores in older handoff blocks of `currentStatus.md`, in `docs-personal/` and in the 3 Oct per-run reports are history. Two final runs (relaxed housing contract on and off) are planned on 25–26 Oct; when they exist, this box and `BENCHMARKS.md` section 1 are updated first.
+> **Current benchmark (read this, not older numbers anywhere else).** Best latest full-100 voice run, judged: **82/100** (22 Oct, `cloud_20261021_185112`, Round 2 code, `./reproduce.sh`, RTX 3090 VM; the relaxed housing contract was on). The Round 1 submission (tag `PRISM_GENAI_HACKATHON_Y2026`) scored 74/100 with the published tool definitions. `BENCHMARKS.md` section 1 is the only source for current figures; scores in older handoff blocks of `currentStatus.md`, in `docs-personal/` and in the 3 Oct per-run reports are history. The reported figures are 82/100 (relaxed contract on) and 74/100 (published definitions); a confirmation run on 25 Oct with the relaxed contract on scored 81/100.
 
 **Read `currentStatus.md` first, every session.** It names the read order for the other docs, the current implementation state, and the next task. Do not re-derive that from scratch — it is kept up to date for exactly this purpose.
 
@@ -41,7 +41,7 @@ The system is a **single-writer coordination kernel**, not an LLM-loop-calls-too
 - **Seven-phase step**: drain mailbox → order batch by `(ts, class, seq)` → apply reducers → invalidate (mark dependents of changed facts) → decide (fixed component order) → emit (EmissionGate, synchronous) → log. Target ≤5ms wall time per step.
 - **Optimistic concurrency via read sets.** Every proposal, call, and pending utterance records the `(key, ver, digest)` facts it depended on. A read set is valid iff every fact still exists, isn't retracted, and its digest is unchanged — this is what lets a value *revert* (Pune→Mumbai→Pune) without re-running work, while still invalidating genuinely stale work. There is no global generation counter; `goal.active` acts as the coarse generation, individual fact versions as the fine one.
 - **Same-step cancellation.** When a fact changes, `InvalidationEngine` walks the dependency index and marks affected calls/jobs/proposals in the same step; CANCEL is emitted before SPEAK/TOOL_CALL/CLARIFY/FINAL (fixed emission order).
-- **READ vs WRITE tools are architecturally different.** Reads may be speculated, retried, run in parallel. Writes pass a single `CommitGate` (conditions G1–G9, see Appendix B of the implementation plan) requiring closed floor, committed user intent, no duplicate fingerprint/lineage, and are recorded in an effect ledger *before* emission — this is what prevents double-booking.
+- **READ vs WRITE tools are architecturally different.** Reads may be speculated, retried, run in parallel. Writes pass a single `CommitGate` (conditions G1–G13: G1–G9 in Appendix B of the implementation plan, G10–G13 added since) requiring closed floor, committed user intent, no duplicate fingerprint/lineage, and are recorded in an effect ledger *before* emission — this is what prevents double-booking.
 - **Harness-time only.** All timing goes through `ClockPort.now_us()`. `time.time`, `time.sleep`, `datetime.now`, `asyncio.sleep` (outside `ClockPort`), and `loop.time` are **banned in `kernel/`, `store/`, and worker/tool-facing code** — enforced by a static check. The only wall-clock reader is the budget watchdog (105s default) and test/telemetry code.
 - **Unknowns live in policy, not structure.** The eval kit's wire format and many behavioral questions are unresolved; every such unknown is a named policy setting (`PolicyRegistry`, section 20 of `prompt 2.txt`) with a stated safe default, not a structural fork.
 
@@ -67,7 +67,7 @@ Python project (`pyproject.toml`, deps: pydantic, PyYAML, pytest, pytest-asyncio
 
 ```bash
 source .venv/bin/activate                     # venv already has all deps installed
-python -m pytest tests/ -v                    # full suite (995 tests as of 2026-10-25)
+python -m pytest tests/ -v                    # full suite (998 tests as of 2026-10-25)
 python -m pytest tests/test_v3.py -v           # single version's scenario tests
 PYTHONPATH=src:. python demo/run_v1_demo.py    # interactive demo with real spoken output (scripted)
 PYTHONPATH=src:. python demo/run_v1_live_demo.py  # same demo against the real Gemini API (GEMINI_API_KEY in .env)

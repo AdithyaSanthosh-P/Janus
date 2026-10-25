@@ -75,6 +75,7 @@ LABELS = {
     "text_text_replay_0930_setting": ("full100", "30 Sep", "Tried: 'update a setting' prompt rule (reverted: 75% vs 77%)"),
     "text_text_replay_0930_fixes": ("full100", "30 Sep", "Identifier-style value rule + spoken-ID joiner"),
     "text_text_replay_0930_final": ("full100", "30 Sep", "Configuration of the 30 Sep submission"),
+    "text_textreplay_r2_1025": ("full100", "25 Oct", "Round 2 code, relaxed housing contract, gpt-4o judge"),
     "text_text_replay_1002_valuerules": ("subset", "2 Oct", "Value rules for field names, search terms and amounts; 24 recordings with a search query or filter (exact-match scoring); vs 30 Sep: 20 identical calls, 4 improved, none worse"),
     "lk_20260927_173959": ("debug", "S1", "First LiveKit run, 1 recording (travel_01)"),
     "lk_20260927_174631": ("subset", "S1", "5 recordings (after the first reboot)"),
