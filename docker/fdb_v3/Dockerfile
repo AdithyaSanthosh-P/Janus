@@ -90,10 +90,15 @@ RUN pip install --no-cache-dir \
 # clash). Kokoro's out-of-vocabulary fallback needs espeak-ng; the
 # `espeakng-loader` wheel misaki pulls in bundles the library, so no apt
 # package is needed.
+# preshed is pinned because spaCy only asks for >=3.0.2,<3.1.0: preshed 3.0.14
+# (released Oct 2026) makes the English model fail to load ("OverflowError: Python
+# int too large to convert to C ssize_t"), and a fresh build then produced an image
+# whose worker processes could not start (25 Oct). 3.0.13 is the last good release.
 RUN pip install --no-cache-dir --timeout 120 --retries 10 \
         "faster-whisper==1.2.1" "ctranslate2==4.8.2" \
-        "kokoro==0.9.4" "misaki[en]==0.9.4" "spacy==3.8.16" "soundfile==0.14.0" \
-    && python -m spacy download en_core_web_sm
+        "kokoro==0.9.4" "misaki[en]==0.9.4" "spacy==3.8.16" "preshed==3.0.13" "soundfile==0.14.0" \
+    && python -m spacy download en_core_web_sm \
+    && python -c "import spacy; spacy.load('en_core_web_sm')"
 
 # Janus itself -- the actual agent under test runs inside this
 # container in Day 2+ (LiveKit voice worker); T3/T4 offline harnesses

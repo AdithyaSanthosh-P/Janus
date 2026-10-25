@@ -20,6 +20,8 @@ ctranslate2==4.8.2
 kokoro==0.9.4
 misaki[en]==0.9.4
 spacy==3.8.16
+# spaCy allows preshed >=3.0.2,<3.1.0, but 3.0.14 breaks loading its English model.
+preshed==3.0.13
 soundfile==0.14.0
 pydantic==2.13.5
 PyYAML==6.0.3
