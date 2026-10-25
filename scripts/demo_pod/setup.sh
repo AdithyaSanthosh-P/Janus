@@ -42,8 +42,10 @@ echo "== livekit, nemo $(date -u +%T)"
 echo "== speech $(date -u +%T)"
 "$PY" -m pip install -q --timeout 120 --retries 10 \
     "faster-whisper==1.2.1" "ctranslate2==4.8.2" \
-    "kokoro==0.9.4" "misaki[en]==0.9.4" "spacy==3.8.16" "soundfile==0.14.0"
+    "kokoro==0.9.4" "misaki[en]==0.9.4" "spacy==3.8.16" "preshed==3.0.13" "soundfile==0.14.0"
+# preshed pinned as in docker/fdb_v3/Dockerfile: 3.0.14 breaks loading spaCy's English model.
 "$PY" -m spacy download en_core_web_sm >/dev/null
+"$PY" -c "import spacy; spacy.load('en_core_web_sm')"
 
 echo "== janus deps $(date -u +%T)"
 "$PY" -m pip install -q pydantic PyYAML
