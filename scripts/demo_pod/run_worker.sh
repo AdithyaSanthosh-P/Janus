@@ -8,7 +8,12 @@ JANUS_HOME="${JANUS_HOME:-/workspace/janus-demo}"
 VENV="${JANUS_VENV:-/workspace/venv}"
 cd "$JANUS_HOME" || exit 1
 mkdir -p logs
-pkill -f "prism_rt.voice.agent start" 2>/dev/null && sleep 3
+# A worker still closing a session takes longer than a few seconds to exit; starting the new one
+# before it is gone fails (port in use) and the old one's shutdown lines overwrite the new log.
+if pkill -f "prism_rt.voice.agent start" 2>/dev/null; then
+  for _ in $(seq 1 60); do pgrep -f "prism_rt.voice.agent start" >/dev/null || break; sleep 1; done
+  pkill -9 -f "prism_rt.voice.agent start" 2>/dev/null; sleep 1
+fi
 set -a; . ./.env; set +a
 export HF_HOME="${HF_HOME:-/workspace/hf}" PYTHONPATH="$JANUS_HOME/src:$JANUS_HOME" PYTHONUNBUFFERED=1
 # Speech-to-text: NVIDIA Parakeet TDT 0.6B v2 on the GPU (weights from setup.sh, so offline).
