@@ -6,7 +6,7 @@
 
 Built for the **Samsung PRISM GenAI Hackathon 3rd Edition, Theme 05: Interruptible Real-Time Agents**, and evaluated on **Full-Duplex-Bench v3 (FDB-v3)** over LiveKit.
 
-**Submission files (demo video, slide deck, AI disclosure):** [Google Drive](https://drive.google.com/drive/folders/1qs63uPvp7TtCoOG52TNbP43UYLbaXk3E?usp=drive_link) · Decks and AI disclosure are also in this repo: Round 1 [`VITVellore_AICA_Submission.pptx`](VITVellore_AICA_Submission.pptx), Round 2 [`VITVellore_AICA.pptx`](VITVellore_AICA.pptx), [`LangAI3.0_AI_Disclosure.docx`](LangAI3.0_AI_Disclosure.docx)
+**Submission files (demo video, slide deck, AI disclosure):** [Google Drive](https://drive.google.com/drive/folders/1qs63uPvp7TtCoOG52TNbP43UYLbaXk3E?usp=drive_link) · The Round 2 deck and the AI disclosure are also in this repo: [`VITVellore_AICA.pptx`](VITVellore_AICA.pptx), [`LangAI3.0_AI_Disclosure.docx`](LangAI3.0_AI_Disclosure.docx). The Round 1 deck is in the tagged commit `PRISM_GENAI_HACKATHON_Y2026`
 
 | | |
 |---|---|
