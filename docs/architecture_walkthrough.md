@@ -220,7 +220,7 @@ User: "Look up the orange light… sorry, actually red."
 
 ## 12. Where the project stands
 
-- **Submission tag** `PRISM_GENAI_HACKATHON_Y2026` marks the Round 1 submission (published tool definitions only); Round 2 work is on `feat/r2-extras`.
+- **Tags:** `round1-submission` marks the Round 1 submission (published tool definitions only); `PRISM_GENAI_HACKATHON_Y2026` marks the final Round 2 commit.
 - **Measured:** `BENCHMARKS.md` section 1 is the only source for current numbers, with every run, the failures behind the misses and which comparisons are like for like; the README's Results section summarises them.
 - **The 26 remaining voice misses:** 17 are labels that disagree with the published tool definitions, the recording, or the condition the user set (README, "Benchmark labels and the published tools"); the rest are speech-to-text errors and value wording.
 - **Reproduction:** `./reproduce.sh` has been run end to end in Docker on clean VMs (RTX 3090); the native path (`scripts/fdb_v3/native_run.sh`) is the fallback.

@@ -29,6 +29,7 @@ Work after `v10-3-write-lineage-fix` is not tagged by phase; it is recorded in `
 
 | Date | Branch / tag | What |
 |---|---|---|
-| 30 Sep | `PRISM_GENAI_HACKATHON_Y2026` (`f911a19`) | The Round 1 submission: FDB-v3 voice agent through `./reproduce.sh`, the device-care extension, README, deck. |
+| 30 Sep | `round1-submission` (`f911a19`) | The Round 1 submission: FDB-v3 voice agent through `./reproduce.sh`, the device-care extension, README, deck. |
 | 1–4 Oct | `fdb-v3-integration` | The voice-path audit and its fixes (turn ending follows VAD silence, the kernel hears the floor), conditional requests, value rules, the benchmark record. |
-| 18–25 Oct | `feat/r2-extras` | Round 2: the live demo profile (confirmation policy, unconfirmed outcomes, evidence-bound confirmation, offers, camera-first washer, hedge check, phone alarms and timers, ledger recap, failure drills), the SmartThings pack, the companion app, local Parakeet speech-to-text, and review-driven fixes, all behind `demo_config` flags or `JANUS_MODE=demo`. Not merged into `main` until the team confirms. |
+| 18–25 Oct | `feat/r2-extras` | Round 2: the live demo profile (confirmation policy, unconfirmed outcomes, evidence-bound confirmation, offers, camera-first washer, hedge check, phone alarms and timers, ledger recap, failure drills), the SmartThings pack, the companion app, local Parakeet speech-to-text, and review-driven fixes, all behind `demo_config` flags or `JANUS_MODE=demo`. Merged into `main`. |
+| 26 Oct | `PRISM_GENAI_HACKATHON_Y2026` | The final Round 2 commit: the deck `VITVellore_AICA.pptx`, the demo profile, the relaxed-housing disclosure, 998 tests. |
